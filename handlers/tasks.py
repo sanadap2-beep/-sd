@@ -10,13 +10,11 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from database.models import Task, TaskType, TaskVerification, User
-from services.currency_service import CurrencyService
+from database.models import Task, TaskType, TaskVerification
 from services.feature_service import FeatureService
 from services.i18n_service import I18nService
 from services.points_service import PointsService
 from services.task_service import TaskError, TaskService
-from sqlalchemy import select
 from states.states import TaskUserStates
 
 router = Router(name="tasks")
@@ -105,7 +103,7 @@ async def task_do(callback: CallbackQuery, state: FSMContext, session, db_user, 
     earned = result["points"] or f"{result['usd']}$"
     await callback.answer(f"✅ {earned}")
     await callback.message.answer(I18nService.t("task_done", language, points=earned))
-    await tasks_home(callback)
+    await tasks_home(callback, session, db_user)
 
 
 @router.message(TaskUserStates.waiting_content)
