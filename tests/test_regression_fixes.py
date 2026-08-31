@@ -225,6 +225,147 @@ async def test_smart_number_routing_prefers_reliable_provider_over_slightly_chea
         assert result.provider == ProviderName.SMSHUB
 
 
+def test_main_menu_is_compact_and_keeps_only_requested_routes():
+    from keyboards.main_menu import build_main_menu
+    from services.i18n_service import I18nService
+    from services.main_button_service import MainMenuButton
+
+    keyboard = build_main_menu(
+        number_services=[],
+        categories=[],
+        balance_usd="12.50",
+        language="en",
+        dynamic_buttons=[MainMenuButton("custom", "Custom", "custom:home")],
+        show_marketplace=True,
+        show_tasks=True,
+        show_points=True,
+    )
+    rows = keyboard.inline_keyboard
+    buttons = [button for row in rows for button in row]
+
+    assert [len(row) for row in rows] == [2, 2, 2, 2, 2]
+    assert len(buttons) == 10
+    assert [button.callback_data for button in buttons] == [
+        "store:home",
+        "menu:account",
+        "menu:deposit",
+        "menu:support",
+        "menu:referral",
+        "menu:language",
+        "menu:currency",
+        "info:home",
+        "menu:transfer",
+        "extras:home",
+    ]
+    assert [button.text for button in buttons] == [
+        I18nService.t("menu_full_store", "en"),
+        I18nService.t("menu_account_with_balance", "en", balance="$12.50"),
+        I18nService.t("menu_deposit", "en"),
+        I18nService.t("menu_support", "en"),
+        I18nService.t("menu_referral", "en"),
+        I18nService.t("menu_language", "en"),
+        I18nService.t("menu_currency", "en"),
+        I18nService.t("menu_bot_info", "en"),
+        I18nService.t("menu_transfer", "en"),
+        I18nService.t("menu_extras", "en"),
+    ]
+    assert all(button.url is None and button.web_app is None for button in buttons)
+
+
+def test_store_menu_contains_number_services_all_catalog_categories_and_sections():
+    from database.models import Category, CategoryType, NumberService
+    from keyboards.store import store_home_kb
+
+    services = [
+        NumberService(code="telegram", name_ar="تيليجرام", emoji="✈️"),
+        NumberService(code="whatsapp", name_ar="واتساب", emoji="💬"),
+    ]
+    categories = [
+        Category(id=index, name_ar=name, emoji="📦", type=category_type)
+        for index, (name, category_type) in enumerate(
+            [
+                ("قسم الرشق", CategoryType.SMM),
+                ("قسم شحن الألعاب", CategoryType.GAMES),
+                ("قسم شحن التطبيقات", CategoryType.APPS),
+                ("قسم الأرصدة", CategoryType.BALANCES),
+                ("قسم الاشتراكات الرقمية", CategoryType.SUBSCRIPTIONS),
+                ("قسم البطاقات والفيز", CategoryType.CARDS),
+                ("قسم توثيق الحسابات", CategoryType.VERIFICATION),
+                ("قسم الأكواد الرقمية", CategoryType.CODES),
+            ],
+            start=1,
+        )
+    ]
+
+    keyboard = store_home_kb(services, categories, language="en")
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    callbacks = [button.callback_data for button in buttons]
+
+    assert callbacks[:2] == ["num_svc:telegram", "num_svc:whatsapp"]
+    assert {f"cat:{category.id}" for category in categories}.issubset(callbacks)
+    assert {f"store:section:{section}" for section in (
+        "featured", "deals", "bestsellers", "instant", "cheap", "games", "smm", "apps"
+    )}.issubset(callbacks)
+    assert "menu:search" in callbacks
+    assert "menu:cart" in callbacks
+    assert "menu:product_request" in callbacks
+    assert callbacks[-1] == "back_to_main"
+    assert any(button.text == "✈️ Telegram" for button in buttons)
+    assert any(button.text == "💬 WhatsApp" for button in buttons)
+
+
+@pytest.mark.asyncio
+async def test_extras_page_collects_old_features_and_dynamic_buttons(monkeypatch):
+    from types import SimpleNamespace
+
+    from handlers import extras as extras_handler
+    from services.main_button_service import MainMenuButton
+
+    async def enabled(feature_key):
+        return feature_key in {"number_exchange", "tasks_system", "points_currency"}
+
+    async def list_buttons(include_inactive=False):
+        return [
+            MainMenuButton("store", "Store", "store:home"),
+            MainMenuButton("custom", "🧪 Custom", "custom:home"),
+            MainMenuButton("url", "🌐 Docs", "https://example.com"),
+        ]
+
+    class FakeMessage:
+        def __init__(self):
+            self.reply_markup = None
+            self.text = None
+
+        async def edit_text(self, text, reply_markup=None):
+            self.text = text
+            self.reply_markup = reply_markup
+
+    class FakeCallback:
+        def __init__(self):
+            self.message = FakeMessage()
+
+        async def answer(self):
+            return None
+
+    monkeypatch.setattr(extras_handler, "_enabled", enabled)
+    monkeypatch.setattr(extras_handler.MainButtonService, "list_buttons", list_buttons)
+    callback = FakeCallback()
+    await extras_handler.extras_home(callback, SimpleNamespace(language_code="en"))
+
+    buttons = [button for row in callback.message.reply_markup.inline_keyboard for button in row]
+    callbacks = [button.callback_data for button in buttons]
+    labels = [button.text for button in buttons]
+
+    assert "extras:exchange" in callbacks
+    assert "tasks:home" in callbacks
+    assert "points:home" in callbacks
+    assert "custom:home" in callbacks
+    assert "store:home" not in callbacks
+    assert any(button.url == "https://example.com" for button in buttons)
+    assert "🧩 Other bot services & features" in callback.message.text
+    assert labels[-1] == "🔙 Back to main menu"
+
+
 @pytest.mark.asyncio
 async def test_dynamic_main_menu_buttons_can_be_added_toggled_and_deleted():
     from services.main_button_service import MainButtonService

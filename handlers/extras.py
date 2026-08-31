@@ -27,7 +27,6 @@ from services.collectibles_service import (
     ExchangeError,
     NumberExchangeService,
     NumberPortabilityService,
-    RareDropService,
     VipCertificateService,
 )
 from services.feature_service import FeatureService
@@ -41,6 +40,8 @@ from services.growth_channels_service import (
 )
 from services.platform_service import GamePriceTrackerService
 from services.ai_layer_service import AIAgentService
+from services.i18n_service import I18nService
+from services.main_button_service import MainButtonService
 from states.states import ExtrasStates
 
 from decimal import Decimal, InvalidOperation
@@ -60,33 +61,83 @@ async def _enabled(key: str) -> bool:
 
 
 @router.callback_query(F.data == "extras:home")
-async def extras_home(callback: CallbackQuery):
-    """يعرض فقط ما فعّله الأدمن، فلا تظهر أزرار ميتة."""
-    entries = [
-        ("number_exchange", "📈 بورصة الأرقام", "extras:exchange"),
-        ("number_portability", "🔁 أرقامي المحفوظة", "extras:portability"),
-        ("vip_number_certificates", "👑 شهادات VIP", "extras:vip"),
-        ("pooled_rooms", "👥 غرف الشراء الجماعي", "extras:rooms"),
-        ("revenue_sharing_tokens", "💹 أسهم حصة الإحالة", "extras:revshare"),
-        ("task_to_credit", "🧾 مهام مقابل رصيد", "extras:task2credit"),
-        ("game_price_tracker", "🎮 أسعار الألعاب", "extras:gameprices"),
-        ("ai_agent_layer", "🤖 المساعد الذكي", "extras:ai"),
+async def extras_home(callback: CallbackQuery, db_user: User | None = None):
+    """Collect optional features and former main-menu shortcuts in one page."""
+    language = _lang(db_user)
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
+
+    # These actions used to be rendered directly on the main menu.  Keep their
+    # callbacks unchanged; only their location in the UI changes.
+    entries: list[tuple[str, str]] = [
+        (t("menu_withdraw"), "withdraw:home"),
+        (t("menu_search"), "menu:search"),
+        (t("menu_favorites"), "menu:favorites"),
+        (t("menu_cart"), "menu:cart"),
+        (t("menu_loyalty"), "menu:loyalty"),
+        (t("menu_promotions"), "menu:promotions"),
+        (t("menu_product_request"), "menu:product_request"),
+        (t("menu_gift"), "menu:gift"),
+        (t("menu_assistant"), "menu:assistant"),
+        (t("menu_special_offers"), "special:home"),
+        (t("menu_my_ads"), "ads:home"),
+        (t("menu_notifications"), "notif:home"),
+        (t("menu_status"), "menu:status"),
+        (t("menu_challenges"), "menu:challenges"),
+        (f"📦 {t('menu_numbers')}", "num_packages"),
     ]
-    rows = []
-    for key, label, data in entries:
-        if await _enabled(key):
-            rows.append([InlineKeyboardButton(text=label, callback_data=data)])
 
-    if not rows:
-        await callback.message.edit_text(
-            "لا إضافات مفعّلة حالياً.\nيمكن للأدمن تفعيلها من «مركز الإضافات»."
-        )
-        await callback.answer()
-        return
+    optional_entries = [
+        ("number_exchange", t("extras_number_exchange"), "extras:exchange"),
+        ("number_portability", t("extras_number_portability"), "extras:portability"),
+        ("vip_number_certificates", t("extras_vip_certificates"), "extras:vip"),
+        ("pooled_rooms", t("extras_pooled_rooms"), "extras:rooms"),
+        ("revenue_sharing_tokens", t("extras_revenue_share"), "extras:revshare"),
+        ("task_to_credit", t("extras_task_to_credit"), "extras:task2credit"),
+        ("game_price_tracker", t("extras_game_prices"), "extras:gameprices"),
+        ("ai_agent_layer", t("extras_ai_agent"), "extras:ai"),
+    ]
+    for feature_key, label, action in optional_entries:
+        if await _enabled(feature_key):
+            entries.append((label, action))
 
-    rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="menu:main")])
+    if await _enabled("peer_marketplace"):
+        entries.append((t("menu_marketplace"), "market:home"))
+    if await _enabled("tasks_system"):
+        entries.append((t("menu_tasks"), "tasks:home"))
+    if await _enabled("points_currency"):
+        entries.append((t("menu_points"), "points:home"))
+
+    # Admin-created shortcuts are still available, but no longer make the
+    # first screen grow without limit.  Avoid duplicates for actions already
+    # represented above or already covered by the store hub.
+    covered_actions = {action for _, action in entries} | {"store:home"}
+    for button in await MainButtonService.list_buttons(include_inactive=False):
+        if button.action in covered_actions:
+            continue
+        if button.action.startswith("store:section:") or button.action.startswith("cat:"):
+            continue
+        label = button.label
+        if button.is_url:
+            entries.append((label, button.action))
+        else:
+            entries.append((label, button.action))
+        covered_actions.add(button.action)
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=label,
+                url=action if action.startswith(("http://", "https://")) else None,
+                callback_data=None if action.startswith(("http://", "https://")) else action,
+            )
+        ]
+        for label, action in entries
+    ]
+    # Keep the historical alias so older clients and inner pages remain valid.
+    rows.append([InlineKeyboardButton(text=t("back_to_main"), callback_data="menu:main")])
+
     await callback.message.edit_text(
-        "🧩 <b>الإضافات</b>\n\nاختر ما تريد:",
+        f"{t('menu_extras')}\n\n{('اختر الخدمة أو الميزة التي تريدها:' if language == 'ar' else 'Choose a service or feature:')}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
     await callback.answer()
@@ -562,8 +613,6 @@ async def voice_message(message: Message, session, db_user: User, bot):
 
 @router.callback_query(F.data == "admin:market_intel")
 async def market_intel(callback: CallbackQuery, session):
-    from filters.admin_filter import IsAdmin
-
     if not await _enabled("market_intelligence"):
         await callback.answer("ذكاء السوق موقوف.", show_alert=True)
         return

@@ -11,42 +11,27 @@ from aiogram.types import Message, CallbackQuery
 from keyboards.main_menu import build_main_menu
 from keyboards.common import check_subscription_kb
 from services.currency_service import CurrencyService
-from services.feature_service import FeatureService
-from services.points_service import PointsService
 from services.subscription_service import SubscriptionService
 from services.settings_service import SettingsService
-from services.dynamic_service import DynamicService
 from services.i18n_service import I18nService
-from services.main_button_service import MainButtonService
-from providers.countries import get_active_number_services
 
 router = Router(name="start")
 
 
 async def _build_menu(session, db_user):
-    """يبني القائمة الرئيسية الديناميكية بلغة المستخدم وعملة عرضه."""
-    number_services = await get_active_number_services(session)
-    categories = await DynamicService.get_active_categories(session)
-    dynamic_buttons = await MainButtonService.list_buttons(include_inactive=False)
+    """Build the compact main menu in the user's language and currency."""
     language = db_user.language_code
     balance_display = await CurrencyService.format_user_amount(
         db_user.balance, db_user, session
     )
-    # الأزرار الجديدة تظهر فقط حين يفعّلها الأدمن من «مركز الإضافات».
-    show_marketplace = await FeatureService.enabled("peer_marketplace")
-    show_tasks = await FeatureService.enabled("tasks_system")
-    show_points = await PointsService.enabled()
-
+    # The store and extras pages load their own dynamic data.  Passing empty
+    # collections here keeps this first screen deterministic and compact.
     return build_main_menu(
-        number_services=number_services,
-        categories=categories,
+        number_services=[],
+        categories=[],
         balance_usd=f"{db_user.balance:.2f}",
         language=language,
         balance_display=balance_display,
-        show_marketplace=show_marketplace,
-        show_tasks=show_tasks,
-        show_points=show_points,
-        dynamic_buttons=dynamic_buttons,
     )
 
 
