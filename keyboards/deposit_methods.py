@@ -10,12 +10,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def deposit_methods_kb(
-    shamcash_manual_enabled: bool = True,
-    stars_enabled: bool = True,
-    usdt_manual_enabled: bool = True,
-    shamcash_auto_enabled: bool = True,
-    usdt_auto_enabled: bool = True,
-    other_enabled: bool = True,
+    shamcash_manual_enabled: bool = False,
+    stars_enabled: bool = False,
+    usdt_manual_enabled: bool = False,
+    shamcash_auto_enabled: bool = False,
+    usdt_auto_enabled: bool = False,
+    other_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     قائمة طرق الشحن (حتى 6 أزرار).

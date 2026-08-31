@@ -1,5 +1,7 @@
 """Wholesale reseller API authenticated by dedicated hashed keys."""
 
+import re
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
@@ -22,6 +24,19 @@ async def get_reseller_account(
 
 
 router = APIRouter(prefix="/api/v1/reseller", tags=["reseller"])
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _reseller_payment_reference(user_id: int, raw_key: str | None) -> str | None:
+    if raw_key is None or not raw_key.strip():
+        return None
+    key = raw_key.strip()
+    if not _IDEMPOTENCY_KEY_RE.fullmatch(key):
+        raise HTTPException(
+            status_code=400,
+            detail="Idempotency-Key must contain only ASCII letters, digits, dot, underscore, colon, or dash",
+        )
+    return f"reseller_checkout:{user_id}:{key}"
 
 
 @router.get("/catalog")
@@ -57,7 +72,9 @@ async def reseller_order(
     payload: ResellerOrderIn,
     reseller=Depends(get_reseller_account),
     session=Depends(get_session),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    payment_reference = _reseller_payment_reference(reseller.user_id, idempotency_key)
     try:
         result = await CheckoutService.purchase(
             session,
@@ -65,6 +82,7 @@ async def reseller_order(
             payload.product_id,
             payload.target.strip(),
             payload.quantity,
+            payment_reference=payment_reference,
         )
     except CheckoutError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

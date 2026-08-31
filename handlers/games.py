@@ -403,7 +403,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         return
     if fulfillment == ProductFulfillmentType.INVENTORY.value:
         try:
-            order, delivered_value, metadata = await InventoryService.purchase(session, user_id=db_user.id, product_id=product.id, price_usd=final_price, quantity=quantity, promotion_id=promotion.id if promotion else None)
+            order, delivered_value, metadata, _replayed = await InventoryService.purchase(session, user_id=db_user.id, product_id=product.id, price_usd=final_price, quantity=quantity, promotion_id=promotion.id if promotion else None)
         except (InventoryError, InsufficientBalanceError) as exc:
             await callback.message.answer(f'⚠️ {exc}')
             await state.clear()

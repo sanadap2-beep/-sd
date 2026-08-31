@@ -100,6 +100,49 @@ async def test_balance_transfer_is_atomic_and_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_purchase_debit_is_idempotent_with_reference():
+    async with async_session_maker() as session:
+        user = await make_user(session, 13)
+        await BalanceService.add_balance(
+            session,
+            user.id,
+            Decimal("10"),
+            TransactionType.DEPOSIT,
+            payment_reference="test-payment-2",
+        )
+
+        await BalanceService.deduct_balance(
+            session,
+            user.id,
+            Decimal("2.5"),
+            TransactionType.PURCHASE,
+            payment_reference="purchase-attempt-13",
+            is_purchase=True,
+        )
+        await BalanceService.deduct_balance(
+            session,
+            user.id,
+            Decimal("2.5"),
+            TransactionType.PURCHASE,
+            payment_reference="purchase-attempt-13",
+            is_purchase=True,
+        )
+
+        await session.refresh(user)
+        purchases = (
+            await session.execute(
+                select(Transaction).where(
+                    Transaction.payment_reference == "purchase-attempt-13"
+                )
+            )
+        ).scalars().all()
+        assert user.balance == Decimal("7.5000")
+        assert user.total_spent_usd == Decimal("2.5000")
+        assert user.total_orders == 1
+        assert len(purchases) == 1
+
+
+@pytest.mark.asyncio
 async def test_gift_code_is_single_use():
     async with async_session_maker() as session:
         admin = await make_user(session, 21)
@@ -124,6 +167,40 @@ async def test_inventory_checkout_delivers_and_consumes_item():
         assert order.status == UnifiedOrderStatus.COMPLETED
         assert value == "official-license-code"
         assert await InventoryService.available_count(session, product.id) == 0
+
+
+@pytest.mark.asyncio
+async def test_inventory_checkout_is_idempotent_with_reference():
+    async with async_session_maker() as session:
+        user = await make_user(session, 32)
+        product = await make_product(session, user.id, "Duplicate-safe License")
+        await BalanceService.add_balance(
+            session, user.id, Decimal("2"), TransactionType.DEPOSIT, payment_reference="seed-32"
+        )
+        await InventoryService.add_item(session, product.id, "same-license")
+
+        first = await CheckoutService.purchase(
+            session, user.id, product.id, payment_reference="checkout:32:retry-1"
+        )
+        second = await CheckoutService.purchase(
+            session, user.id, product.id, payment_reference="checkout:32:retry-1"
+        )
+
+        await session.refresh(user)
+        await session.refresh(product)
+        purchases = (
+            await session.execute(
+                select(Transaction).where(
+                    Transaction.payment_reference == "checkout:32:retry-1"
+                )
+            )
+        ).scalars().all()
+        assert first.order.id == second.order.id
+        assert second.delivery_value == "same-license"
+        assert user.balance == Decimal("0")
+        assert user.total_orders == 1
+        assert product.total_sold == 1
+        assert len(purchases) == 1
 
 
 @pytest.mark.asyncio

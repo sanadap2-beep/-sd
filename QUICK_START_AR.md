@@ -42,9 +42,21 @@ docker compose up -d --build
 
 ## 4) فحص سريع قبل التسليم
 
+شغّل الفحص قبل التشغيل وبعد أن يصبح رابط الـAPI متاحاً:
+
+```bash
+python scripts/preflight.py
+python scripts/preflight.py --base-url https://your-host.example --require-schema
+```
+
+ثم:
+
 ```bash
 python -m compileall -q .
 pytest -q
 python scripts/security_audit.py
 python scripts/i18n_audit.py
 ```
+
+يبدأ الإصدار الآمن وطرق الدفع والميزات المالية الحساسة مغلقة. لا تستخدم أموالاً
+حقيقية قبل اختبار مزود الدفع والتكرار والاسترجاع في staging.

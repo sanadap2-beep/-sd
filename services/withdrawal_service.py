@@ -19,7 +19,7 @@ class WithdrawalError(Exception):
 class WithdrawalService:
     @staticmethod
     async def shamcash_syp_enabled() -> bool:
-        return await SettingsService.get_bool("withdraw_shamcash_syp_enabled", True)
+        return await SettingsService.get_bool("withdraw_shamcash_syp_enabled", False)
 
     @staticmethod
     async def min_amount_usd() -> Decimal:

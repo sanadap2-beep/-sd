@@ -195,6 +195,7 @@ async def number_order_refund(
         description=f"استرجاع إداري لطلب الرقم #{order.id}",
         related_table="number_orders",
         related_id=order.id,
+        payment_reference=f"number_refund:{order.id}",
     )
     order.status = OrderStatus.REFUNDED
     order.completed_at = datetime.utcnow()

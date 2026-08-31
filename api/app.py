@@ -12,7 +12,7 @@ import time
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -60,6 +60,7 @@ from services.loyalty_service import LoyaltyService
 from services.observability import init_observability
 from services.operation_lock_service import OperationBusyError, OperationLockService
 from services.promotion_service import PromotionService
+from services.feature_service import FeatureService
 from services.receipt_service import ReceiptService
 from services.upsell_service import UpsellService
 from services.watch_service import WatchService
@@ -70,6 +71,7 @@ init_observability()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await init_db()
+    await FeatureService.sync_registry()
     yield
 
 
@@ -128,6 +130,20 @@ app.include_router(admin_router)
 app.include_router(reseller_router)
 
 _setup_used = False
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _checkout_payment_reference(user_id: int, raw_key: str | None) -> str | None:
+    """Convert an HTTP idempotency key into a database-scoped reference."""
+    if raw_key is None or not raw_key.strip():
+        return None
+    key = raw_key.strip()
+    if not _IDEMPOTENCY_KEY_RE.fullmatch(key):
+        raise HTTPException(
+            status_code=400,
+            detail="Idempotency-Key must contain only ASCII letters, digits, dot, underscore, colon, or dash",
+        )
+    return f"checkout:{user_id}:{key}"
 
 
 class SetupPayload(BaseModel):
@@ -550,17 +566,21 @@ async def checkout(
     payload: CheckoutIn,
     current_user: User = Depends(get_current_user),
     session=Depends(get_session),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     if await AbuseGuardService.is_blocked(session, current_user.id):
         raise HTTPException(status_code=429, detail="تم إيقاف العملية مؤقتاً للمراجعة")
+    payment_reference = _checkout_payment_reference(current_user.id, idempotency_key)
+    lock_key = payment_reference or f"checkout:{current_user.id}:{payload.product_id}"
     try:
-        async with OperationLockService.acquire(f"checkout:{current_user.id}:{payload.product_id}"):
+        async with OperationLockService.acquire(lock_key):
             result = await CheckoutService.purchase(
                 session,
                 current_user.id,
                 payload.product_id,
                 payload.target.strip(),
                 payload.quantity,
+                payment_reference=payment_reference,
             )
     except OperationBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

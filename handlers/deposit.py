@@ -15,13 +15,13 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery
 from sqlalchemy import select
-from config import settings
 from database.models import DepositRequest, DepositStatus, User, TransactionType
 from services.settings_service import SettingsService
 from services.balance_service import BalanceService
 from services.notification_service import NotificationService
 from services.stars_service import StarsService
 from services.dynamic_service import DynamicService
+from handlers.deposit_methods import _payment_method_enabled
 from services.input_validation_service import InputValidationError, InputValidationService
 from states.states import DepositStates
 from keyboards.admin import deposit_decision_kb
@@ -68,12 +68,12 @@ async def deposit_start_cb(callback: CallbackQuery, state: FSMContext, db_user=N
 
 async def _show_deposit_methods(target, db_user=None):
     """يعرض قائمة طرق الدفع الست بلغة المستخدم."""
-    shamcash_manual = await SettingsService.get_bool('payment_shamcash_manual_enabled', True) and bool(settings.SHAMCASH_MANUAL_ADDRESS)
-    stars = await SettingsService.get_bool('payment_stars_enabled', True)
-    usdt_manual = await SettingsService.get_bool('payment_usdt_manual_enabled', True) and any((settings.USDT_TRC20_ADDRESS, settings.USDT_ERC20_ADDRESS, settings.USDT_BEP20_ADDRESS))
-    shamcash_auto = await SettingsService.get_bool('payment_shamcash_auto_enabled', True) and bool(settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS)
-    usdt_auto = await SettingsService.get_bool('payment_usdt_auto_enabled', True) and bool(settings.PLISIO_SECRET_KEY)
-    other = await SettingsService.get_bool('payment_other_enabled', True)
+    shamcash_manual = await _payment_method_enabled('shamcash_manual')
+    stars = await _payment_method_enabled('stars')
+    usdt_manual = await _payment_method_enabled('usdt_manual')
+    shamcash_auto = await _payment_method_enabled('shamcash_auto')
+    usdt_auto = await _payment_method_enabled('usdt_auto')
+    other = await _payment_method_enabled('other')
     language = getattr(db_user, 'language_code', 'ar') or 'ar'
     text = I18nService.t('deposit_title', language)
     kb = deposit_menu_kb(shamcash_manual_enabled=shamcash_manual, stars_enabled=stars, usdt_manual_enabled=usdt_manual, shamcash_auto_enabled=shamcash_auto, usdt_auto_enabled=usdt_auto, other_enabled=other, language=language)
@@ -87,6 +87,9 @@ async def _show_deposit_methods(target, db_user=None):
 
 @router.callback_query(F.data == 'deposit:stars')
 async def deposit_stars_menu(callback: CallbackQuery, session, db_user=None):
+    if not await SettingsService.get_bool('payment_stars_enabled', False):
+        await callback.answer(I18nService.t('payment_method_disabled', _auto_lang(locals())), show_alert=True)
+        return
     await callback.answer()
     packages = await DynamicService.get_active_stars_packages(session)
     language = getattr(db_user, 'language_code', 'ar') or 'ar'
@@ -97,6 +100,9 @@ async def deposit_stars_menu(callback: CallbackQuery, session, db_user=None):
 
 @router.callback_query(F.data.startswith('stars_buy:'))
 async def stars_buy(callback: CallbackQuery, session, bot, db_user=None):
+    if not await SettingsService.get_bool('payment_stars_enabled', False):
+        await callback.answer(I18nService.t('payment_method_disabled', _auto_lang(locals())), show_alert=True)
+        return
     package_id = int(callback.data.split(':')[1])
     await callback.answer()
     success = await StarsService.send_stars_invoice(bot=bot, chat_id=callback.message.chat.id, package_id=package_id, session=session)
@@ -105,6 +111,15 @@ async def stars_buy(callback: CallbackQuery, session, bot, db_user=None):
 
 @router.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
+    if not await SettingsService.get_bool('payment_stars_enabled', False):
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message=I18nService.t(
+                'payment_method_disabled',
+                getattr(pre_checkout_query.from_user, 'language_code', 'ar'),
+            ),
+        )
+        return
     await StarsService.handle_pre_checkout(pre_checkout_query)
 
 @router.message(F.successful_payment)
@@ -177,6 +192,10 @@ async def deposit_amount_received(message: Message, state: FSMContext):
     ملاحظة: هذا للتوافق فقط مع أي مستخدم عالق في
     الحالة القديمة. الطرق الجديدة في deposit_methods.py
     """
+    if not await SettingsService.get_bool('payment_other_enabled', False):
+        await state.clear()
+        await message.answer(I18nService.t('payment_method_disabled', _auto_lang(locals())))
+        return
     try:
         amount = _parse_positive_amount(message.text)
     except (InvalidOperation, AttributeError):

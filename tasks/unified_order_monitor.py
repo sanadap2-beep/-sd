@@ -204,6 +204,7 @@ async def _handle_partial(session, order, user, product_name, notifier, remains)
                 description=(f"استرجاع جزئي - طلب #{order.id} ({remains} متبقي)"),
                 related_table="unified_orders",
                 related_id=order.id,
+                payment_reference=f"unified_partial_refund:{order.id}:{remains}",
             )
 
             await notifier.notify_user(
@@ -243,6 +244,7 @@ async def _handle_failed(session, order, user, product_name, notifier):
         description=(f"استرجاع - فشل تنفيذ الطلب #{order.id}"),
         related_table="unified_orders",
         related_id=order.id,
+        payment_reference=f"unified_refund:order:{order.id}",
     )
     order.status = UnifiedOrderStatus.REFUNDED
     await session.commit()

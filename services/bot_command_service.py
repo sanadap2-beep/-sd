@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -34,11 +35,8 @@ from database.models import (
     DepositRequest,
     DepositStatus,
     EscrowHold,
-    EscrowStatus,
-    FeatureEvent,
     MarketListing,
     MarketListingStatus,
-    MarketTransaction,
     NumberOrder,
     OrderStatus,
     Product,
@@ -54,6 +52,7 @@ from database.models import (
     UserSubscription,
 )
 from services.balance_service import BalanceService
+from services.feature_registry import SAFE_DEFAULT_DISABLED_FEATURES
 from services.feature_service import FeatureService
 from services.settings_service import SettingsService
 
@@ -466,20 +465,13 @@ class SentinelService:
     تلقائياً، وتبقى الأساسية (الرصيد، الحساب، الدعم) شغّالة.
     """
 
-    # ميزات تُعطَّل في الوضع الآمن لأنها تحرّك أموالاً أو تعتمد مزودين
-    RISKY_FEATURES = (
-        "peer_marketplace",
-        "escrow_engine",
-        "bulk_numbers",
-        "autonomous_purchase_agent",
-        "drip_feed",
-        "warm_pool",
-        "p2p_code_market",
-        "revenue_sharing_tokens",
-        "provider_bidding",
-    )
+    # Keep the automatic safe-mode list aligned with the registry's
+    # deliberately disabled defaults, so a newly added risky feature cannot
+    # silently drift out of the self-healing protection list.
+    RISKY_FEATURES = tuple(sorted(SAFE_DEFAULT_DISABLED_FEATURES))
 
     SAFE_MODE_KEY = "sentinel_safe_mode"
+    SAFE_MODE_FEATURES_KEY = "sentinel_safe_mode_features"
     ERROR_COUNT_KEY = "sentinel_error_count"
     LAST_CHECK_KEY = "sentinel_last_check"
 
@@ -539,6 +531,15 @@ class SentinelService:
             if await FeatureService.enabled(key):
                 await FeatureService.set_enabled(session, key, False)
                 disabled.append(key)
+        # Remember only the flags changed by this safe-mode transition.
+        # Without this list, leaving safe mode would re-enable features that
+        # were intentionally disabled (including the safe fresh-install
+        # defaults).
+        await SettingsService.set(
+            session,
+            SentinelService.SAFE_MODE_FEATURES_KEY,
+            json.dumps(disabled, ensure_ascii=False),
+        )
         await SettingsService.set(session, SentinelService.SAFE_MODE_KEY, "true")
         await SettingsService.set(session, "sentinel_safe_mode_reason", reason[:255])
         await SettingsService.set(
@@ -550,13 +551,22 @@ class SentinelService:
 
     @staticmethod
     async def disengage_safe_mode(session) -> list[str]:
-        """يعيد تفعيل الميزات الخطرة بعد استقرار الوضع."""
+        """Restore only features that this safe-mode transition disabled."""
+        raw_keys = await SettingsService.get(SentinelService.SAFE_MODE_FEATURES_KEY, "[]")
+        try:
+            disabled_keys = json.loads(raw_keys or "[]")
+        except (TypeError, ValueError):
+            disabled_keys = []
+        if not isinstance(disabled_keys, list):
+            disabled_keys = []
+
         restored = []
-        for key in SentinelService.RISKY_FEATURES:
-            if not await FeatureService.enabled(key):
+        for key in disabled_keys:
+            if key in SentinelService.RISKY_FEATURES and not await FeatureService.enabled(key):
                 await FeatureService.set_enabled(session, key, True)
                 restored.append(key)
         await SettingsService.set(session, SentinelService.SAFE_MODE_KEY, "false")
+        await SettingsService.set(session, SentinelService.SAFE_MODE_FEATURES_KEY, "[]")
         await SettingsService.set(session, "sentinel_safe_mode_reason", "")
         if restored:
             logger.info("خرج البوت من الوضع الآمن: أُعيدت %s ميزة.", len(restored))

@@ -19,7 +19,6 @@ import logging
 from decimal import ROUND_DOWN, Decimal
 from uuid import uuid4
 
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from database.models import LoyaltyEvent, Transaction, TransactionType, User
@@ -135,7 +134,7 @@ class PointsService:
             raise PointsError("الدفع بالنقاط موقوف حالياً.")
 
         async with BalanceService._get_lock(user_id):
-            user = await session.get(User, user_id)
+            user = await BalanceService._get_user_for_update(session, user_id)
             if user is None:
                 raise PointsError("المستخدم غير موجود.")
             if (user.loyalty_points or 0) < points:
@@ -228,7 +227,6 @@ class PointsService:
 
     @staticmethod
     async def format(points: int) -> str:
-        rate = await PointsService.points_per_usd()
         usd = await PointsService.usd_for_points(points)
         return f"⭐ {points} نقطة (≈ {usd}$)"
 

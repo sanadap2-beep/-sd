@@ -20,7 +20,6 @@ from database.models import (
     TransactionType,
     UnifiedOrder,
     UnifiedOrderStatus,
-    User,
 )
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.encryption_service import EncryptionError, EncryptionService
@@ -87,18 +86,56 @@ class InventoryService:
         price_usd,
         quantity: int = 1,
         promotion_id: int | None = None,
-    ) -> tuple[UnifiedOrder, str, dict | None]:
+        payment_reference: str | None = None,
+    ) -> tuple[UnifiedOrder, str, dict | None, bool]:
         """يسلّم أول عنصر متاح ويخصم الرصيد في معاملة واحدة."""
         if quantity != 1:
             raise InventoryError("منتج المخزون يباع بعنصر واحد لكل طلب.")
 
         async with BalanceService._get_lock(user_id):
-            user = await session.get(User, user_id)
+            user = await BalanceService._get_user_for_update(session, user_id)
             product = await session.get(Product, product_id)
             if user is None or product is None:
                 raise InventoryError("المستخدم أو المنتج غير موجود.")
             if product.fulfillment_type != ProductFulfillmentType.INVENTORY:
                 raise InventoryError("هذا المنتج ليس من نوع المخزون الرقمي.")
+
+            if payment_reference:
+                existing = await BalanceService.get_transaction_by_reference(
+                    session, payment_reference
+                )
+                if existing is not None:
+                    if (
+                        existing.user_id != user_id
+                        or existing.type != TransactionType.PURCHASE
+                        or existing.amount != -price_usd
+                    ):
+                        raise InventoryError("مرجع الشراء مستخدم ببيانات مختلفة.")
+                    if existing.related_table != "unified_orders" or existing.related_id is None:
+                        raise InventoryError(
+                            "تم حجز هذا الشراء دون اكتمال التسليم؛ أوقف إعادة المحاولة وراجعه من الإدارة."
+                        )
+                    order = await session.get(UnifiedOrder, existing.related_id)
+                    if (
+                        order is None
+                        or order.user_id != user_id
+                        or order.product_id != product_id
+                        or order.price_usd != price_usd
+                        or order.quantity != quantity
+                    ):
+                        raise InventoryError("مرجع الشراء مستخدم لطلب مختلف.")
+                    try:
+                        result_data = json.loads(order.result_data or "{}")
+                        item_id = int(result_data["inventory_item_id"])
+                        item = await session.get(DigitalInventoryItem, item_id)
+                        if item is None:
+                            raise ValueError
+                        value = InventoryService.decrypt_value(item.encrypted_value)
+                        metadata = result_data.get("metadata")
+                    except (KeyError, TypeError, ValueError, InventoryError):
+                        raise InventoryError("تعذر إعادة تسليم الطلب السابق بأمان.") from None
+                    return order, value, metadata, True
+
             if user.balance < price_usd:
                 raise InsufficientBalanceError("رصيدك غير كافٍ.")
 
@@ -178,12 +215,13 @@ class InventoryService:
                     balance_after=user.balance,
                     related_table="unified_orders",
                     related_id=order.id,
+                    payment_reference=payment_reference,
                     description=f"شراء منتج رقمي من المخزون #{product_id}",
                 )
             )
             await session.commit()
             await session.refresh(order)
-            return order, value, metadata
+            return order, value, metadata, False
 
     @staticmethod
     async def void_item(session, item_id: int) -> bool:

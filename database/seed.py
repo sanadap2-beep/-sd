@@ -62,15 +62,18 @@ DEFAULT_SETTINGS = {
     "usdt_erc20_address": settings.USDT_ERC20_ADDRESS,
     "usdt_bep20_address": settings.USDT_BEP20_ADDRESS,
     # ── تفعيل/تعطيل طرق الدفع ──
-    "payment_shamcash_manual_enabled": "true",
-    "payment_stars_enabled": "true",
-    "payment_usdt_manual_enabled": "true",
-    "payment_shamcash_auto_enabled": "true",
-    "payment_usdt_auto_enabled": "true",
-    "payment_other_enabled": "true",
+    # جميع طرق الإيداع والسحب تبدأ مغلقة حتى يضع المشغّل العناوين
+    # والمفاتيح ويختبر دورة الدفع في staging. هذا يمنع عرض وجهة دفع فارغة
+    # أو قبول أموال حقيقية بالخطأ بعد أول تشغيل.
+    "payment_shamcash_manual_enabled": "false",
+    "payment_stars_enabled": "false",
+    "payment_usdt_manual_enabled": "false",
+    "payment_shamcash_auto_enabled": "false",
+    "payment_usdt_auto_enabled": "false",
+    "payment_other_enabled": "false",
     # ── السحب ──
     "withdraw_min_usd": "1",
-    "withdraw_shamcash_syp_enabled": "true",
+    "withdraw_shamcash_syp_enabled": "false",
     # ── شروحات طرق الدفع ──
     "payment_shamcash_manual_description": (
         "💵 <b>الشحن اليدوي عبر شام كاش</b>\n\n"

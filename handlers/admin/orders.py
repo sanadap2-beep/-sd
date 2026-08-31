@@ -247,6 +247,7 @@ async def order_refund(callback: CallbackQuery, session, bot):
         description=f"استرجاع إداري للطلب الموحد #{order.id}",
         related_table="unified_orders",
         related_id=order.id,
+        payment_reference=f"unified_refund:order:{order.id}",
     )
     order.status = UnifiedOrderStatus.REFUNDED
     order.status_message = "تم الاسترجاع من الإدارة"

@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
 
-from api.app import app
+from api.app import _checkout_payment_reference, app
 from config import settings
 
 
@@ -25,6 +25,18 @@ def signed_init_data(user_id: int) -> str:
     secret = hmac.new(b"WebAppData", settings.BOT_TOKEN.encode(), hashlib.sha256).digest()
     payload["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
     return urlencode(payload)
+
+
+def test_checkout_idempotency_reference_is_scoped_and_validated():
+    assert _checkout_payment_reference(7, " request-1 ") == "checkout:7:request-1"
+    assert _checkout_payment_reference(7, None) is None
+
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        _checkout_payment_reference(7, "bad key")
+    assert exc_info.value.status_code == 400
 
 
 def test_public_health_and_catalog():

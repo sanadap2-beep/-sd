@@ -53,6 +53,24 @@ _CATEGORY_EMOJI = {
     "القنوات": "🌐",
 }
 
+# These features can move money, buy from an external provider, or create a
+# second-sided financial obligation. They stay disabled on a fresh install
+# until the operator explicitly enables them after staging verification.
+SAFE_DEFAULT_DISABLED_FEATURES = frozenset(
+    {
+        "peer_marketplace",
+        "trusted_seller_auto_approve",
+        "escrow_engine",
+        "bulk_numbers",
+        "autonomous_purchase_agent",
+        "drip_feed",
+        "warm_pool",
+        "p2p_code_market",
+        "revenue_sharing_tokens",
+        "provider_bidding",
+    }
+)
+
 
 def _spec(
     key: str,
@@ -119,7 +137,7 @@ FEATURES: tuple[FeatureSpec, ...] = (
         "Peer Marketplace",
         "السوق",
         "المستخدمون يعرضون خدماتهم وحساباتهم، والأدمن يوافق ويحدد العمولة قبل النشر.",
-        True,
+        False,
         default_commission_percent=5,
         min_price_usd=1,
         max_price_usd=10000,
@@ -135,7 +153,7 @@ FEATURES: tuple[FeatureSpec, ...] = (
         "Trusted Seller Auto Approval",
         "السوق",
         "ينشر عروض السوق تلقائياً للبائعين ذوي السجل الجيد ضمن حدود سعر آمنة.",
-        True,
+        False,
         min_successful_sales=5,
         min_success_rate=90,
         max_auto_price_usd=50,
@@ -146,7 +164,7 @@ FEATURES: tuple[FeatureSpec, ...] = (
         "Escrow Engine",
         "السوق",
         "يحجز أموال المشتري حتى يؤكد الاستلام أو تنتهي المهلة، ثم يوزعها.",
-        True,
+        False,
         release_after_confirm=True,
         dispute_window_hours=24,
     ),
@@ -191,7 +209,7 @@ FEATURES: tuple[FeatureSpec, ...] = (
         "Bulk Number Purchase",
         "الأرقام",
         "شراء عدة أرقام بطلب واحد مع خصم تدريجي وتصدير النتائج.",
-        True,
+        False,
         max_quantity=500,
         concurrency=10,
         discount_tiers_json='[[10,1],[50,3],[100,5],[500,8]]',

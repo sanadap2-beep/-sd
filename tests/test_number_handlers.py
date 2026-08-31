@@ -9,8 +9,17 @@ import pytest
 from sqlalchemy import select
 
 from database.engine import async_session_maker
-from database.models import Country, NumberOrder, NumberService, OrderStatus, ProviderName, User
+from database.models import (
+    Country,
+    NumberOrder,
+    NumberService,
+    OrderStatus,
+    ProviderName,
+    TransactionType,
+    User,
+)
 from handlers.numbers import confirm_buy, refresh_order
+from services.balance_service import BalanceService
 from providers.base import OrderStatusResult
 from providers.manager import ProviderUnavailableError
 
@@ -121,6 +130,43 @@ async def test_number_confirm_success_creates_pending_order_and_deducts_balance(
     assert orders[0].phone_number == "+15550000001"
     assert user.balance == Decimal("8.5000")  # 1$ + default 50% margin
     assert callback.message.answers and "تم شراء الرقم" in callback.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_number_confirm_duplicate_reference_does_not_call_provider(monkeypatch):
+    user_id, service_code, country_code = await _seed_number_catalog("10")
+    reference = "number_purchase:quote-retry-1"
+    called = {"prices": False, "buy": False}
+
+    async def fake_prices(*args, **kwargs):
+        called["prices"] = True
+        return {ProviderName.FIVESIM: Decimal("1.00")}
+
+    async def fake_buy(*args, **kwargs):
+        called["buy"] = True
+        return FakeBuyResult()
+
+    monkeypatch.setattr("handlers.numbers.provider_manager.get_cheapest_price", fake_prices)
+    monkeypatch.setattr("handlers.numbers.provider_manager.buy_number", fake_buy)
+
+    async with async_session_maker() as session:
+        await BalanceService.deduct_balance(
+            session,
+            user_id,
+            Decimal("1.5"),
+            TransactionType.PURCHASE,
+            payment_reference=reference,
+            is_purchase=True,
+        )
+        user = await session.get(User, user_id)
+        callback = DummyCallback(
+            f"num_confirm:{service_code}:{country_code}:quote-retry-1"
+        )
+        await confirm_buy(callback, session, user, DummyBot())
+
+    assert called == {"prices": False, "buy": False}
+    assert callback.answers[-1][1] is True
+    assert "معالجة" in callback.answers[-1][0]
 
 
 @pytest.mark.asyncio

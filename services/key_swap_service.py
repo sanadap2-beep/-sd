@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -25,14 +24,10 @@ from database.models import (
     InventoryItemStatus,
     Product,
     ProductFulfillmentType,
-    ProductStatus,
-    TransactionType,
     UnifiedOrder,
     UnifiedOrderStatus,
     User,
 )
-from services.balance_service import BalanceService
-from services.encryption_service import EncryptionService
 from services.feature_service import FeatureService
 from services.inventory_service import InventoryService
 from services.notification_service import NotificationService
@@ -110,7 +105,7 @@ class KeySwapService:
 
         # ── تسليم بديل بسعر صفر (الضمان على حساب المنصة) ──
         try:
-            _swap_order, new_code, _meta = await InventoryService.purchase(
+            _swap_order, new_code, _meta, _replayed = await InventoryService.purchase(
                 session,
                 user_id=user_id,
                 product_id=product.id,

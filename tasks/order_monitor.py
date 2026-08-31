@@ -243,6 +243,7 @@ async def _expire_and_refund(session, order, notifier, bot):
         description=(f"استرجاع - انتهت صلاحية الطلب #{order.id}"),
         related_table="number_orders",
         related_id=order.id,
+        payment_reference=f"number_refund:{order.id}",
     )
     order.status = OrderStatus.REFUNDED
     await session.commit()

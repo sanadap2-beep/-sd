@@ -100,6 +100,61 @@ async def _proof_already_submitted(session, proof: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+_PAYMENT_METHOD_SETTINGS = {
+    "shamcash_manual": "payment_shamcash_manual_enabled",
+    "stars": "payment_stars_enabled",
+    "usdt_manual": "payment_usdt_manual_enabled",
+    "shamcash_auto": "payment_shamcash_auto_enabled",
+    "usdt_auto": "payment_usdt_auto_enabled",
+    "other": "payment_other_enabled",
+}
+
+
+async def _payment_method_enabled(method: str) -> bool:
+    setting_key = _PAYMENT_METHOD_SETTINGS.get(method)
+    if not setting_key or not await SettingsService.get_bool(setting_key, False):
+        return False
+
+    # A flag alone must not expose a payment destination that is empty or an
+    # automatic gateway that has no credentials. Values edited by the admin
+    # live in SettingsService; environment values are only a compatibility
+    # fallback for deployments configured through .env.
+    if method == "shamcash_manual":
+        address = await SettingsService.get("shamcash_manual_address", "")
+        return bool(address or settings.SHAMCASH_MANUAL_ADDRESS)
+    if method == "usdt_manual":
+        addresses = (
+            await SettingsService.get("usdt_trc20_address", ""),
+            await SettingsService.get("usdt_erc20_address", ""),
+            await SettingsService.get("usdt_bep20_address", ""),
+        )
+        return any(addresses) or any(
+            (
+                settings.USDT_TRC20_ADDRESS,
+                settings.USDT_ERC20_ADDRESS,
+                settings.USDT_BEP20_ADDRESS,
+            )
+        )
+    if method == "shamcash_auto":
+        return bool(settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS)
+    if method == "usdt_auto":
+        return bool(settings.PLISIO_SECRET_KEY)
+    return True
+
+
+async def _require_payment_method(target, method: str, state: FSMContext | None = None) -> bool:
+    """Fail closed even when a user replays a hidden/old payment callback."""
+    if await _payment_method_enabled(method):
+        return True
+    if state is not None:
+        await state.clear()
+    if isinstance(target, CallbackQuery):
+        await target.answer("⚠️ طريقة الدفع موقوفة حالياً.", show_alert=True)
+    else:
+        await target.answer("⚠️ طريقة الدفع موقوفة حالياً.")
+    return False
+
+
 # ══════════════ قائمة طرق الدفع الست ══════════════
 
 
@@ -107,24 +162,12 @@ async def _show_deposit_menu(target, state: FSMContext):
     """يعرض قائمة طرق الدفع الست."""
     await state.clear()
 
-    shamcash_manual = await SettingsService.get_bool(
-        "payment_shamcash_manual_enabled", True
-    ) and bool(settings.SHAMCASH_MANUAL_ADDRESS)
-    stars = await SettingsService.get_bool("payment_stars_enabled", True)
-    usdt_manual = await SettingsService.get_bool("payment_usdt_manual_enabled", True) and any(
-        (
-            settings.USDT_TRC20_ADDRESS,
-            settings.USDT_ERC20_ADDRESS,
-            settings.USDT_BEP20_ADDRESS,
-        )
-    )
-    shamcash_auto = await SettingsService.get_bool("payment_shamcash_auto_enabled", True) and bool(
-        settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS
-    )
-    usdt_auto = await SettingsService.get_bool("payment_usdt_auto_enabled", True) and bool(
-        settings.PLISIO_SECRET_KEY
-    )
-    other = await SettingsService.get_bool("payment_other_enabled", True)
+    shamcash_manual = await _payment_method_enabled("shamcash_manual")
+    stars = await _payment_method_enabled("stars")
+    usdt_manual = await _payment_method_enabled("usdt_manual")
+    shamcash_auto = await _payment_method_enabled("shamcash_auto")
+    usdt_auto = await _payment_method_enabled("usdt_auto")
+    other = await _payment_method_enabled("other")
 
     text = "💰 <b>شحن الرصيد</b>\n\nاختر طريقة الشحن المناسبة لك:"
     kb = deposit_methods_kb(
@@ -150,6 +193,8 @@ async def _show_deposit_menu(target, state: FSMContext):
 
 @router.callback_query(F.data == "deposit:other")
 async def deposit_other(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "other", state):
+        return
     await callback.answer()
     await state.clear()
     support = await SettingsService.get("support_username", "@support")
@@ -170,6 +215,8 @@ async def deposit_other(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "deposit:shamcash_manual")
 async def shamcash_manual_start(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "shamcash_manual", state):
+        return
     await callback.answer()
     await state.clear()
     description = await SettingsService.get(
@@ -183,6 +230,8 @@ async def shamcash_manual_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "deposit_start:shamcash_manual")
 async def shamcash_manual_amount_ask(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "shamcash_manual", state):
+        return
     await callback.answer()
     min_deposit = await SettingsService.get_decimal("min_deposit_shamcash_usd", Decimal("0.5"))
     await callback.message.edit_text(
@@ -195,6 +244,8 @@ async def shamcash_manual_amount_ask(callback: CallbackQuery, state: FSMContext)
 
 
 async def _start_shamcash_manual_proof(target, state: FSMContext, amount: Decimal) -> bool:
+    if not await _require_payment_method(target, "shamcash_manual", state):
+        return False
     min_deposit = await SettingsService.get_decimal("min_deposit_shamcash_usd", Decimal("0.5"))
     if amount < min_deposit:
         await target.answer(f"⚠️ الحد الأدنى هو {min_deposit}$")
@@ -203,6 +254,7 @@ async def _start_shamcash_manual_proof(target, state: FSMContext, amount: Decima
     await state.update_data(amount_usd=str(amount))
 
     address = await SettingsService.get("shamcash_manual_address", "")
+    address = address or settings.SHAMCASH_MANUAL_ADDRESS
     name = await SettingsService.get("shamcash_manual_name", "")
     rate = await SettingsService.get_decimal("usd_to_syp_rate", Decimal("130"))
     amount_syp = (amount * rate).quantize(Decimal("1"))
@@ -243,6 +295,8 @@ async def shamcash_manual_amount_received(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("dep_custom:"))
 async def deposit_custom_amount(callback: CallbackQuery, state: FSMContext):
     _, method, currency = callback.data.split(":", 2)
+    if not await _require_payment_method(callback, method, state):
+        return
     if method == "shamcash_manual":
         await state.set_state(ShamCashManualStates.waiting_amount)
         await callback.message.answer("✍️ أرسل المبلغ بالدولار، مثال: 5")
@@ -266,6 +320,8 @@ async def deposit_preset_amount(
     bot,
 ):
     _, method, currency, raw_amount = callback.data.split(":", 3)
+    if not await _require_payment_method(callback, method, state):
+        return
     try:
         amount = Decimal(raw_amount)
     except InvalidOperation:
@@ -286,6 +342,8 @@ async def deposit_preset_amount(
 
 @router.message(ShamCashManualStates.waiting_proof_photo, F.photo)
 async def shamcash_manual_photo_received(message: Message, state: FSMContext):
+    if not await _require_payment_method(message, "shamcash_manual", state):
+        return
     await state.update_data(photo_file_id=message.photo[-1].file_id)
     await message.answer("🔢 الآن أرسل <b>رقم عملية التحويل</b>:")
     await state.set_state(ShamCashManualStates.waiting_tx_number)
@@ -304,6 +362,8 @@ async def shamcash_manual_tx_received(
     db_user: User,
     bot,
 ):
+    if not await _require_payment_method(message, "shamcash_manual", state):
+        return
     data = await state.get_data()
     amount_usd = Decimal(data["amount_usd"])
     photo_file_id = data["photo_file_id"]
@@ -359,6 +419,8 @@ async def shamcash_manual_tx_received(
 
 @router.callback_query(F.data == "deposit:usdt_manual")
 async def usdt_manual_start(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "usdt_manual", state):
+        return
     await callback.answer()
     await state.clear()
     description = await SettingsService.get(
@@ -372,6 +434,8 @@ async def usdt_manual_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "deposit_start:usdt_manual")
 async def usdt_manual_network_ask(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "usdt_manual", state):
+        return
     await callback.answer()
     await callback.message.edit_text(
         "₮ <b>USDT يدوي</b>\n\n"
@@ -386,6 +450,8 @@ async def usdt_manual_network_ask(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("usdt_net:manual:"))
 async def usdt_manual_network_selected(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "usdt_manual", state):
+        return
     network = callback.data.split(":")[2]
     await state.update_data(network=network)
     await callback.answer()
@@ -402,6 +468,8 @@ async def usdt_manual_network_selected(callback: CallbackQuery, state: FSMContex
 
 @router.message(UsdtManualStates.waiting_amount)
 async def usdt_manual_amount_received(message: Message, state: FSMContext):
+    if not await _require_payment_method(message, "usdt_manual", state):
+        return
     try:
         amount = _parse_positive_amount(message.text)
     except (InvalidOperation, AttributeError):
@@ -419,6 +487,7 @@ async def usdt_manual_amount_received(message: Message, state: FSMContext):
 
     address_key = f"usdt_{network.lower()}_address"
     address = await SettingsService.get(address_key, "")
+    address = address or getattr(settings, address_key.upper(), "")
 
     if not address:
         await message.answer(f"⚠️ عنوان محفظة {network} غير محدد. تواصل مع الدعم.")
@@ -442,6 +511,8 @@ async def usdt_manual_amount_received(message: Message, state: FSMContext):
 
 @router.message(UsdtManualStates.waiting_proof_photo, F.photo)
 async def usdt_manual_photo_received(message: Message, state: FSMContext):
+    if not await _require_payment_method(message, "usdt_manual", state):
+        return
     await state.update_data(photo_file_id=message.photo[-1].file_id)
     await message.answer("🔢 الآن أرسل <b>TX Hash</b> (رقم العملية على البلوكشين):")
     await state.set_state(UsdtManualStates.waiting_tx_hash)
@@ -460,6 +531,8 @@ async def usdt_manual_tx_received(
     db_user: User,
     bot,
 ):
+    if not await _require_payment_method(message, "usdt_manual", state):
+        return
     data = await state.get_data()
     amount_usd = Decimal(data["amount_usd"])
     photo_file_id = data["photo_file_id"]
@@ -524,6 +597,8 @@ async def usdt_manual_tx_received(
 
 @router.callback_query(F.data == "deposit:shamcash_auto")
 async def shamcash_auto_start(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "shamcash_auto", state):
+        return
     await callback.answer()
     await state.clear()
     description = await SettingsService.get(
@@ -537,6 +612,8 @@ async def shamcash_auto_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "deposit_start:shamcash_auto")
 async def shamcash_auto_currency_ask(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "shamcash_auto", state):
+        return
     await callback.answer()
     await callback.message.edit_text(
         "💳 <b>شام كاش تلقائي</b>\n\nاختر العملة التي ستدفع بها:",
@@ -547,6 +624,8 @@ async def shamcash_auto_currency_ask(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data.startswith("shamcash_curr:"))
 async def shamcash_auto_currency_selected(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "shamcash_auto", state):
+        return
     currency = callback.data.split(":")[1]
     await state.update_data(currency=currency)
     await callback.answer()
@@ -595,6 +674,8 @@ async def _create_shamcash_auto_invoice(
     amount: Decimal,
     currency: str,
 ):
+    if not await _require_payment_method(target, "shamcash_auto", state):
+        return
     min_deposit_usd = await SettingsService.get_decimal("min_deposit_shamcash_usd", Decimal("0.5"))
     rate = await SettingsService.get_decimal("usd_to_syp_rate", Decimal("130"))
 
@@ -704,6 +785,8 @@ async def shamcash_auto_amount_received(
     db_user: User,
     bot,
 ):
+    if not await _require_payment_method(message, "shamcash_auto", state):
+        return
     try:
         amount = _parse_positive_amount(message.text)
     except (InvalidOperation, AttributeError):
@@ -723,6 +806,8 @@ async def shamcash_auto_tx_received(
     db_user: User,
     bot,
 ):
+    if not await _require_payment_method(message, "shamcash_auto", state):
+        return
     tx_ref = message.text.strip()
     if not tx_ref:
         await message.answer("⚠️ أرسل رقم العملية.")
@@ -842,6 +927,8 @@ async def shamcash_auto_verify_button(
     session,
     db_user: User,
 ):
+    if not await _require_payment_method(callback, "shamcash_auto", state):
+        return
     invoice_id = int(callback.data.split(":")[1])
     invoice = await _get_owned_invoice(session, invoice_id, db_user.id)
     if invoice is None or invoice.status != AutoInvoiceStatus.PENDING:
@@ -899,6 +986,8 @@ async def shamcash_auto_cancel(
 
 @router.callback_query(F.data == "deposit:usdt_auto")
 async def usdt_auto_start(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "usdt_auto", state):
+        return
     await callback.answer()
     await state.clear()
     description = await SettingsService.get(
@@ -912,6 +1001,8 @@ async def usdt_auto_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "deposit_start:usdt_auto")
 async def usdt_auto_amount_ask(callback: CallbackQuery, state: FSMContext):
+    if not await _require_payment_method(callback, "usdt_auto", state):
+        return
     await callback.answer()
     min_deposit = await SettingsService.get_decimal("min_deposit_usdt_usd", Decimal("2"))
     await callback.message.edit_text(
@@ -937,6 +1028,8 @@ async def usdt_auto_amount_received(
     db_user: User,
     bot,
 ):
+    if not await _require_payment_method(message, "usdt_auto", state):
+        return
     try:
         amount = _parse_positive_amount(message.text)
     except (InvalidOperation, AttributeError):
@@ -1049,6 +1142,8 @@ async def usdt_auto_amount_received(
 
 @router.callback_query(F.data.startswith("usdt_check:"))
 async def usdt_auto_check_button(callback: CallbackQuery, session, bot, db_user: User):
+    if not await _require_payment_method(callback, "usdt_auto"):
+        return
     invoice_id = int(callback.data.split(":")[1])
     invoice = await _get_owned_invoice(session, invoice_id, db_user.id)
 

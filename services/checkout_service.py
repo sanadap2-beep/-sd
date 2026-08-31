@@ -86,6 +86,7 @@ class CheckoutService:
         product_id: int,
         target: str = "",
         quantity: int = 1,
+        payment_reference: str | None = None,
     ) -> CheckoutResult:
         product = await CheckoutService._get_product(session, product_id)
         fulfillment = getattr(product.fulfillment_type, "value", product.fulfillment_type)
@@ -105,16 +106,19 @@ class CheckoutService:
             if target:
                 raise CheckoutError("منتج المخزون لا يحتاج هدفاً.")
             try:
-                order, delivery, _metadata = await InventoryService.purchase(
+                order, delivery, _metadata, replayed = await InventoryService.purchase(
                     session,
                     user_id=user_id,
                     product_id=product.id,
                     price_usd=price,
                     quantity=quantity,
                     promotion_id=promotion.id if promotion else None,
+                    payment_reference=payment_reference,
                 )
             except (InventoryError, InsufficientBalanceError) as exc:
                 raise CheckoutError(str(exc)) from exc
+            if replayed:
+                return CheckoutResult(order, discount, delivery)
             if promotion:
                 await PromotionService.mark_used(session, promotion.id)
             await DynamicService.increment_product_sold(session, product.id, quantity)
@@ -131,6 +135,33 @@ class CheckoutService:
             raise CheckoutError("المنتج غير قابل للشراء التلقائي.")
         if (product.requires_link or product.requires_player_id) and not target:
             raise CheckoutError("هذا المنتج يحتاج رابطاً أو معرفاً لإتمام الطلب.")
+        if payment_reference:
+            existing = await BalanceService.get_transaction_by_reference(
+                session, payment_reference
+            )
+            if existing is not None:
+                if (
+                    existing.user_id != user_id
+                    or existing.type != TransactionType.PURCHASE
+                    or existing.amount != -price
+                ):
+                    raise CheckoutError("مرجع الشراء مستخدم ببيانات مختلفة.")
+                if existing.related_table != "unified_orders" or existing.related_id is None:
+                    raise CheckoutError(
+                        "تم خصم هذا الشراء دون اكتمال الطلب؛ أوقف إعادة المحاولة وراجعه من الإدارة."
+                    )
+                order = await session.get(UnifiedOrder, existing.related_id)
+                if (
+                    order is None
+                    or order.user_id != user_id
+                    or order.product_id != product.id
+                    or order.price_usd != price
+                    or order.target != target
+                    or order.quantity != quantity
+                ):
+                    raise CheckoutError("مرجع الشراء مستخدم لطلب مختلف.")
+                return CheckoutResult(order, discount)
+
         if not product.api_provider_id or not product.provider_service_id:
             raise CheckoutError("مزود المنتج غير مضبوط.")
 
@@ -149,6 +180,7 @@ class CheckoutService:
                 TransactionType.PURCHASE,
                 description=f"شراء {product.name_ar}",
                 is_purchase=True,
+                payment_reference=payment_reference,
             )
         except InsufficientBalanceError as exc:
             raise CheckoutError(str(exc)) from exc
@@ -195,6 +227,7 @@ class CheckoutService:
                 price,
                 TransactionType.REFUND,
                 description="استرجاع - فشل كل مزودي المنتج",
+                payment_reference=(f"{payment_reference}:refund" if payment_reference else None),
             )
             raise CheckoutError("فشل إرسال الطلب للمزود وتم استرجاع الرصيد.")
 
@@ -212,6 +245,14 @@ class CheckoutService:
             status_message="تم إرسال الطلب للمزود",
         )
         session.add(order)
+        await session.flush()
+        if payment_reference:
+            transaction = await BalanceService.get_transaction_by_reference(
+                session, payment_reference
+            )
+            if transaction is not None:
+                transaction.related_table = "unified_orders"
+                transaction.related_id = order.id
         await session.commit()
         await session.refresh(order)
         if promotion:

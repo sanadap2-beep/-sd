@@ -20,11 +20,32 @@ class InsufficientBalanceError(Exception):
 
 class BalanceService:
     """
-    ⚠️ القفل يعمل على مستوى العملية الواحدة فقط.
-    لو تم توسيع الاستضافة لأكثر من instance يلزم قفل موزع عبر Redis.
+    خدمة الرصيد المركزية.
+
+    القفل داخل العملية يخفف التصادم داخل worker واحد، أما قفل صف المستخدم
+    عبر قاعدة البيانات فيحمي العمليات عند تشغيل أكثر من worker على PostgreSQL.
+    تبقى العمليات الخارجية بحاجة إلى idempotency key وحالة طلب محفوظة.
     """
 
     _locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    @staticmethod
+    async def _get_user_for_update(session, user_id: int) -> User | None:
+        """Load a user while locking its row on databases that support it."""
+        result = await session.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_transaction_by_reference(session, payment_reference: str | None):
+        """Return the ledger entry for an idempotency reference, if present."""
+        if not payment_reference:
+            return None
+        result = await session.execute(
+            select(Transaction).where(Transaction.payment_reference == payment_reference)
+        )
+        return result.scalar_one_or_none()
 
     @classmethod
     def _get_lock(cls, user_id: int) -> asyncio.Lock:
@@ -70,19 +91,22 @@ class BalanceService:
             raise ValueError("المبلغ يجب أن يكون رقماً موجباً ومنتهياً")
 
         async with cls._get_lock(user_id):
-            user = await session.get(User, user_id)
+            user = await cls._get_user_for_update(session, user_id)
             if user is None:
                 raise ValueError(f"المستخدم {user_id} غير موجود")
 
             # عمليات الدفع قد تُرسل أكثر من مرة من Telegram أو من مراقب
             # الفواتير. لا نضيف الرصيد مجدداً إذا تمت معالجة نفس المرجع.
             if payment_reference:
-                existing_result = await session.execute(
-                    select(Transaction).where(Transaction.payment_reference == payment_reference)
+                existing = await cls.get_transaction_by_reference(
+                    session, payment_reference
                 )
-                existing = existing_result.scalar_one_or_none()
                 if existing is not None:
-                    if existing.user_id != user_id or existing.amount != amount:
+                    if (
+                        existing.user_id != user_id
+                        or existing.type != tx_type
+                        or existing.amount != amount
+                    ):
                         raise ValueError("مرجع دفعة مستخدم مسبقاً ببيانات مختلفة")
                     await session.refresh(user)
                     return user
@@ -128,16 +152,17 @@ class BalanceService:
                 # idempotently instead of reporting a false payment failure.
                 await session.rollback()
                 if payment_reference:
-                    existing_result = await session.execute(
-                        select(Transaction).where(
-                            Transaction.payment_reference == payment_reference
-                        )
+                    existing = await cls.get_transaction_by_reference(
+                        session, payment_reference
                     )
-                    existing = existing_result.scalar_one_or_none()
                     if existing is not None:
-                        if existing.user_id != user_id or existing.amount != amount:
+                        if (
+                            existing.user_id != user_id
+                            or existing.type != tx_type
+                            or existing.amount != amount
+                        ):
                             raise ValueError("مرجع دفعة مستخدم مسبقاً ببيانات مختلفة")
-                        user = await session.get(User, user_id)
+                        user = await cls._get_user_for_update(session, user_id)
                         return user
                 raise
 
@@ -155,14 +180,28 @@ class BalanceService:
         related_table: str | None = None,
         related_id: int | None = None,
         is_purchase: bool = False,
+        payment_reference: str | None = None,
     ) -> User:
         if not amount.is_finite() or amount <= 0:
             raise ValueError("المبلغ يجب أن يكون رقماً موجباً ومنتهياً")
 
         async with cls._get_lock(user_id):
-            user = await session.get(User, user_id)
+            user = await cls._get_user_for_update(session, user_id)
             if user is None:
                 raise ValueError(f"المستخدم {user_id} غير موجود")
+
+            # A retry with the same business reference must not debit twice.
+            # The unique database index is the final guard across workers;
+            # this lookup handles the common sequential retry cheaply.
+            if payment_reference:
+                existing = await cls.get_transaction_by_reference(
+                    session, payment_reference
+                )
+                if existing is not None:
+                    if existing.user_id != user_id or existing.amount != -amount:
+                        raise ValueError("مرجع دفعة مستخدم مسبقاً ببيانات مختلفة")
+                    await session.refresh(user)
+                    return user
 
             if user.balance < amount:
                 raise InsufficientBalanceError(
@@ -184,10 +223,28 @@ class BalanceService:
                     description=description,
                     related_table=related_table,
                     related_id=related_id,
+                    payment_reference=payment_reference,
                 )
             )
 
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # A second worker may have committed the same reference after
+                # our lookup. Roll back the attempted debit and treat the
+                # already committed ledger row as the successful operation.
+                await session.rollback()
+                if payment_reference:
+                    existing = await cls.get_transaction_by_reference(
+                        session, payment_reference
+                    )
+                    if existing is not None:
+                        if existing.user_id != user_id or existing.amount != -amount:
+                            raise ValueError("مرجع دفعة مستخدم مسبقاً ببيانات مختلفة")
+                        user = await cls._get_user_for_update(session, user_id)
+                        return user
+                raise
+
             await session.refresh(user)
             return user
 
@@ -216,8 +273,12 @@ class BalanceService:
 
         async with first_lock:
             async with second_lock:
-                source = await session.get(User, from_user_id)
-                recipient = await session.get(User, to_user_id)
+                locked_users = {
+                    user_id: await cls._get_user_for_update(session, user_id)
+                    for user_id in (first_id, second_id)
+                }
+                source = locked_users[from_user_id]
+                recipient = locked_users[to_user_id]
                 if source is None or recipient is None:
                     raise ValueError("المستخدم غير موجود")
                 if source.balance < amount:

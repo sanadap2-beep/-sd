@@ -93,8 +93,14 @@ class FeatureService:
                     await session.commit()
         except Exception as exc:
             logger.warning("تعذّرت مزامنة سجل الميزات: %s", exc)
+            return created
+
+        # Reload even when no row was created. This matters when the API and
+        # bot share a database, and when a long-lived process is pointed at a
+        # newly restored database: the in-memory cache must not outlive the
+        # database state it represents.
+        await cls.reload()
         if created:
-            await cls.reload()
             logger.info("تم تسجيل %s ميزة جديدة في لوحة الأدمن.", created)
         return created
 

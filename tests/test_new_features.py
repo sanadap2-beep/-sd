@@ -12,23 +12,18 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
 
 from database.engine import async_session_maker
 from database.models import (
     EscrowStatus,
     MarketListing,
     MarketListingStatus,
-    MarketTransaction,
     NumberOrder,
     OrderStatus,
     ProviderName,
-    Task,
-    TaskSubmission,
-    TaskVerification,
     User,
 )
-from services.feature_registry import FEATURES
+from services.feature_registry import FEATURES, SAFE_DEFAULT_DISABLED_FEATURES
 from services.feature_service import FeatureService
 from services.marketplace_service import MarketplaceService, MarketError
 from services.player_id_service import PlayerIdError, PlayerIdService
@@ -73,6 +68,12 @@ async def _points(user_id: int) -> int:
         return int(user.loyalty_points or 0)
 
 
+async def _enable(*keys: str) -> None:
+    async with async_session_maker() as session:
+        for key in keys:
+            await FeatureService.set_enabled(session, key, True)
+
+
 # ═══════════════════════════ سجل الميزات ═══════════════════════════
 
 
@@ -110,6 +111,16 @@ async def test_unknown_feature_is_disabled_and_option_types_are_protected():
     async with async_session_maker() as session:
         await FeatureService.set_option(session, "instant_delivery", "enable_webhooks", "false")
     assert await FeatureService.config_bool("instant_delivery", "enable_webhooks") is False
+
+
+@pytest.mark.asyncio
+async def test_high_risk_features_are_disabled_on_a_fresh_registry():
+    await FeatureService.sync_registry()
+    await FeatureService.reload()
+
+    assert SAFE_DEFAULT_DISABLED_FEATURES
+    for key in SAFE_DEFAULT_DISABLED_FEATURES:
+        assert await FeatureService.enabled(key) is False
 
 
 # ═══════════════════════════ اقتصاد النقاط ═══════════════════════════
@@ -238,6 +249,7 @@ async def test_disabling_tasks_system_blocks_completion():
 @pytest.mark.asyncio
 async def test_digital_code_is_stored_encrypted_never_plaintext():
     await FeatureService.sync_registry()
+    await _enable("peer_marketplace")
     await _make_user(31, balance="20")
     async with async_session_maker() as session:
         listing = await MarketplaceService.create_listing(
@@ -257,6 +269,7 @@ async def test_digital_code_is_stored_encrypted_never_plaintext():
 @pytest.mark.asyncio
 async def test_listing_requires_minimum_account_age_and_balance():
     await FeatureService.sync_registry()
+    await _enable("peer_marketplace")
     await _make_user(32, balance="20", age_hours=0)
     await _make_user(33, balance="0.10", age_hours=100)
 
@@ -275,6 +288,7 @@ async def test_listing_requires_minimum_account_age_and_balance():
 @pytest.mark.asyncio
 async def test_sms_number_listing_requires_proof_of_ownership():
     await FeatureService.sync_registry()
+    await _enable("peer_marketplace")
     await _make_user(34, balance="20")
     async with async_session_maker() as session:
         session.add(
@@ -308,6 +322,7 @@ async def test_sms_number_listing_requires_proof_of_ownership():
 @pytest.mark.asyncio
 async def test_commission_is_added_on_top_of_seller_price():
     await FeatureService.sync_registry()
+    await _enable("peer_marketplace")
     await _make_user(35, balance="20")
     async with async_session_maker() as session:
         listing = await MarketplaceService.create_listing(
@@ -326,6 +341,7 @@ async def test_commission_is_added_on_top_of_seller_price():
 
 
 async def _approved_listing(seller_id: int, price: str = "45", commission: str = "10") -> int:
+    await _enable("peer_marketplace")
     async with async_session_maker() as session:
         listing = await MarketplaceService.create_listing(
             session, seller_id, "service", "خدمة", "x", Decimal(price)

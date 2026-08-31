@@ -520,6 +520,21 @@ async def confirm_buy(
     service_code = parts[1]
     country_code = parts[2]
     quote_token = parts[3] if len(parts) > 3 and parts[3] else None
+    payment_reference = f"number_purchase:{quote_token}" if quote_token else None
+
+    # Telegram may deliver the same callback more than once. A consumed quote
+    # must never turn a retry into a second paid provider order.
+    if payment_reference and await BalanceService.get_transaction_by_reference(
+        session, payment_reference
+    ):
+        await callback.answer(
+            I18nService.t(
+                "number_purchase_already_processed",
+                getattr(db_user, "language_code", "ar") or "ar",
+            ),
+            show_alert=True,
+        )
+        return
 
     service = await get_number_service_by_code(session, service_code)
     country = await get_country_by_code(session, country_code)
@@ -599,6 +614,7 @@ async def confirm_buy(
             TransactionType.PURCHASE,
             description=(f"شراء رقم {service.name_ar} - {country.name_ar}"),
             is_purchase=True,
+            payment_reference=payment_reference,
         )
     except InsufficientBalanceError:
         await callback.message.answer(
@@ -621,6 +637,7 @@ async def confirm_buy(
             sell_price,
             TransactionType.REFUND,
             description="استرجاع - فشل الشراء",
+            payment_reference=(f"number_refund:{payment_reference}" if payment_reference else None),
         )
         await callback.message.answer(I18nService.t("number_all_providers_empty", getattr(db_user, "language_code", "ar") or "ar"))
         return
@@ -632,6 +649,7 @@ async def confirm_buy(
             sell_price,
             TransactionType.REFUND,
             description="استرجاع - خطأ تقني",
+            payment_reference=(f"number_refund:{payment_reference}" if payment_reference else None),
         )
         await callback.message.answer(I18nService.t("number_technical_refund", getattr(db_user, "language_code", "ar") or "ar"))
         return
@@ -771,6 +789,7 @@ async def cancel_order_manual(callback: CallbackQuery, session, db_user: User):
         description=f"استرجاع - إلغاء يدوي #{order.id}",
         related_table="number_orders",
         related_id=order.id,
+        payment_reference=f"number_refund:{order.id}",
     )
     order.status = OrderStatus.REFUNDED
     await session.commit()
