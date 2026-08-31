@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from aiogram.types import InlineKeyboardMarkup
 
 from database.engine import async_session_maker
 from database.models import User
@@ -63,6 +64,16 @@ def test_placeholders_match_between_languages():
 
 def test_supported_display_currencies():
     assert set(DISPLAY_CURRENCIES) == {"USD", "EUR", "EGP", "SYP"}
+
+
+def test_currency_keyboard_returns_telegram_markup():
+    from handlers.currency import currency_kb
+
+    keyboard = currency_kb("USD", "en")
+
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    assert keyboard.inline_keyboard[-1][0].callback_data == "back_to_main"
+    assert any(button.callback_data == "currency:set:EUR" for row in keyboard.inline_keyboard for button in row)
 
 
 @pytest.mark.asyncio

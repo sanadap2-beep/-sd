@@ -5,7 +5,7 @@
 """
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import User
@@ -20,7 +20,7 @@ def _currency_name(code: str, language: str) -> str:
     return meta["name_en"] if language == "en" else meta["name_ar"]
 
 
-def currency_kb(current: str, language: str) -> InlineKeyboardBuilder:
+def currency_kb(current: str, language: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for code in DISPLAY_CURRENCIES:
         marker = "✅ " if code == current else ""
@@ -33,7 +33,7 @@ def currency_kb(current: str, language: str) -> InlineKeyboardBuilder:
         callback_data="back_to_main",
     )
     b.adjust(2, 2, 1)
-    return b
+    return b.as_markup()
 
 
 @router.callback_query(F.data == "menu:currency")
