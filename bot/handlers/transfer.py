@@ -101,7 +101,7 @@ async def transfer_amount_received(
     recipient_id = data["recipient_id"]
     recipient_tg_id = data["recipient_tg_id"]
 
-    # ── عمولة التحويل وحدوده (ي控制هما الأدمن من لوحة «اقتصاد النقاط») ──
+    # ── عمولة التحويل وحدوده (يتحكم بهما الأدمن من لوحة «اقتصاد النقاط») ──
     fee_percent = Decimal("0")
     fee_amount = Decimal("0")
     net_amount = amount
