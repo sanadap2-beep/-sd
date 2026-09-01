@@ -547,9 +547,28 @@ def admin_countries_kb(countries) -> InlineKeyboardMarkup:
             callback_data=f"admin:country_view:{c.id}",
         )
     b.button(text="➕ إضافة دولة جديدة", callback_data="admin:country_add")
+    b.button(text="🔄 سحب دول من HeroSMS", callback_data="admin:country_sync_herosms")
     b.button(text="📋 أكواد 5sim المرجعية", callback_data="admin:country_reference_list")
     b.button(text="🔙 رجوع", callback_data="admin:main")
-    b.adjust(2, 1, 1)
+    b.adjust(2, 1, 1, 1)
+    return b.as_markup()
+
+
+def herosms_sync_menu_kb() -> InlineKeyboardMarkup:
+    """قائمة اختيار خدمات السحب من HeroSMS."""
+    b = InlineKeyboardBuilder()
+    b.button(text="💬 واتساب فقط", callback_data="admin:country_sync:whatsapp")
+    b.button(text="✈️ تيليجرام فقط", callback_data="admin:country_sync:telegram")
+    b.button(
+        text="💬✈️ واتساب + تيليجرام",
+        callback_data="admin:country_sync:whatsapp,telegram",
+    )
+    b.button(
+        text="⚪ سحب بدون تفعيل (كلاهما)",
+        callback_data="admin:country_sync_idle:whatsapp,telegram",
+    )
+    b.button(text="🔙 رجوع", callback_data="admin:countries")
+    b.adjust(2, 1, 1, 1)
     return b.as_markup()
 
 

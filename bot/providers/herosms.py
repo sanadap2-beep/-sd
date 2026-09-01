@@ -56,6 +56,53 @@ class HeroSMSProvider(BaseProvider):
     async def get_countries_services(self) -> list[dict]:
         raise NotImplementedError("يُستخدم get_price مباشرة")
 
+    async def get_countries(self) -> list[dict]:
+        """يجلب كتالوج الدول من HeroSMS عبر action=getCountries.
+
+        الصيغة القياسية لنمط SMS-Activate:
+        {"روسия": {"id": 0, "rus": "...", "eng": "Russia", "visible": 1, ...}}
+        بعض النسخ ترجع قائمة بدلاً من قاموس — ندعم الشكلين.
+
+        يرجع قائمة بالشكل: [{"id": "0", "eng": "Russia"}, ...]
+        """
+        result = await self._request({"action": "getCountries"})
+        data = json.loads(result)
+        countries: list[dict] = []
+
+        if isinstance(data, dict):
+            iterable = data.values()
+        elif isinstance(data, list):
+            iterable = data
+        else:
+            raise ProviderAPIError(f"استجابة getCountries غير مفهومة من HeroSMS")
+
+        for item in iterable:
+            if not isinstance(item, dict):
+                continue
+            cid = item.get("id")
+            if cid is None:
+                continue
+            # visible=0 تعني دولة مخفية لدى المزود
+            if int(item.get("visible", 1) or 1) == 0:
+                continue
+            eng = item.get("eng") or item.get("rus") or item.get("chn") or str(cid)
+            countries.append({"id": str(cid), "eng": str(eng)})
+
+        if not countries:
+            raise ProviderAPIError("استجابة getCountries فارغة من HeroSMS")
+        return countries
+
+    async def get_country_prices(self, country: str) -> dict:
+        """يجلب أسعار كل خدمات دولة واحدة عبر getPrices دون تحديد خدمة.
+
+        استجابة واحدة لكل دولة تكشف توفر واتساب/تيليجرام ومخزونهما
+        بدل طلب لكل خدمة على حدة.
+        """
+        result = await self._request(
+            {"action": "getPrices", "country": country}
+        )
+        return json.loads(result)
+
     async def get_price(self, country: str, service: str) -> Decimal | None:
         result = await self._request(
             {

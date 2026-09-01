@@ -8,14 +8,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
+from config import settings
 from database.models import Country
 from providers.countries import get_all_countries
 from providers.fivesim import FiveSimProvider
+from services.herosms_sync_service import sync_herosms_countries
 from states.states import AdminCountryStates
 from keyboards.admin import (
     admin_countries_kb,
     admin_country_detail_kb,
     admin_back_kb,
+    herosms_sync_menu_kb,
 )
 from filters.admin_filter import IsAdmin
 
@@ -195,3 +198,97 @@ async def country_reference_list(callback: CallbackQuery):
     except Exception as e:
         text = f"⚠️ تعذّر الجلب: {e}"
     await callback.message.answer(text)
+
+
+# ══════════════════════════════════════════════
+# ══════════════ سحب الدول من HeroSMS ══════════════
+# ══════════════════════════════════════════════
+
+_HEROSMS_SERVICE_LABELS = {
+    "whatsapp": "💬 واتساب",
+    "telegram": "✈️ تيليجرام",
+}
+
+
+@router.callback_query(F.data == "admin:country_sync_herosms")
+async def country_sync_herosms_menu(callback: CallbackQuery):
+    """يعرض قائمة اختيار خدمات السحب من HeroSMS."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "🔄 <b>سحب الدول من HeroSMS</b>\n\n"
+        "يسحب البوت كتالوج الدول من حسابك في HeroSMS تلقائياً،\n"
+        "ويفحص توفر المخزون للخدمة المختارة، ثم ينشئ الدول\n"
+        "بأكواد HeroSMS الصحيحة ويفعّل المتاح منها.\n\n"
+        "⏱ تستغرق العملية عادة من 20 إلى 60 ثانية.\n"
+        "✏️ يمكنك بعد السحب تعديل أي اسم أو علم من إدارة الدول.\n\n"
+        "اختر الخدمة المطلوبة:",
+        reply_markup=herosms_sync_menu_kb(),
+    )
+
+
+def _parse_sync_services(raw: str) -> list[str]:
+    """يحلل جزء الخدمات من callback مثل whatsapp,telegram."""
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+async def _run_herosms_sync(
+    callback: CallbackQuery,
+    session,
+    services_raw: str,
+    activate: bool,
+):
+    if not settings.HEROSMS_API_KEY:
+        await callback.answer(
+            "⚠️ لا يوجد HEROSMS_API_KEY مضبوط في الإعدادات.",
+            show_alert=True,
+        )
+        return
+
+    wanted = _parse_sync_services(services_raw)
+    labels = " + ".join(
+        _HEROSMS_SERVICE_LABELS.get(code, code) for code in wanted
+    )
+    await callback.answer("⏳ جارٍ السحب من HeroSMS... قد يستغرق دقيقة.")
+
+    status_text = (
+        f"⏳ <b>جارٍ السحب من HeroSMS...</b>\n\n"
+        f"الخدمات: {labels}\n"
+        f"التفعيل التلقائي: {'🟢 نعم' if activate else '⚪ لا'}\n\n"
+        "قد تستغرق العملية حتى دقيقة، لا تغلق الشاشة."
+    )
+    try:
+        await callback.message.edit_text(status_text)
+    except Exception:
+        await callback.message.answer(status_text)
+
+    try:
+        report = await sync_herosms_countries(
+            session,
+            wanted_services=wanted,
+            activate=activate,
+        )
+        text = report.summary()
+    except Exception as e:  # noqa: BLE001 - نعرض الخطأ للأدمن بدل الصمت
+        text = f"❌ <b>فشل السحب من HeroSMS</b>\n\n<code>{type(e).__name__}: {e}</code>"
+
+    from keyboards.admin import admin_countries_kb as _kb
+
+    countries = await get_all_countries(session)
+    try:
+        await callback.message.edit_text(text, reply_markup=_kb(countries))
+    except Exception:
+        await callback.message.answer(text, reply_markup=_kb(countries))
+
+
+@router.callback_query(F.data.startswith("admin:country_sync_idle:"))
+async def country_sync_herosms_idle(callback: CallbackQuery, session):
+    """سحب الدول دون تفعيلها تلقائياً."""
+    services_raw = callback.data.split(":", 2)[2]
+    await _run_herosms_sync(callback, session, services_raw, activate=False)
+
+
+@router.callback_query(F.data.startswith("admin:country_sync:"))
+async def country_sync_herosms_go(callback: CallbackQuery, session):
+    """سحب الدول مع تفعيل المتاح منها تلقائياً."""
+    services_raw = callback.data.split(":", 2)[2]
+    await _run_herosms_sync(callback, session, services_raw, activate=True)
