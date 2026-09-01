@@ -270,7 +270,14 @@ class ProviderManager:
             service_code = self._get_service_code(provider_name, service)
 
             try:
-                purchased = await instance.buy_number(country_code, service_code)
+                # سقف سعر بحد 5% فوق التقدير: يمنع الشراء إذا قفز السعر
+                # لحظة الشراء، ويتيح تحولاً للمزود التالي بدل الخسارة.
+                max_price = (estimated_price * Decimal("1.05")).quantize(
+                    Decimal("0.0001")
+                )
+                purchased = await instance.buy_number(
+                    country_code, service_code, max_price=max_price
+                )
                 await PriceCacheService.invalidate(f"number-price:{service.code}:{country.code}")
                 logger.info(
                     f"شراء ناجح من {provider_name.value}: "

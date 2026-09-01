@@ -81,13 +81,17 @@ class SMSActivateProvider(BaseProvider):
         country: str,
         service: str,
         operator: str | None = None,
+        max_price: Decimal | None = None,
     ) -> PurchasedNumber:
+        params: dict = {
+            "action": "getNumber",
+            "service": service,
+            "country": country,
+        }
+        if max_price is not None:
+            params["maxPrice"] = str(max_price)
         result = await self._request(
-            {
-                "action": "getNumber",
-                "service": service,
-                "country": country,
-            }
+            params
         )
         if result.startswith("ACCESS_NUMBER:"):
             parts = result.split(":")

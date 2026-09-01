@@ -91,6 +91,7 @@ class FiveSimProvider(BaseProvider):
         country: str,
         service: str,
         operator: str = "any",
+        max_price: Decimal | None = None,  # 5sim لا يدعم سقف السعر — يُتجاهل
     ) -> PurchasedNumber:
         data = await self._request("GET", f"user/buy/activation/{country}/{operator}/{service}")
         cost_rub = Decimal(str(data["price"]))

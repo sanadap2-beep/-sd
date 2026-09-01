@@ -129,7 +129,7 @@ class _FakeNumberProvider:
     async def get_price(self, country: str, service: str):
         return self.price
 
-    async def buy_number(self, country: str, service: str, operator=None):
+    async def buy_number(self, country: str, service: str, operator=None, max_price=None):
         self.bought += 1
         return PurchasedNumber(
             provider_order_id=f"{self.provider.value}-1",

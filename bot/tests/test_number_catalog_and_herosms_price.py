@@ -49,10 +49,10 @@ class FakeHeroSMSPrice(HeroSMSProvider):
 
 @pytest.mark.asyncio
 async def test_get_price_with_country_wrapper():
-    """الشكل القياسي: {country: {service: {cost, count}}}."""
+    """الشكل القياسي: {country: {service: {cost, count}}} — دولار مباشرة."""
     provider = FakeHeroSMSPrice({"6": {"wa": {"cost": 5.5, "count": 100}}})
     price = await provider.get_price("6", "wa")
-    assert price == Decimal("0.0550")
+    assert price == Decimal("5.5")
 
 
 @pytest.mark.asyncio
@@ -63,7 +63,7 @@ async def test_get_price_without_country_wrapper():
     """
     provider = FakeHeroSMSPrice({"wa": {"cost": 5.5, "count": 100}})
     price = await provider.get_price("6", "wa")
-    assert price == Decimal("0.0550")
+    assert price == Decimal("5.5")
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_get_price_nested_operators_skips_zero_stock():
         }
     )
     price = await provider.get_price("6", "wa")
-    assert price == Decimal("0.0600")
+    assert price == Decimal("6")
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_get_price_zero_stock_returns_none():
 async def test_get_price_missing_count_allows():
     """غياب عداد المخزون لا يحجب السعر."""
     provider = FakeHeroSMSPrice({"wa": {"cost": 5.5}})
-    assert await provider.get_price("6", "wa") == Decimal("0.0550")
+    assert await provider.get_price("6", "wa") == Decimal("5.5")
 
 
 @pytest.mark.asyncio
@@ -296,3 +296,112 @@ async def test_resync_arabizes_latin_names():
         )
         country = result.scalar_one()
         assert country.name_ar == "إندونيسيا"
+
+
+# ══════════════════════════════════════════════
+# ══════════════ اكتشافات التوثيق الرسمي ══════════════
+# ══════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_get_balance_is_usd_direct():
+    """الرصيد بالدولار مباشرة — لا قسمة على 100 (خطأ العملة القديم)."""
+    provider = FakeHeroSMSPrice({})
+    provider._payload = None
+
+    async def _balance_request(params):
+        return "ACCESS_BALANCE:100.5"
+
+    provider._request = _balance_request
+    assert await provider.get_balance() == Decimal("100.5")
+
+
+@pytest.mark.asyncio
+async def test_get_prices_documented_shape():
+    """الشكل الموثق حرفياً: {service: {cost, count, physicalCount}} بالدولار."""
+    provider = FakeHeroSMSPrice(
+        {"wa": {"cost": 0.08, "count": 16404053, "physicalCount": 654398}}
+    )
+    assert await provider.get_price("6", "wa") == Decimal("0.08")
+
+
+@pytest.mark.asyncio
+async def test_get_prices_list_shape():
+    """شكل القائمة الموثق: [{service: {cost, count}}]."""
+    provider = FakeHeroSMSPrice([{"wa": {"cost": 0.08, "count": 500}}])
+    assert await provider.get_price("6", "wa") == Decimal("0.08")
+
+
+@pytest.mark.asyncio
+async def test_cancel_early_denied_returns_false():
+    """رفض الإلغاء (أول دقيقتين) يرجع False لا True."""
+
+    provider = FakeHeroSMSPrice({})
+
+    async def _cancel_request(params):
+        return "EARLY_CANCEL_DENIED"
+
+    provider._request = _cancel_request
+    assert await provider.cancel_order("123") is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_confirmed_returns_true():
+    provider = FakeHeroSMSPrice({})
+
+    async def _cancel_request(params):
+        return "ACCESS_CANCEL"
+
+    provider._request = _cancel_request
+    assert await provider.cancel_order("123") is True
+
+
+@pytest.mark.asyncio
+async def test_finish_confirmed_returns_true():
+    provider = FakeHeroSMSPrice({})
+
+    async def _finish_request(params):
+        return "ACCESS_ACTIVATION"
+
+    provider._request = _finish_request
+    assert await provider.finish_order("123") is True
+
+
+@pytest.mark.asyncio
+async def test_buy_number_sends_max_price():
+    """الشراء يمرر معامل maxPrice الرسمي عند توفره."""
+    provider = FakeHeroSMSPrice({"wa": {"cost": 0.08, "count": 50}})
+    captured: list[dict] = []
+
+    async def _capturing_request(params):
+        captured.append(dict(params))
+        if params.get("action") == "getNumber":
+            return "ACCESS_NUMBER:999:+6281234567"
+        return json.dumps(provider._payload)
+
+    provider._request = _capturing_request
+    purchased = await provider.buy_number("6", "wa", max_price=Decimal("0.10"))
+
+    assert purchased.phone_number
+    buy_call = next(p for p in captured if p.get("action") == "getNumber")
+    assert buy_call.get("maxPrice") == "0.10"
+
+
+@pytest.mark.asyncio
+async def test_get_countries_documented_list_shape():
+    """getCountries ترجع قائمة حسب التوثيق الرسمي."""
+
+    provider = FakeHeroSMSPrice({})
+
+    async def _countries_request(params):
+        return json.dumps(
+            [
+                {"id": 2, "rus": "Казахстан", "eng": "Kazakhstan",
+                 "chn": "哈萨克斯坦", "visible": 1, "retry": 1},
+                {"id": 99, "eng": "Hidden", "visible": 0, "retry": 1},
+            ]
+        )
+
+    provider._request = _countries_request
+    countries = await provider.get_countries()
+    assert countries == [{"id": "2", "eng": "Kazakhstan"}]

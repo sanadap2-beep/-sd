@@ -46,8 +46,12 @@ class BaseProvider(ABC):
         country: str,
         service: str,
         operator: str | None = None,
+        max_price: Decimal | None = None,
     ) -> PurchasedNumber:
-        """يشتري رقماً ويرجع بيانات الشراء."""
+        """يشتري رقماً ويرجع بيانات الشراء.
+
+        max_price اختياري: سقف التكلفة بالدولار لحماية هامش الربح.
+        """
         ...
 
     @abstractmethod

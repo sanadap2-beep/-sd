@@ -1,7 +1,11 @@
 """
 مزود أرقام HeroSMS.
 يعمل بنمط SMS-Activate الكلاسيكي (action-based).
-يحول الأسعار من الروبل إلى الدولار تلقائياً.
+
+ملاحظة العملة (مهمة جداً):
+حسب التوثيق الرسمي لـ HeroSMS فإن كل الأسعار والأرصدة بالدولار
+الأمريكي (USD) مباشرة — العملة الافتراضية 840 (ISO USD) —
+ولا يوجد أي تحويل من الروبل هنا.
 """
 
 import json
@@ -16,7 +20,6 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 HEROSMS_BASE = "https://hero-sms.com/stubs/handler_api.php"
-HEROSMS_RUB_TO_USD_RATE = Decimal("100")
 
 
 class ProviderAPIError(Exception):
@@ -42,15 +45,14 @@ class HeroSMSProvider(BaseProvider):
                     raise ProviderAPIError(f"HeroSMS error {resp.status}: {text}")
                 return text.strip()
 
-    def _rub_to_usd(self, amount_rub: Decimal) -> Decimal:
-        """يحول الروبل للدولار بسعر صرف HeroSMS الداخلي."""
-        return (amount_rub / HEROSMS_RUB_TO_USD_RATE).quantize(Decimal("0.0001"))
-
     async def get_balance(self) -> Decimal:
+        """رصيد الحساب بالدولار مباشرة (بدون أي تحويل)."""
         result = await self._request({"action": "getBalance"})
         if result.startswith("ACCESS_BALANCE:"):
-            balance_rub = Decimal(result.split(":")[1])
-            return self._rub_to_usd(balance_rub)
+            try:
+                return Decimal(result.split(":", 1)[1].strip())
+            except Exception as exc:  # noqa: BLE001
+                raise ProviderAPIError(f"رصيد غير مفهوم من HeroSMS: {result}") from exc
         raise ProviderAPIError(f"استجابة غير متوقعة من HeroSMS: {result}")
 
     async def get_countries_services(self) -> list[dict]:
@@ -59,11 +61,12 @@ class HeroSMSProvider(BaseProvider):
     async def get_countries(self) -> list[dict]:
         """يجلب كتالوج الدول من HeroSMS عبر action=getCountries.
 
-        الصيغة القياسية لنمط SMS-Activate:
-        {"روسия": {"id": 0, "rus": "...", "eng": "Russia", "visible": 1, ...}}
-        بعض النسخ ترجع قائمة بدلاً من قاموس — ندعم الشكلين.
+        حسب التوثيق الرسمي الاستجابة قائمة:
+        [{"id": 2, "rus": "...", "eng": "Kazakhstan", "chn": "...",
+          "visible": 1, "retry": 1}, ...]
+        وندعم أيضاً الشكل القاموسي القديم للحماية.
 
-        يرجع قائمة بالشكل: [{"id": "0", "eng": "Russia"}, ...]
+        يرجع قائمة بالشكل: [{"id": "2", "eng": "Kazakhstan"}, ...]
         """
         result = await self._request({"action": "getCountries"})
         data = json.loads(result)
@@ -74,7 +77,7 @@ class HeroSMSProvider(BaseProvider):
         elif isinstance(data, list):
             iterable = data
         else:
-            raise ProviderAPIError(f"استجابة getCountries غير مفهومة من HeroSMS")
+            raise ProviderAPIError("استجابة getCountries غير مفهومة من HeroSMS")
 
         for item in iterable:
             if not isinstance(item, dict):
@@ -82,9 +85,12 @@ class HeroSMSProvider(BaseProvider):
             cid = item.get("id")
             if cid is None:
                 continue
-            # visible=0 تعني دولة مخفية لدى المزود
-            if int(item.get("visible", 1) or 1) == 0:
-                continue
+            # visible=0 تعني دولة غير متاحة لدى المزود
+            try:
+                if int(item.get("visible", 1)) == 0:
+                    continue
+            except (TypeError, ValueError):
+                pass
             eng = item.get("eng") or item.get("rus") or item.get("chn") or str(cid)
             countries.append({"id": str(cid), "eng": str(eng)})
 
@@ -106,13 +112,14 @@ class HeroSMSProvider(BaseProvider):
     async def get_price(self, country: str, service: str) -> Decimal | None:
         """يجلب سعر التكلفة بالدولار مع فحص المخزون.
 
-        استجابات getPrices تختلف بين النسخ المستنسخة من SMS-Activate:
-        1) {country: {service: {cost, count}}}
-        2) {service: {cost, count}}            (بدون غلاف الدولة)
-        3) {service: {operator: {cost, count}}} (مشغلون متداخلون)
+        حسب التوثيق الرسمي، getPrices قد يرجع:
+        1) {service: {cost, count, physicalCount}}   (الشكل الموثق)
+        2) {country: {service: {cost, count}}}       (شكل SMS-Activate القديم)
+        3) [{service: {cost, count}}]                (قائمة كائنات)
+        4) {service: {operator: {cost, count}}}      (مشغلون متداخلون)
 
-        نطبّع كل الأشكال، نتجاهل المشغلين بلا مخزون (count=0 صراحةً)،
-        ونرجل أرخص مشغل متاح.
+        نطبّع كل الأشكال، نستبعد من ينص صراحةً أن مخزونه صفر،
+        ونرجع أرخص خيار متاح بالدولار كما هو دون أي تحويل.
         """
         result = await self._request(
             {
@@ -126,7 +133,17 @@ class HeroSMSProvider(BaseProvider):
         except (json.JSONDecodeError, TypeError):
             return None
 
-        node = data.get(country, data) if isinstance(data, dict) else {}
+        if isinstance(data, list):
+            # قائمة كائنات — ندمجها في قاموس واحد
+            merged: dict = {}
+            for item in data:
+                if isinstance(item, dict):
+                    merged.update(item)
+            data = merged
+
+        if not isinstance(data, dict):
+            return None
+        node = data.get(country, data)
         if not isinstance(node, dict):
             return None
         payload = node.get(service)
@@ -144,7 +161,7 @@ class HeroSMSProvider(BaseProvider):
 
         cheapest: Decimal | None = None
         for cost, count in candidates:
-            # نفطع فقط من ينص صراحةً أن مخزونه صفر؛ إن غاب العداد نجيزه
+            # نستبعد فقط من ينص صراحةً أن مخزونه صفر؛ إن غاب العداد نجيزه
             if count is not None:
                 try:
                     if int(count) <= 0:
@@ -152,7 +169,7 @@ class HeroSMSProvider(BaseProvider):
                 except (TypeError, ValueError):
                     pass
             try:
-                cost_usd = self._rub_to_usd(Decimal(str(cost)))
+                cost_usd = Decimal(str(cost))
             except Exception:  # noqa: BLE001 - قيمة تالفة لا تُسقط البقية
                 continue
             if cheapest is None or cost_usd < cheapest:
@@ -164,14 +181,25 @@ class HeroSMSProvider(BaseProvider):
         country: str,
         service: str,
         operator: str | None = None,
+        max_price: Decimal | None = None,
     ) -> PurchasedNumber:
-        result = await self._request(
-            {
-                "action": "getNumber",
-                "service": service,
-                "country": country,
-            }
-        )
+        """يشتري رقماً.
+
+        max_price اختياري: سقف السعر بالدولار (معامل maxPrice الرسمي).
+        إن كان سعر المزود لحظة الشراء أعلى منه يرجع WRONG_MAX_PRICE
+        ونرفع خطأ ليتحول المدير للمزود التالي بدل الشراء بخسارة.
+        """
+        params: dict = {
+            "action": "getNumber",
+            "service": service,
+            "country": country,
+        }
+        if operator:
+            params["operator"] = operator
+        if max_price is not None:
+            params["maxPrice"] = str(max_price)
+
+        result = await self._request(params)
         if result.startswith("ACCESS_NUMBER:"):
             parts = result.split(":")
             order_id = parts[1]
@@ -197,10 +225,14 @@ class HeroSMSProvider(BaseProvider):
         code = None
 
         if result.startswith("STATUS_OK:"):
-            code = result.split(":")[1]
+            code = result.split(":", 1)[1].strip()
             mapped = "code_received"
+        elif result.startswith("STATUS_WAIT_RETRY:"):
+            # كود سابق وصل والمستخدم طلب كوداً إضافياً — ما زلنا ننتظر
+            mapped = "pending"
         elif result == "STATUS_CANCEL":
             mapped = "cancelled"
+        # STATUS_WAIT_CODE / STATUS_WAIT_RESEND تبقى pending
 
         return OrderStatusResult(
             status=mapped,
@@ -210,29 +242,44 @@ class HeroSMSProvider(BaseProvider):
         )
 
     async def cancel_order(self, order_id: str) -> bool:
+        """يلغي الطلب ويرجع True فقط إذا أكده المزود.
+
+        مهم: HeroSMS يرفض الإلغاء خلال أول دقيقتين (EARLY_CANCEL_DENIED)
+        أو بعد استلام كود — الرد بـ True خاطئ كان سيؤدي إلى استرجاع
+        رصيد المستخدم دون إلغاء حقيقي لدى المزود.
+        """
         try:
-            await self._request(
+            result = await self._request(
                 {
                     "action": "setStatus",
                     "id": order_id,
                     "status": 8,
                 }
             )
-            return True
         except Exception as e:
             logger.error(f"فشل إلغاء الطلب {order_id} من HeroSMS: {e}")
             return False
 
+        if result in ("ACCESS_CANCEL", "ACCESS_READY"):
+            return True
+        logger.warning(f"رفض HeroSMS إلغاء الطلب {order_id}: {result}")
+        return False
+
     async def finish_order(self, order_id: str) -> bool:
+        """ينهي الطلب ويرجع True فقط إذا أكده المزود."""
         try:
-            await self._request(
+            result = await self._request(
                 {
                     "action": "setStatus",
                     "id": order_id,
                     "status": 6,
                 }
             )
-            return True
         except Exception as e:
             logger.error(f"فشل إتمام الطلب {order_id} من HeroSMS: {e}")
             return False
+
+        if result in ("ACCESS_ACTIVATION", "ACCESS_READY"):
+            return True
+        logger.warning(f"رفض HeroSMS إنهاء الطلب {order_id}: {result}")
+        return False
