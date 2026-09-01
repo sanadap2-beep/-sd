@@ -1,0 +1,16 @@
+# بيئة العمل المحلية
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.db
+*.log
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# الأسرار
+.env
+local.env
+.env.*
+!.env.example
