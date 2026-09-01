@@ -130,6 +130,13 @@ async def transfer_amount_received(
             return
         await FeatureService.track("transfer_fee", "transfer", user_id=db_user.id, value=str(fee_amount))
 
+    # فحص الرصيد قبل أي خصم: لو لا يكفي للمبلغ الإجمالي (المبلغ + العمولة)
+    # نرفض قبل الخصم، فلا يُحتاج استرجاع عمولة ولا يُترك رصيد ناقص.
+    if not await BalanceService.check_sufficient(session, db_user.id, amount):
+        await message.answer("⚠️ رصيدك غير كافٍ لإتمام هذا التحويل مع العمولة.")
+        await state.clear()
+        return
+
     try:
         # نخصم العمولة أولاً كإيراد للمنصة، ثم نحوّل الصافي للمستلم.
         # إن فشل التحويل تُردّ العمولة فوراً فلا يُخصم المستخدم مرتين.
