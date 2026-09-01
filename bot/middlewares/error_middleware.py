@@ -12,11 +12,29 @@ import logging
 import traceback
 
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# أخطاء تيليجرام "الحميدة": لا تستدعي إزعاج الأدمن ولا تُظهر تحذيراً للمستخدم.
+# - message is not modified: ضغط المستخدم على نفس الزر والمحتوى لم يتغير.
+# - query is too old: انتهت صلاحية نافذة الإجابة على الضغطة (أكثر من ~45 ثانية).
+_BENIGN_TELEGRAM_ERRORS = (
+    "message is not modified",
+    "query is too old and response timeout expired",
+    "QUERY_EXPIRED",
+)
+
+
+def _is_benign_telegram_error(exc: Exception) -> bool:
+    """هل الخطأ خطأ تيليجرام غير ضار يمكن تجاهله بهدوء؟"""
+    if not isinstance(exc, TelegramBadRequest):
+        return False
+    message = str(exc).lower()
+    return any(marker.lower() in message for marker in _BENIGN_TELEGRAM_ERRORS)
 
 
 class ErrorReportingMiddleware(BaseMiddleware):
@@ -24,6 +42,22 @@ class ErrorReportingMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except Exception as exc:  # noqa: BLE001 - last-resort guard
+            # ── أخطاء حميدة: نتجاهلها بهدوء دون إبلاغ الأدمن ──
+            # مثال: المستخدم ضغط نفس الزر مرتين والرسالة لم تتغير،
+            # أو ضغط زراً قديماً انتهت صلاحية الإجابة عليه.
+            if _is_benign_telegram_error(exc):
+                logger.info(
+                    "Benign Telegram error ignored (%s): %s",
+                    type(event).__name__,
+                    exc,
+                )
+                try:
+                    if isinstance(event, CallbackQuery):
+                        await event.answer()
+                except Exception:
+                    pass
+                return None
+
             logger.exception("Unhandled bot handler error: %s", exc)
             bot = data.get("bot")
             user = getattr(event, "from_user", None)

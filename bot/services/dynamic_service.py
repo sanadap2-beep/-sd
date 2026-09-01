@@ -38,8 +38,17 @@ class DynamicService:
 
     @staticmethod
     async def get_all_categories(session) -> list[Category]:
-        """يجلب كل الأقسام (للأدمن)."""
-        result = await session.execute(select(Category).order_by(Category.sort_order, Category.id))
+        """يجلب كل الأقسام (للأدمن).
+
+        مع تحميل مسبق للأقسام الفرعية، لأن قائمة الأدمن تعرض
+        len(cat.sub_categories) والتحميل الكسول عبر AsyncSession
+        يرفع MissingGreenlet.
+        """
+        result = await session.execute(
+            select(Category)
+            .options(selectinload(Category.sub_categories))
+            .order_by(Category.sort_order, Category.id)
+        )
         return list(result.scalars().all())
 
     @staticmethod
@@ -115,9 +124,15 @@ class DynamicService:
 
     @staticmethod
     async def get_all_sub_categories(session, category_id: int) -> list[SubCategory]:
-        """يجلب كل الأقسام الفرعية لقسم رئيسي (للأدمن)."""
+        """يجلب كل الأقسام الفرعية لقسم رئيسي (للأدمن).
+
+        مع تحميل مسبق للمنتجات، لأن قائمة الأدمن تعرض
+        len(sub.products) والتحميل الكسول عبر AsyncSession
+        يرفع MissingGreenlet.
+        """
         result = await session.execute(
             select(SubCategory)
+            .options(selectinload(SubCategory.products))
             .where(SubCategory.category_id == category_id)
             .order_by(SubCategory.sort_order, SubCategory.id)
         )
