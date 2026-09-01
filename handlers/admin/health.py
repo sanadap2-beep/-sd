@@ -11,6 +11,7 @@ from database.models import ApiProvider, ProviderStatus
 from filters.admin_filter import IsAdmin
 from keyboards.admin import admin_health_kb
 from providers.manager import provider_manager
+from services.payment_method_service import payment_method_diagnostics
 
 router = Router(name="admin_health")
 router.message.filter(IsAdmin())
@@ -46,11 +47,18 @@ async def _render_health(callback: CallbackQuery, session):
         .all()
     )
 
+    diagnostics = await payment_method_diagnostics(
+        ("shamcash_manual", "usdt_manual", "shamcash_auto", "usdt_auto")
+    )
+    payment_labels = {
+        "shamcash_manual": "شام كاش يدوي",
+        "usdt_manual": "USDT يدوي",
+        "shamcash_auto": "شام كاش تلقائي",
+        "usdt_auto": "USDT تلقائي",
+    }
     payment_state = [
-        f"{_mark(bool(settings.SHAMCASH_MANUAL_ADDRESS))} شام كاش يدوي",
-        f"{_mark(bool(settings.USDT_TRC20_ADDRESS or settings.USDT_ERC20_ADDRESS or settings.USDT_BEP20_ADDRESS))} USDT يدوي",
-        f"{_mark(bool(settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS))} شام كاش تلقائي",
-        f"{_mark(bool(settings.PLISIO_SECRET_KEY))} USDT تلقائي",
+        f"{_mark(diagnostics[method].enabled)} {label}: {diagnostics[method].reason}"
+        for method, label in payment_labels.items()
     ]
     redis_state = bool(settings.REDIS_URL)
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")

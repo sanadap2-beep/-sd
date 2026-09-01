@@ -25,6 +25,11 @@ from keyboards.admin import (
     admin_back_kb,
 )
 from filters.admin_filter import IsAdmin
+from services.payment_method_service import (
+    SETTING_TO_PAYMENT_METHOD,
+    diagnose_payment_method,
+    payment_method_diagnostics,
+)
 
 router = Router(name="admin_settings")
 router.message.filter(IsAdmin())
@@ -130,13 +135,37 @@ async def loyalty_setting_start(
     await callback.answer()
 
 
+_PAYMENT_METHOD_LABELS = {
+    "shamcash_manual": "شام كاش يدوي",
+    "stars": "نجوم تيليجرام",
+    "usdt_manual": "USDT يدوي",
+    "shamcash_auto": "شام كاش تلقائي",
+    "usdt_auto": "USDT تلقائي",
+    "other": "طرق أخرى",
+}
+
+
+async def _payment_diagnostics_text() -> str:
+    diagnostics = await payment_method_diagnostics(tuple(_PAYMENT_METHOD_LABELS))
+    lines = ["━━━ 🩺 الحالة الفعلية للأزرار ━━━"]
+    for method, label in _PAYMENT_METHOD_LABELS.items():
+        diagnostic = diagnostics[method]
+        state = "✅ ظاهر" if diagnostic.enabled else "⚪ مخفي"
+        lines.append(f"{state} {label}: {diagnostic.reason}")
+    return "\n".join(lines)
+
+
 @router.callback_query(F.data == "admin:payment_settings")
 async def payment_settings_menu(callback: CallbackQuery):
-    values = {key: await SettingsService.get_bool(key, True) for key in _PAYMENT_SETTING_KEYS}
+    values = {key: await SettingsService.get_bool(key, False) for key in _PAYMENT_SETTING_KEYS}
+    diagnostics_text = await _payment_diagnostics_text()
     await callback.message.edit_text(
         "🎛 <b>تفعيل طرق الدفع</b>\n\n"
-        "يمكنك إيقاف أي طريقة مؤقتاً. الطريقة لن تظهر للمستخدمين "
-        "إذا كانت بياناتها الخارجية غير موجودة أيضاً.",
+        "🟢/⚪ يوضحان مفتاح التفعيل في قاعدة البيانات.\n"
+        "الزر لا يظهر فعلياً إلا بعد نجاح فحص الإعدادات الخارجية.\n\n"
+        f"{diagnostics_text}\n\n"
+        "ضع مفاتيح المزودين في بيئة التشغيل ثم فعّل الطريقة من هنا، "
+        "واختبر دورة الدفع في staging قبل استقبال أموال حقيقية.",
         reply_markup=admin_payment_settings_kb(values),
     )
     await callback.answer()
@@ -148,7 +177,19 @@ async def payment_setting_toggle(callback: CallbackQuery, session):
     if key not in _PAYMENT_SETTING_KEYS:
         await callback.answer("⚠️ إعداد غير صالح.", show_alert=True)
         return
-    current = await SettingsService.get_bool(key, True)
+
+    current = await SettingsService.get_bool(key, False)
+    method = SETTING_TO_PAYMENT_METHOD.get(key)
+    if not current and method:
+        diagnostic = await diagnose_payment_method(method)
+        if not diagnostic.configured:
+            await callback.answer(
+                f"⚠️ لا يمكن التفعيل: {diagnostic.reason}.",
+                show_alert=True,
+            )
+            await payment_settings_menu(callback)
+            return
+
     await SettingsService.set(session, key, "false" if current else "true")
     await callback.answer("✅ تم تحديث طريقة الدفع.")
     await payment_settings_menu(callback)

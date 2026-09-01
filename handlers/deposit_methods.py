@@ -8,9 +8,10 @@
 6) طرق دفع أخرى
 """
 
+import html
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
@@ -40,8 +41,11 @@ from services.sam_api_service import (
 )
 from services.plisio_service import (
     plisio_client,
+    PlisioAPIError,
+    PlisioConnectionError,
     PlisioError,
 )
+from services.payment_method_service import PAYMENT_METHOD_SETTINGS, payment_method_enabled
 from states.states import (
     ShamCashManualStates,
     UsdtManualStates,
@@ -76,6 +80,45 @@ def _parse_positive_amount(value: str | None) -> Decimal:
         raise InvalidOperation from None
 
 
+def _safe_plisio_error(error: PlisioError) -> str:
+    """Return a short HTML-safe provider error without leaking credentials."""
+    if isinstance(error, PlisioAPIError):
+        prefix = "رفض مزود الدفع الطلب"
+    elif isinstance(error, PlisioConnectionError):
+        prefix = "تعذر الاتصال بمزود الدفع"
+    else:
+        prefix = "تعذر إنشاء فاتورة الدفع"
+    return html.escape(f"{prefix}: {str(error)[:400]}")
+
+
+def _parse_invoice_expiration(value, fallback_minutes: int = 30) -> datetime:
+    """Parse Plisio's Unix/ISO expiry value, with a safe local fallback."""
+    fallback = datetime.utcnow() + timedelta(minutes=fallback_minutes)
+    if value is None or value == "":
+        return fallback
+
+    try:
+        if isinstance(value, (int, float)):
+            timestamp = float(value)
+            if timestamp > 100_000_000_000:
+                timestamp /= 1000
+            return datetime.utcfromtimestamp(timestamp)
+
+        text = str(value).strip()
+        if text.isdigit():
+            timestamp = float(text)
+            if timestamp > 100_000_000_000:
+                timestamp /= 1000
+            return datetime.utcfromtimestamp(timestamp)
+
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+
+
 async def _get_owned_invoice(session, invoice_id: int, user_id: int):
     """Return an invoice only when it belongs to the current user.
 
@@ -100,46 +143,14 @@ async def _proof_already_submitted(session, proof: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
-_PAYMENT_METHOD_SETTINGS = {
-    "shamcash_manual": "payment_shamcash_manual_enabled",
-    "stars": "payment_stars_enabled",
-    "usdt_manual": "payment_usdt_manual_enabled",
-    "shamcash_auto": "payment_shamcash_auto_enabled",
-    "usdt_auto": "payment_usdt_auto_enabled",
-    "other": "payment_other_enabled",
-}
+# Kept as a compatibility alias for code and tests that import this mapping
+# from the handler. The actual availability policy lives in the shared service.
+_PAYMENT_METHOD_SETTINGS = PAYMENT_METHOD_SETTINGS
 
 
 async def _payment_method_enabled(method: str) -> bool:
-    setting_key = _PAYMENT_METHOD_SETTINGS.get(method)
-    if not setting_key or not await SettingsService.get_bool(setting_key, False):
-        return False
-
-    # A flag alone must not expose a payment destination that is empty or an
-    # automatic gateway that has no credentials. Values edited by the admin
-    # live in SettingsService; environment values are only a compatibility
-    # fallback for deployments configured through .env.
-    if method == "shamcash_manual":
-        address = await SettingsService.get("shamcash_manual_address", "")
-        return bool(address or settings.SHAMCASH_MANUAL_ADDRESS)
-    if method == "usdt_manual":
-        addresses = (
-            await SettingsService.get("usdt_trc20_address", ""),
-            await SettingsService.get("usdt_erc20_address", ""),
-            await SettingsService.get("usdt_bep20_address", ""),
-        )
-        return any(addresses) or any(
-            (
-                settings.USDT_TRC20_ADDRESS,
-                settings.USDT_ERC20_ADDRESS,
-                settings.USDT_BEP20_ADDRESS,
-            )
-        )
-    if method == "shamcash_auto":
-        return bool(settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS)
-    if method == "usdt_auto":
-        return bool(settings.PLISIO_SECRET_KEY)
-    return True
+    """Compatibility wrapper used by the user deposit handlers."""
+    return await payment_method_enabled(method)
 
 
 async def _require_payment_method(target, method: str, state: FSMContext | None = None) -> bool:
@@ -728,6 +739,13 @@ async def _create_shamcash_auto_invoice(
         expires_at = datetime.utcnow() + timedelta(minutes=15)
 
     address = await SettingsService.get("shamcash_manual_address", "")
+    address = (
+        invoice_data.get("paymentAddress")
+        or invoice_data.get("payment_address")
+        or address
+        or settings.SAM_API_WALLET_ADDRESS
+    )
+    address = str(address or "").strip() or None
 
     invoice = AutoInvoice(
         user_id=db_user.id,
@@ -750,16 +768,20 @@ async def _create_shamcash_auto_invoice(
     minutes = int(remaining.total_seconds() // 60)
     seconds = int(remaining.total_seconds() % 60)
 
+    destination_text = (
+        f"📬 عنوان الاستلام:\n<code>{html.escape(address)}</code>"
+        if address
+        else "📬 افتح صفحة الدفع من الزر أدناه لمعرفة تفاصيل التحويل."
+    )
     text = (
         "💳 <b>فاتورة شام كاش</b>\n\n"
         f"⏱ الوقت المتبقي: <b>{minutes}:{seconds:02d}</b>\n"
         f"💰 المبلغ المطلوب: <b>{amount} {currency}</b>\n"
         f"💵 يعادل: <b>{amount_usd}$</b>\n\n"
-        f"📬 عنوان الاستلام:\n"
-        f"<code>{address}</code>\n\n"
+        f"{destination_text}\n\n"
         f"📱 <b>خطوات الدفع:</b>\n"
         "1) افتح تطبيق شام كاش\n"
-        "2) حوّل المبلغ للعنوان أعلاه\n"
+        "2) حوّل المبلغ للعنوان الظاهر أو داخل صفحة الدفع\n"
         "3) انسخ رقم العملية من التطبيق\n"
         "4) أرسل رقم العملية هنا للتحقق\n\n"
         "🔢 <b>أرسل رقم العملية الآن:</b>"
@@ -1060,45 +1082,64 @@ async def usdt_auto_amount_received(
             order_id=order_id,
             currency="USDT_TRX",
             order_name=f"Deposit for user {db_user.id}",
+            lifetime=max(60, int(settings.PLISIO_INVOICE_EXPIRE_MINUTES) * 60),
         )
     except PlisioError as e:
-        logger.error(f"فشل إنشاء فاتورة Plisio: {e}")
+        logger.error("فشل إنشاء فاتورة Plisio: %s", str(e)[:400])
         await message.answer(
-            f"❌ فشل إنشاء الفاتورة:\n<code>{e}</code>\n\n"
+            "❌ فشل إنشاء الفاتورة:\n"
+            f"<code>{_safe_plisio_error(e)}</code>\n\n"
             "حاول مجدداً لاحقاً أو استخدم طريقة دفع أخرى.",
             reply_markup=back_to_main_kb(),
         )
         await state.clear()
         return
 
-    external_id = payment_data.get("uuid")
-    address = payment_data.get("address")
-    payment_url = payment_data.get("url")
-    payer_amount = payment_data.get("payer_amount", str(amount_with_fee))
-    expired_at_ts = payment_data.get("expired_at")
+    # Hosted invoices (the normal non-White-label response) contain only
+    # txn_id and invoice_url. wallet_hash/address is optional.
+    external_id = str(payment_data.get("uuid") or "").strip()
+    address = str(payment_data.get("address") or "").strip() or None
+    payment_url = str(payment_data.get("url") or "").strip() or None
+    payer_amount = payment_data.get("payer_amount")
+    payer_amount_known = payer_amount not in (None, "")
 
-    if not external_id or not address:
+    if not external_id or not payment_url:
+        logger.error(
+            "استجابة Plisio غير مكتملة: txn_id=%s invoice_url=%s",
+            bool(external_id),
+            bool(payment_url),
+        )
         await message.answer(
-            "❌ خطأ في استجابة الخادم.",
+            "❌ لم يُرجع مزود الدفع رابط فاتورة صالحاً. "
+            "لم يتم إنشاء طلب شحن؛ حاول مجدداً لاحقاً.",
             reply_markup=back_to_main_kb(),
         )
         await state.clear()
         return
 
-    if expired_at_ts:
-        try:
-            expires_at = datetime.utcfromtimestamp(int(expired_at_ts))
-        except (ValueError, TypeError):
-            expires_at = datetime.utcnow() + timedelta(minutes=30)
-    else:
-        expires_at = datetime.utcnow() + timedelta(minutes=30)
+    try:
+        payer_amount_decimal = (
+            Decimal(str(payer_amount)) if payer_amount_known else amount_with_fee
+        )
+        if not payer_amount_decimal.is_finite() or payer_amount_decimal <= 0:
+            raise InvalidOperation
+    except (InvalidOperation, ValueError, TypeError):
+        logger.warning("استجابة Plisio احتوت مبلغ دفع غير صالح؛ سيُستخدم مبلغ المصدر فقط")
+        payer_amount_decimal = amount_with_fee
+        payer_amount_known = False
+
+    payment_data["payer_amount_known"] = payer_amount_known
+    expires_at = _parse_invoice_expiration(
+        payment_data.get("expired_at"),
+        fallback_minutes=max(1, int(getattr(settings, "PLISIO_INVOICE_EXPIRE_MINUTES", 30))),
+    )
 
     invoice = AutoInvoice(
         user_id=db_user.id,
         method=AutoInvoiceMethod.USDT_AUTO,
         external_invoice_id=external_id,
         amount_usd=amount,
-        amount_original=Decimal(str(payer_amount)),
+        amount_original=payer_amount_decimal,
         currency="USDT",
         network="TRC20",
         payment_address=address,
@@ -1112,19 +1153,29 @@ async def usdt_auto_amount_received(
     await session.refresh(invoice)
 
     remaining = expires_at - datetime.utcnow()
-    minutes = int(remaining.total_seconds() // 60)
+    minutes = max(0, int(remaining.total_seconds() // 60))
 
+    amount_text = (
+        f"💰 المبلغ المطلوب: <b>{payer_amount_decimal} USDT</b>"
+        if payer_amount_known
+        else "💰 افتح صفحة الدفع لمعرفة قيمة USDT النهائية"
+    )
+    destination_text = (
+        f"📬 عنوان المحفظة:\n<code>{html.escape(address)}</code>"
+        if address
+        else "📬 تفاصيل العنوان والمبلغ موجودة داخل صفحة الدفع."
+    )
     text = (
         "₮ <b>فاتورة USDT (TRC20)</b>\n\n"
         f"⏱ الوقت المتبقي: <b>{minutes} دقيقة</b>\n"
-        f"💰 المبلغ المطلوب: <b>{payer_amount} USDT</b>\n"
-        f"💵 يعادل: <b>{amount}$</b>\n"
+        f"{amount_text}\n"
+        f"💵 المبلغ المحسوب للشحن: <b>{amount}$</b>\n"
         f"💸 يشمل رسوم: <b>{fee_percent}%</b>\n\n"
-        f"📬 عنوان المحفظة:\n"
-        f"<code>{address}</code>\n\n"
+        f"{destination_text}\n\n"
+        "🌐 اضغط <b>فتح صفحة الدفع</b> لعرض بيانات التحويل الدقيقة.\n\n"
         "⚠️ <b>مهم جداً:</b>\n"
         "• حوّل عبر شبكة <b>TRC20</b> فقط\n"
-        "• أرسل المبلغ المحدد بالضبط\n"
+        "• أرسل المبلغ المحدد داخل صفحة Plisio بالضبط\n"
         "• سيتم فحص الدفع كل 30 ثانية\n"
         "• عند وصول التحويل يُضاف الرصيد تلقائياً\n\n"
         "✨ لا حاجة لإدخال رقم العملية!"
@@ -1167,8 +1218,8 @@ async def usdt_auto_check_button(callback: CallbackQuery, session, bot, db_user:
     try:
         info = await plisio_client.get_payment_info(uuid=invoice.external_invoice_id)
     except PlisioError as e:
-        logger.error(f"فشل فحص فاتورة Plisio: {e}")
-        await callback.message.answer(f"⚠️ خطأ في الفحص: {e}")
+        logger.error("فشل فحص فاتورة Plisio: %s", str(e)[:400])
+        await callback.message.answer(f"⚠️ خطأ في الفحص: {_safe_plisio_error(e)}")
         return
 
     status = info.get("status", "process")

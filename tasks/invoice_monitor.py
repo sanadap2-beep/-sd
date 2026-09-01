@@ -36,6 +36,17 @@ from keyboards.main_menu import back_to_main_kb
 logger = logging.getLogger(__name__)
 
 
+def _invoice_amount_label(invoice: AutoInvoice) -> str:
+    """Avoid calling a USD fallback a crypto amount on hosted invoices."""
+    try:
+        payload = json.loads(invoice.raw_data or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    if payload.get("payer_amount_known") is False:
+        return f"{invoice.amount_original}$ (قيمة مصدر الفاتورة)"
+    return f"{invoice.amount_original} USDT"
+
+
 async def check_pending_invoices(bot):
     """
     مهمة رئيسية تُشغَّل كل 30 ثانية.
@@ -91,6 +102,8 @@ async def _process_paid_usdt_invoice(session, invoice: AutoInvoice, info: dict, 
     if invoice.status == AutoInvoiceStatus.PAID:
         return
 
+    amount_label = _invoice_amount_label(invoice)
+
     # أضف الرصيد أولاً. في حال فشل قاعدة البيانات تبقى الفاتورة معلّقة
     # ويستطيع المراقب إعادة المحاولة بدلاً من فقدان الدفعة.
     user = await BalanceService.add_balance(
@@ -114,7 +127,7 @@ async def _process_paid_usdt_invoice(session, invoice: AutoInvoice, info: dict, 
     await notifier.notify_user(
         user.telegram_id,
         f"✅ <b>تم شحن رصيدك بنجاح!</b>\n\n"
-        f"₮ المبلغ المستلم: <b>{invoice.amount_original} USDT</b>\n"
+        f"₮ المبلغ المسجل: <b>{amount_label}</b>\n"
         f"💰 المضاف للرصيد: <b>{invoice.amount_usd}$</b>\n\n"
         f"يمكنك الآن استخدام رصيدك.",
     )
@@ -124,7 +137,7 @@ async def _process_paid_usdt_invoice(session, invoice: AutoInvoice, info: dict, 
         f"👤 المستخدم: {user.telegram_id} "
         f"(@{user.username or '-'})\n"
         f"💵 المبلغ: <b>{invoice.amount_usd}$</b>\n"
-        f"💰 USDT: {invoice.amount_original}\n"
+        f"💰 المبلغ: {amount_label}\n"
         f"🌐 الشبكة: TRC20\n"
         f"🆔 فاتورة: #{invoice.id}"
     )
@@ -182,17 +195,27 @@ async def _expire_invoice(session, invoice: AutoInvoice, bot):
     if invoice.status != AutoInvoiceStatus.PENDING:
         return
 
-    # قبل تسجيلها كمنتهية، نفحصها مرة أخيرة
-    # لعل الدفع تم في اللحظات الأخيرة
+    # قبل تسجيلها كمنتهية، نفحصها مرة أخيرة لعل الدفع تم في اللحظات
+    # الأخيرة. إذا فشل مزود الدفع أو انقطع الاتصال فلا ندفن الفاتورة كمنتهية؛
+    # تبقى معلّقة حتى تنجح إعادة الفحص، لأن الدفع قد يكون وصل فعلاً.
     if invoice.method == AutoInvoiceMethod.USDT_AUTO:
         try:
             info = await plisio_client.get_payment_info(uuid=invoice.external_invoice_id)
-            status = info.get("status", "")
-            if plisio_client.is_paid_status(status):
-                await _process_paid_usdt_invoice(session, invoice, info, bot)
-                return
-        except Exception:
-            pass
+        except PlisioError as exc:
+            logger.warning(
+                "تعذر الفحص النهائي قبل انتهاء فاتورة USDT #%s: %s",
+                invoice.id,
+                str(exc)[:400],
+            )
+            return
+
+        status = info.get("status", "")
+        if plisio_client.is_paid_status(status):
+            await _process_paid_usdt_invoice(session, invoice, info, bot)
+            return
+        if plisio_client.is_failed_status(status):
+            await _process_failed_invoice(session, invoice, bot, "فشل الدفع")
+            return
 
     invoice.status = AutoInvoiceStatus.EXPIRED
     await session.commit()
