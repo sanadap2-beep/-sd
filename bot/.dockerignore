@@ -1,0 +1,14 @@
+.env
+local.env
+.env.*
+!.env.example
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.db
+data
+*.log
+sms_number_bot7787_full-1.md

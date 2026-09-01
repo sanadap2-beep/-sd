@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 100
+exclude = [".venv", ".git", "__pycache__", ".ruff_cache"]
+extend-exclude = ["sms_number_bot7787_full-1.md"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
