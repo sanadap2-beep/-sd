@@ -612,7 +612,13 @@ async def sync_herosms_countries(
 
     async def _probe(entry: dict) -> None:
         cid = str(entry.get("id", "")).strip()
-        eng = str(entry.get("eng") or "").strip() or f"HeroSMS {cid}"
+        raw_eng = str(entry.get("eng") or "").strip()
+        # بعض نسخ HeroSMS تعيد الكتالوج دون أسماء (أو الاسم = الرقم فقط).
+        # نعتمد الخريطة القياسية لأرقام دول SMS-Activate لتأمين اسم
+        # إنجليزي صحيح قابل للترجمة العربية بدل "HeroSMS 47".
+        if not raw_eng or raw_eng.isdigit() or raw_eng == cid:
+            raw_eng = HEROSMS_FALLBACK_COUNTRIES.get(cid, raw_eng or f"HeroSMS {cid}")
+        eng = raw_eng
         if not cid:
             return
         async with semaphore:
@@ -633,7 +639,19 @@ async def sync_herosms_countries(
     await asyncio.gather(*(_probe(entry) for entry in catalog))
 
     # ── 3) إنشاء/تحديث الدول ──
-    for cid, eng in english_names.items():
+    # الإدراج بترتيب الكتالوج لا بترتيب اكتمال الطلبات المتوازية
+    # (الذي يعيد ترتيباً عشوائياً مختلفاً كل مرة)، مع تعبئة sort_order
+    # ليظل ترتيب لوحة الأدمن وقوائم المستخدم ثابتاً ومنطقياً.
+    catalog_order = {
+        str(entry.get("id", "")).strip(): index
+        for index, entry in enumerate(catalog)
+    }
+    ordered_countries = sorted(
+        english_names.items(),
+        key=lambda item: catalog_order.get(item[0], 10**9),
+    )
+
+    for cid, eng in ordered_countries:
         try:
             stock_flags = availability.get(cid, {})
             has_stock = any(stock_flags.values())
@@ -659,6 +677,9 @@ async def sync_herosms_countries(
                 if country.flag in (None, "", "🌍") and flag != "🌍":
                     country.flag = flag
                     changed = True
+                if not country.sort_order:
+                    country.sort_order = catalog_order.get(cid, 0)
+                    changed = True
                 if activate and has_stock and not country.is_active:
                     country.is_active = True
                     report.activated += 1
@@ -674,6 +695,8 @@ async def sync_herosms_countries(
             country = existing_by_slug.scalar_one_or_none()
             if country is not None and not country.herosms_code:
                 country.herosms_code = cid
+                if not country.sort_order:
+                    country.sort_order = catalog_order.get(cid, 0)
                 if activate and has_stock and not country.is_active:
                     country.is_active = True
                     report.activated += 1
@@ -691,6 +714,7 @@ async def sync_herosms_countries(
                 flag=flag,
                 herosms_code=cid,
                 is_active=is_new_active,
+                sort_order=catalog_order.get(cid, 0),
             )
             session.add(new_country)
             await session.flush()

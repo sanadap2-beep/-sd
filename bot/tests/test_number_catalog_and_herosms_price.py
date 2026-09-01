@@ -405,3 +405,29 @@ async def test_get_countries_documented_list_shape():
     provider._request = _countries_request
     countries = await provider.get_countries()
     assert countries == [{"id": "2", "eng": "Kazakhstan"}]
+
+
+@pytest.mark.asyncio
+async def test_get_price_omits_service_param():
+    """getPrice يجب ألا يمرر معامل service — نفس الطلب المجرّب في السحب.
+
+    تمرير service كان يكسر الطلب عند بعض نسخ HeroSMS فتعود None بصمت
+    ويظهر للمستخدم «لا توجد أرقام متاحة» رغم التوفر.
+    """
+    import json as _json
+
+    from providers.herosms import HeroSMSProvider
+
+    provider = HeroSMSProvider()
+    captured: dict = {}
+    response = _json.dumps({"6": {"wa": {"cost": 5.5, "count": 10}}})
+
+    async def _request(params):
+        captured.update(params)
+        return response
+
+    provider._request = _request
+    assert await provider.get_price("6", "wa") == Decimal("5.5")
+    assert captured.get("action") == "getPrices"
+    assert captured.get("country") == "6"
+    assert "service" not in captured, "يجب طلب كل خدمات الدولة ثم استخراج الخدمة"

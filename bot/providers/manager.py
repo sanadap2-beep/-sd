@@ -113,6 +113,25 @@ class ProviderManager:
             return True
         return status.is_online
 
+    def manual_prices_for(
+        self,
+        service: NumberService,
+        country: Country,
+        cost: Decimal,
+    ) -> dict[ProviderName, Decimal]:
+        """يوزع سعر تكلفة يدوياً على كل مزود مؤهل (له كودا دولة وخدمة).
+
+        يستخدم حين يحدد الأدمن تكلفة يدوية: العرض والشراء يسيران بها
+        مباشرة دون انتظار أسعار المزود الحية.
+        """
+        prices: dict[ProviderName, Decimal] = {}
+        for provider_name in self._providers:
+            if self._get_provider_code(provider_name, country) and self._get_service_code(
+                provider_name, service
+            ):
+                prices[provider_name] = cost
+        return prices
+
     async def get_cheapest_price(
         self,
         service: NumberService,
@@ -123,6 +142,27 @@ class ProviderManager:
         يجلب أسعار كل المزودين المتاحين لخدمة/دولة معينة.
         يرجع dict مع المزود كمفتاح والسعر بالدولار كقيمة.
         """
+        # ── 0) التكلفة اليدوية للأدمن تتجاوز كل شيء ──
+        # تُقرأ من قاعدة البيانات (سريعة) ولا تمر بالكاش، فتظهر فوراً
+        # بعد تعديلها، وتحل تماماً محل الطلبات الحية إذا فشل المزود.
+        if session is not None:
+            try:
+                from services.pricing_service import PricingService
+
+                manual_cost = await PricingService.get_manual_cost(
+                    session, service.code, country.code
+                )
+            except Exception:  # noqa: BLE001 - خلل القراءة لا يمنع المسار الحي
+                manual_cost = None
+            if manual_cost is not None:
+                manual = self.manual_prices_for(service, country, manual_cost)
+                online_manual = {}
+                for provider_name, price in manual.items():
+                    if await self._is_provider_online(session, provider_name):
+                        online_manual[provider_name] = price
+                if online_manual:
+                    return online_manual
+
         cache_key = f"number-price:{service.code}:{country.code}"
         cached = await PriceCacheService.get(cache_key)
         if cached is not None:

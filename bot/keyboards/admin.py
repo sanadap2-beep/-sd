@@ -625,6 +625,14 @@ def admin_country_detail_kb(country) -> InlineKeyboardMarkup:
         b.button(text="⚪ تعطيل", callback_data=f"admin:country_toggle:{country.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:country_toggle:{country.id}")
+    b.button(
+        text="💬 سعر واتساب اليدوي",
+        callback_data=f"admin:country_price:whatsapp:{country.id}",
+    )
+    b.button(
+        text="✈️ سعر تيليجرام اليدوي",
+        callback_data=f"admin:country_price:telegram:{country.id}",
+    )
     b.button(text="🗑 حذف", callback_data=f"admin:country_delete:{country.id}")
     b.button(text="🔙 رجوع", callback_data="admin:countries")
     b.adjust(1)

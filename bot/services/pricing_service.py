@@ -13,7 +13,55 @@ from database.models import ServicePricing, ProviderName
 from services.settings_service import SettingsService
 
 
+def _manual_cost_key(service: str, country_code: str) -> str:
+    """مفتاح تخزين سعر التكلفة اليدوي في جدول الإعدادات."""
+    return f"manual_cost:{service}:{country_code}"
+
+
 class PricingService:
+    # ══════════════ التكلفة اليدوية ══════════════
+
+    @staticmethod
+    async def get_manual_cost(
+        session,
+        service: str,
+        country_code: str,
+    ) -> Decimal | None:
+        """سعر التكلفة اليدوي الذي حدده الأدمن (إن وُجد).
+
+        إن حُدد فهو يتجاوز الأسعار الحية من المزود تماماً: لوحة
+        الدول وصفحة الشراء تعرضانه مباشرة دون أي طلب شبكي.
+        """
+        value = await SettingsService.get(_manual_cost_key(service, country_code))
+        if value is None:
+            return None
+        try:
+            cost = Decimal(value)
+        except Exception:  # noqa: BLE001 - قيمة تالفة = لا تسعير يدوي
+            return None
+        return cost if cost > 0 else None
+
+    @staticmethod
+    async def set_manual_cost(
+        session,
+        service: str,
+        country_code: str,
+        cost_usd: Decimal,
+    ) -> None:
+        """يحفظ سعر تكلفة يدوياً لخدمة/دولة."""
+        await SettingsService.set(
+            session, _manual_cost_key(service, country_code), str(cost_usd)
+        )
+
+    @staticmethod
+    async def delete_manual_cost(session, service: str, country_code: str) -> None:
+        """يزيل التسعير اليدوي فتعود الخدمة/الدولة للأسعار الحية."""
+        await SettingsService.delete(
+            session, _manual_cost_key(service, country_code)
+        )
+
+    # ══════════════ هوامش الربح ══════════════
+
     @staticmethod
     async def get_margin(
         session,

@@ -77,13 +77,22 @@ def invalidate_board(service_code: str | None = None) -> None:
         _BOARD_CACHE.pop(service_code, None)
 
 
-async def _fetch_cost(manager, service, country) -> tuple[object, Decimal] | None:
+async def _fetch_cost(manager, service, country, manual_cost=None) -> tuple[object, Decimal] | None:
     """أرخص (مزود، تكلفة) لدولة واحدة، أو None إن لم تتوفر أسعار/مخزون.
 
-    ملاحظة: نمرر session=None عن قصد — فحص حالة المزود داخل
-    get_cheapest_price يستخدم الجلسة، وجلسة AsyncSession واحدة غير آمنة
-    للاستخدام المتوازي. المزودون المعطّلون يفشل طلبهم ببساطة فيستبقون.
+    إن وُجدت تكلفة يدوية للأدمن تُستخدم مباشرة دون أي طلب شبكي —
+    هكذا تعمل اللوحة حتى لو كانت أسعار المزود الحية معطلة.
+
+    ملاحظة: نمرر session=None عن قصد في المسار الحي — فحص حالة المزود
+    داخل get_cheapest_price يستخدم الجلسة، وجلسة AsyncSession واحدة
+    غير آمنة للاستخدام المتوازي. المزودون المعطّلون يفشل طلبهم ببساطة.
     """
+    if manual_cost is not None and hasattr(manager, "manual_prices_for"):
+        prices = manager.manual_prices_for(service, country, manual_cost)
+        if prices:
+            provider = min(prices, key=prices.get)
+            return provider, prices[provider]
+        return None
     try:
         prices = await manager.get_cheapest_price(service, country, session=None)
     except Exception:  # noqa: BLE001 - دولة واحدة لا تُسقط اللوحة
@@ -121,13 +130,27 @@ async def build_board(session, service, manager=None) -> list[BoardEntry]:
     if not countries:
         return []
 
+    # ── التكاليف اليدوية للأدمن (تسلسلياً وبأمان عبر الجلسة) ──
+    # تُقرأ قبل الجولات المتوازية لأن قراءة KV سريعة، وتُمرر للعمال
+    # فتعرض الدول المُسعّرة يدوياً حتى بلا اتصال بالمزود.
+    manual_costs: dict[str, Decimal] = {}
+    for country in countries:
+        try:
+            cost = await PricingService.get_manual_cost(session, service.code, country.code)
+        except Exception:  # noqa: BLE001 - خلل القراءة يعني لا تسعير يدوياً
+            cost = None
+        if cost is not None:
+            manual_costs[country.code] = cost
+
     # ── جلب التكاليف بالتوازي (لا جلسة قاعدة بيانات هنا) ──
     semaphore = asyncio.Semaphore(max(1, BOARD_CONCURRENCY))
     costs: dict[str, tuple[object, Decimal]] = {}
 
     async def _worker(country):
         async with semaphore:
-            fetched = await _fetch_cost(manager, service, country)
+            fetched = await _fetch_cost(
+                manager, service, country, manual_cost=manual_costs.get(country.code)
+            )
         if fetched is not None:
             costs[country.code] = fetched
 

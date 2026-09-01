@@ -177,6 +177,9 @@ class AdminCountryStates(StatesGroup):
     waiting_herosms_code = State()
     waiting_sms_activate_code = State()
     waiting_smshub_code = State()
+    # تسعير يدوي لكل خدمة/دولة
+    waiting_manual_price = State()
+    waiting_manual_margin = State()
 
 
 # ══════════════ الأدمن - الأقسام الرئيسية ══════════════

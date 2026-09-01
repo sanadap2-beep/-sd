@@ -4,13 +4,14 @@
 """
 
 from aiogram import Router, F
+from decimal import Decimal
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import delete as sql_delete, func, select
 
 from config import settings
-from database.models import Country
-from providers.countries import get_all_countries
+from database.models import Country, NumberService, ProviderName
+from providers.countries import get_all_countries, get_number_service_by_code
 from providers.fivesim import FiveSimProvider
 from services.herosms_sync_service import sync_herosms_countries
 from states.states import AdminCountryStates
@@ -177,6 +178,26 @@ async def country_view(callback: CallbackQuery, session):
         return
 
     status = "🟢 مفعّلة" if country.is_active else "⚪ معطّلة"
+
+    # أسعار التكلفة اليدوية لواتساب/تيليجرام مع سعر البيع الناتج
+    from services.pricing_service import PricingService
+
+    price_lines = []
+    for svc_code, svc_emoji in (("whatsapp", "💬"), ("telegram", "✈️")):
+        manual = await PricingService.get_manual_cost(session, svc_code, country.code)
+        if manual is not None:
+            margin_type, margin_value = await PricingService.get_margin(
+                session, svc_code, country.code, ProviderName.HEROSMS
+            )
+            sell = PricingService.apply_margin(manual, margin_type, margin_value)
+            price_lines.append(
+                f"{svc_emoji} {svc_code}: تكلفة <b>{manual}$</b> → "
+                f"بيع <b>{sell}$</b> (ربح {margin_value}%)"
+            )
+        else:
+            price_lines.append(f"{svc_emoji} {svc_code}: سعر تلقائي من المزود")
+    prices_text = "\n".join(price_lines)
+
     await callback.message.edit_text(
         f"{country.flag} <b>{country.name_ar}</b>\n\n"
         f"المعرّف: <code>{country.code}</code>\n"
@@ -185,7 +206,8 @@ async def country_view(callback: CallbackQuery, session):
         f"HeroSMS: <code>{country.herosms_code or '—'}</code>\n"
         f"SMS-Activate: <code>{country.sms_activate_code or '—'}</code>\n"
         f"SMSHub: <code>{country.smshub_code or '—'}</code>\n"
-        f"الترتيب: {country.sort_order}",
+        f"الترتيب: {country.sort_order}\n\n"
+        f"💰 <b>الأسعار:</b>\n{prices_text}",
         reply_markup=admin_country_detail_kb(country),
     )
 
@@ -226,6 +248,155 @@ async def country_reference_list(callback: CallbackQuery):
     except Exception as e:
         text = f"⚠️ تعذّر الجلب: {e}"
     await callback.message.answer(text)
+
+
+# ══════════════════════════════════════════════
+# ══════════════ التسعير اليدوي للدول ══════════════
+# ══════════════════════════════════════════════
+
+
+async def _load_price_context(session, data: dict):
+    """يجلب الدولة والخدمة من بيانات حالة التسعير اليدوي."""
+    country = await session.get(Country, data.get("price_country") or 0)
+    service = None
+    service_code = data.get("price_service")
+    if service_code:
+        service = await get_number_service_by_code(session, service_code)
+    return country, service
+
+
+@router.callback_query(F.data.startswith("admin:country_price:"))
+async def country_price_start(callback: CallbackQuery, state: FSMContext, session):
+    """يبدأ ضبط التكلفة اليدوية لخدمة داخل دولة."""
+    parts = callback.data.split(":")
+    service_code = parts[2]
+    country_id = int(parts[3])
+
+    country = await session.get(Country, country_id)
+    if not country:
+        await callback.answer("⚠️ الدولة غير موجودة.", show_alert=True)
+        return
+    service = await get_number_service_by_code(session, service_code)
+    if service is None:
+        await callback.answer("⚠️ الخدمة غير موجودة.", show_alert=True)
+        return
+
+    from services.pricing_service import PricingService
+
+    current = await PricingService.get_manual_cost(session, service_code, country.code)
+    margin_type, margin_value = await PricingService.get_margin(
+        session, service_code, country.code, ProviderName.HEROSMS
+    )
+
+    await callback.answer()
+    await callback.message.edit_text(
+        f"💰 <b>تسعير يدوي: {service.emoji} {service.name_ar} — {country.flag} {country.name_ar}</b>\n\n"
+        f"كود الدولة لدى HeroSMS: <code>{country.herosms_code or '—'}</code>\n"
+        f"كود الخدمة لدى HeroSMS: <code>{service.herosms_code or '—'}</code>\n"
+        f"حالة الدولة: {'🟢 مفعّلة' if country.is_active else '⚪ معطّلة (فعّلها لعرضها للمستخدمين)'}\n\n"
+        f"التكلفة الحالية: <b>{f'{current}$' if current is not None else 'تلقائية من المزود'}</b>\n"
+        f"نسبة الربح الحالية: <b>{margin_value}%</b>\n\n"
+        "أرسل <b>سعر التكلفة بالدولار</b> كما هو في لوحة HeroSMS\n"
+        "(مثال: <code>0.5</code>)\n\n"
+        "أو أرسل <code>-</code> للرجوع للتسعير التلقائي.",
+        reply_markup=admin_back_kb(),
+    )
+    await state.update_data(price_service=service_code, price_country=country_id)
+    await state.set_state(AdminCountryStates.waiting_manual_price)
+
+
+@router.message(AdminCountryStates.waiting_manual_price)
+async def manual_price_received(message: Message, state: FSMContext, session):
+    """يستقبل سعر التكلفة اليدوي بالدولار."""
+    raw = (message.text or "").strip().replace(",", ".")
+    country, service = await _load_price_context(session, await state.get_data())
+    if not country or not service:
+        await message.answer("⚠️ البيانات غير مكتملة. ابدأ من جديد من إدارة الدول.")
+        await state.clear()
+        return
+
+    from services.pricing_service import PricingService
+
+    if raw == "-":
+        await PricingService.delete_manual_cost(session, service.code, country.code)
+        from services.number_catalog_service import invalidate_board
+
+        invalidate_board(service.code)
+        await message.answer(
+            f"✅ رجعت تكلفة {service.emoji} {service.name_ar} لدولة "
+            f"{country.flag} {country.name_ar} للتسعير التلقائي من المزود."
+        )
+        await state.clear()
+        return
+
+    try:
+        cost = Decimal(raw)
+    except Exception:  # noqa: BLE001 - إدخال غير رقمي
+        await message.answer("⚠️ أرسل رقماً صحيحاً مثل 0.5 أو أرسل - للإلغاء.")
+        return
+    if cost <= 0:
+        await message.answer("⚠️ السعر يجب أن يكون أكبر من صفر.")
+        return
+
+    await PricingService.set_manual_cost(session, service.code, country.code, cost)
+    await message.answer(
+        f"✅ تم حفظ التكلفة <b>{cost}$</b>.\n\n"
+        "الآن أرسل <b>نسبة الربح %</b> (مثال: <code>50</code>)\n"
+        "أو أرسل <code>-</code> للاحتفاظ بالنسبة الحالية."
+    )
+    await state.set_state(AdminCountryStates.waiting_manual_margin)
+
+
+@router.message(AdminCountryStates.waiting_manual_margin)
+async def manual_margin_received(message: Message, state: FSMContext, session):
+    """يستقبل نسبة الربح ويعرض ملخص التسعير النهائي."""
+    raw = (message.text or "").strip().replace("%", "").replace(",", ".")
+    country, service = await _load_price_context(session, await state.get_data())
+    if not country or not service:
+        await message.answer("⚠️ البيانات غير مكتملة. ابدأ من جديد من إدارة الدول.")
+        await state.clear()
+        return
+
+    from services.pricing_service import PricingService
+
+    if raw != "-":
+        try:
+            margin = Decimal(raw)
+        except Exception:  # noqa: BLE001 - إدخال غير رقمي
+            await message.answer("⚠️ أرسل نسبة صحيحة مثل 50 أو أرسل - للاحتفاظ بالحالية.")
+            return
+        if margin < 0:
+            await message.answer("⚠️ النسبة لا يمكن أن تكون سالبة.")
+            return
+        await PricingService.set_custom_margin(
+            session,
+            service.code,
+            "percent",
+            margin,
+            country_code=country.code,
+        )
+
+    cost = await PricingService.get_manual_cost(session, service.code, country.code)
+    margin_type, margin_value = await PricingService.get_margin(
+        session, service.code, country.code, ProviderName.HEROSMS
+    )
+    sell = PricingService.apply_margin(cost or Decimal("0"), margin_type, margin_value)
+
+    from services.number_catalog_service import invalidate_board
+
+    invalidate_board(service.code)
+
+    await message.answer(
+        f"✅ <b>تم ضبط التسعير</b>\n\n"
+        f"{service.emoji} {service.name_ar} — {country.flag} {country.name_ar}\n"
+        f"💰 التكلفة: <b>{cost}$</b>\n"
+        f"📈 الربح: <b>{margin_value}%</b>\n"
+        f"🛒 سعر البيع للمستخدم: <b>{sell}$</b>\n\n"
+        "السعر ظاهر الآن للمستخدمين فوراً، والشراء يطلب الرقم من المزود مباشرة.\n"
+        "⚠️ إن كان السعر الفعلي عند المزود أعلى من تكلفتك المسجلة سيفشل الشراء "
+        "ويُسترجع رصيد المشتري — حدّث التكلفة وقتها."
+    )
+    await state.clear()
 
 
 # ══════════════════════════════════════════════
@@ -337,6 +508,7 @@ async def _reset_synced_countries(session) -> int:
     """
     from database.models import ServicePricing
     from services.price_cache_service import PriceCacheService
+    from services.settings_service import SettingsService
 
     result = await session.execute(
         select(Country).where(Country.herosms_code.is_not(None))
@@ -349,6 +521,16 @@ async def _reset_synced_countries(session) -> int:
     await session.execute(
         sql_delete(ServicePricing).where(ServicePricing.country_code.in_(codes))
     )
+
+    # إزالة الأسعار اليدوية المرتبطة بالدول المحذوفة أيضاً
+    svc_rows = await session.execute(select(NumberService.code))
+    service_codes = [row[0] for row in svc_rows.all()]
+    for code in codes:
+        for svc in service_codes:
+            try:
+                await SettingsService.delete(session, f"manual_cost:{svc}:{code}")
+            except Exception:  # noqa: BLE001 - تنظيف اختياري
+                pass
     await session.execute(
         sql_delete(Country).where(Country.id.in_([c.id for c in targets]))
     )

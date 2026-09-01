@@ -79,6 +79,7 @@ class HeroSMSProvider(BaseProvider):
         else:
             raise ProviderAPIError("استجابة getCountries غير مفهومة من HeroSMS")
 
+        used_fallback_name = 0
         for item in iterable:
             if not isinstance(item, dict):
                 continue
@@ -91,8 +92,20 @@ class HeroSMSProvider(BaseProvider):
                     continue
             except (TypeError, ValueError):
                 pass
-            eng = item.get("eng") or item.get("rus") or item.get("chn") or str(cid)
+            eng = item.get("eng") or item.get("rus") or item.get("chn")
+            if not eng:
+                used_fallback_name += 1
+                eng = str(cid)
             countries.append({"id": str(cid), "eng": str(eng)})
+
+        if used_fallback_name:
+            # يحدث في نسخٍ ترد الكتالوج دون حقول أسماء — نسهل التشخيص
+            # لأن اسم الدولة سيعيد تمثيله لاحقاً من الخريطة القياسية.
+            logger.warning(
+                "HeroSMS getCountries: %d دولة دون حقل eng — الرد الخام: %.600s",
+                used_fallback_name,
+                result,
+            )
 
         if not countries:
             raise ProviderAPIError("استجابة getCountries فارغة من HeroSMS")
@@ -112,7 +125,16 @@ class HeroSMSProvider(BaseProvider):
     async def get_price(self, country: str, service: str) -> Decimal | None:
         """يجلب سعر التكلفة بالدولار مع فحص المخزون.
 
-        حسب التوثيق الرسمي، getPrices قد يرجع:
+        ملاحظة مهمة جداً:
+        نطلب getPrices «دون» معامل service — نفس الطلب الذي ينجح فعلياً
+        أثناء سحب الدول — ثم نستخرج الخدمة المطلوبة من الرد. تمرير
+        service كان يكسر الطلب عند بعض نسخ HeroSMS فتعود النتيجة
+        None بصمت، ويظهر للمستخدم «لا توجد أرقام متاحة» رغم توفرها.
+
+        أي رد غير مفهوم يُسجل كاملاً في اللوج (أول 400 حرف) لسهولة
+        التشخيص من ملفات السجل مباشرة.
+
+        الأشكال المدعومة من الرد:
         1) {service: {cost, count, physicalCount}}   (الشكل الموثق)
         2) {country: {service: {cost, count}}}       (شكل SMS-Activate القديم)
         3) [{service: {cost, count}}]                (قائمة كائنات)
@@ -122,15 +144,16 @@ class HeroSMSProvider(BaseProvider):
         ونرجع أرخص خيار متاح بالدولار كما هو دون أي تحويل.
         """
         result = await self._request(
-            {
-                "action": "getPrices",
-                "country": country,
-                "service": service,
-            }
+            {"action": "getPrices", "country": country}
         )
         try:
             data = json.loads(result)
         except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "HeroSMS getPrices: رد غير JSON لدولة %s — الرد الخام: %.400s",
+                country,
+                result,
+            )
             return None
 
         if isinstance(data, list):
@@ -142,12 +165,30 @@ class HeroSMSProvider(BaseProvider):
             data = merged
 
         if not isinstance(data, dict):
+            logger.warning(
+                "HeroSMS getPrices: شكل غير متوقع لدولة %s — الرد الخام: %.400s",
+                country,
+                result,
+            )
             return None
+
         node = data.get(country, data)
         if not isinstance(node, dict):
+            logger.warning(
+                "HeroSMS getPrices: عقدة الدولة غير مفهومة لدولة %s — الرد الخام: %.400s",
+                country,
+                result,
+            )
             return None
+
         payload = node.get(service)
         if not isinstance(payload, dict):
+            logger.info(
+                "HeroSMS: الخدمة %s غير معروضة لدولة %s — الرد الخام: %.400s",
+                service,
+                country,
+                result,
+            )
             return None
 
         # جمع المرشحين: سعر مباشر أو مشغلون متداخلون
@@ -174,6 +215,13 @@ class HeroSMSProvider(BaseProvider):
                 continue
             if cheapest is None or cost_usd < cheapest:
                 cheapest = cost_usd
+        if cheapest is None:
+            logger.info(
+                "HeroSMS: لا مخزون متاح للخدمة %s بدولة %s — الرد الخام: %.400s",
+                service,
+                country,
+                result,
+            )
         return cheapest
 
     async def buy_number(

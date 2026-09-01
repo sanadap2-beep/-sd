@@ -308,3 +308,44 @@ async def test_reset_synced_countries_keeps_manual():
         # قاعدة التسعير الخاصة بدولة محذوفة أُزيلت، والعامة تبقى
         pricing = list((await session.execute(select(ServicePricing))).scalars().all())
         assert all(p.country_code is None for p in pricing)
+
+
+@pytest.mark.asyncio
+async def test_sync_names_from_fallback_map_and_catalog_order():
+    """كتالوج بلا أسماء: تُشتق الأسماء من خريطة أرقام الدول القياسية،
+    والإدراج يتم بترتيب الكتالوج مع sort_order ثابت."""
+
+    class NoNamesProvider(FakeHeroSMS):
+        """كتالوج بدون حقل eng إطلاقاً وبترتيب معكوس."""
+
+        def __init__(self):
+            super().__init__()
+            self.catalog = [
+                {"id": "16"},          # إنجلترا ← بريطانيا
+                {"id": "21", "eng": "21"},  # الاسم رقم فقط ← مصر
+                {"id": "6", "eng": "Indonesia"},
+            ]
+            self.prices["16"] = {"wa": {"cost": 3.0, "count": 40}}
+            self.prices["21"] = {"wa": {"cost": 2.0, "count": 60}}
+
+    async with async_session_maker() as session:
+        report = await sync_herosms_countries(
+            session, ["whatsapp"], provider=NoNamesProvider()
+        )
+        assert len(report.added) == 3
+
+        result = await session.execute(
+            select(Country).order_by(Country.sort_order, Country.id)
+        )
+        ordered = list(result.scalars().all())
+
+        # الترتيب بترتيب الكتالوج (16, 21, 6) لا أبجدياً ولا عشوائياً
+        assert [c.herosms_code for c in ordered] == ["16", "21", "6"]
+
+        by_code = {c.herosms_code: c for c in ordered}
+        assert by_code["16"].name_ar == "بريطانيا"
+        assert by_code["21"].name_ar == "مصر"
+        assert by_code["6"].name_ar == "إندونيسيا"
+        assert by_code["16"].sort_order == 0
+        assert by_code["21"].sort_order == 1
+        assert by_code["6"].sort_order == 2
