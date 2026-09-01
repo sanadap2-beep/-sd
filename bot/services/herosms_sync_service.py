@@ -238,6 +238,38 @@ COUNTRY_LABELS: dict[str, tuple[str, str]] = {
     "luxembourg": ("لوكسمبورغ", "🇱🇺"),
     "malta": ("مالطا", "🇲🇹"),
     "singapore": ("سنغافورة", "🇸🇬"),
+    "papua new guinea": ("بابوا غينيا الجديدة", "🇵🇬"),
+    "papua": ("بابوا غينيا الجديدة", "🇵🇬"),
+    "papuanewguinea": ("بابوا غينيا الجديدة", "🇵🇬"),
+    "congo republic": ("الكونغو", "🇨🇬"),
+    "congo brazzaville": ("الكونغو", "🇨🇬"),
+    "republic of the congo": ("الكونغو", "🇨🇬"),
+    "democratic republic of the congo": ("الكونغو الديمقراطية", "🇨🇩"),
+    "dr congo": ("الكونغو الديمقراطية", "🇨🇩"),
+    "ivory coast": ("ساحل العاج", "🇨🇮"),
+    "cote d ivoire": ("ساحل العاج", "🇨🇮"),
+    "cote divoire": ("ساحل العاج", "🇨🇮"),
+    "united states of america": ("أمريكا", "🇺🇸"),
+    "unitedstatesofamerica": ("أمريكا", "🇺🇸"),
+    "great britain": ("بريطانيا", "🇬🇧"),
+    "britain": ("بريطانيا", "🇬🇧"),
+    "türkiye": ("تركيا", "🇹🇷"),
+    "turkey republic": ("تركيا", "🇹🇷"),
+    "russian federation": ("روسيا", "🇷🇺"),
+    "russianfederation": ("روسيا", "🇷🇺"),
+    "korea republic": ("كوريا الجنوبية", "🇰🇷"),
+    "korea rep": ("كوريا الجنوبية", "🇰🇷"),
+    "uae dubai": ("الإمارات", "🇦🇪"),
+    "emirates": ("الإمارات", "🇦🇪"),
+    "viet nam": ("فيتنام", "🇻🇳"),
+    "vietnam": ("فيتنام", "🇻🇳"),
+    "czechia": ("التشيك", "🇨🇿"),
+    "kyrgyz republic": ("قرغيزستان", "🇰🇬"),
+    "kyrgyzrepublic": ("قرغيزستان", "🇰🇬"),
+    "portugal": ("البرتغال", "🇵🇹"),
+    "luxembourg": ("لوكسمبورغ", "🇱🇺"),
+    "malta": ("مالطا", "🇲🇹"),
+    "singapore": ("سنغافورة", "🇸🇬"),
     "korea south": ("كوريا الجنوبية", "🇰🇷"),
 }
 
@@ -354,18 +386,35 @@ def _slugify(name: str) -> str:
     return slug or "country"
 
 
+def _deaccent(text: str) -> str:
+    """يحوّل الحروف اللاتينية الممدودة إلى أساسية (Côte d'Ivoire → Cote d'Ivoire)."""
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+def _is_arabic(text: str | None) -> bool:
+    """هل النص يحوي حروفاً عربية؟"""
+    if not text:
+        return False
+    return any("\u0600" <= ch <= "\u06FF" for ch in text)
+
+
 def _label_for(english_name: str) -> tuple[str, str]:
     """يرجع (الاسم العربي، العلم) لاسم إنجليزي، مع بديل آمن."""
-    key = english_name.strip().lower().replace("-", " ").replace(".", "")
+    key = _deaccent(english_name.strip().lower()).replace("-", " ").replace(".", "").replace("'", " ")
+    key = re.sub(r"\s+", " ", key).strip()
     direct = COUNTRY_LABELS.get(key)
     if direct:
         return direct
     compact = COUNTRY_LABELS.get(key.replace(" ", ""))
     if compact:
         return compact
-    without_virtual = re.sub(r"\s*\(.*?\)\s*", " ", key).strip()
-    stripped = COUNTRY_LABELS.get(without_virtual) or COUNTRY_LABELS.get(
-        without_virtual.replace(" ", "")
+    without_parens = re.sub(r"\s*\(.*?\)\s*", " ", key).strip()
+    without_parens = re.sub(r"\s+", " ", without_parens)
+    stripped = COUNTRY_LABELS.get(without_parens) or COUNTRY_LABELS.get(
+        without_parens.replace(" ", "")
     )
     if stripped:
         return stripped
@@ -603,7 +652,11 @@ async def sync_herosms_countries(
                 if not country.name_ar or country.name_ar.startswith("HeroSMS"):
                     country.name_ar = name_ar
                     changed = True
-                if country.flag in (None, "", "🌍"):
+                elif not _is_arabic(country.name_ar) and _is_arabic(name_ar):
+                    # اسم قائم بحروف لاتينية ولدينا ترجمة عربية → نعرّبه
+                    country.name_ar = name_ar
+                    changed = True
+                if country.flag in (None, "", "🌍") and flag != "🌍":
                     country.flag = flag
                     changed = True
                 if activate and has_stock and not country.is_active:
@@ -611,7 +664,7 @@ async def sync_herosms_countries(
                     report.activated += 1
                     changed = True
                 if changed:
-                    report.updated.append(f"{flag} {country.name_ar}")
+                    report.updated.append(f"{country.flag} {country.name_ar}")
                 continue
 
             # دمج مع دولة قائمة أُضيفت سابقاً بمزود آخر (بدون كود herosms)

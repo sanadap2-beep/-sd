@@ -103,7 +103,9 @@ class ProviderManager:
         """يتحقق من حالة المزود في قاعدة البيانات."""
         status = await session.get(ProviderStatus, provider)
         if status is None:
-            return False
+            # لا يوجد سجل حالة بعد (تثبيت جديد أو مزود أضيف حديثاً):
+            # نسمح بالمحاولة بدل حجب كل الطلبات حتى أول فحص صحة.
+            return True
         # A fresh installation has no health-check result yet. Allow the
         # first real request instead of blocking every provider for the first
         # ten minutes until the scheduler runs.

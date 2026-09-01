@@ -42,6 +42,7 @@ from keyboards.numbers import (
     bulk_confirm_kb,
     bulk_quantity_kb,
     countries_kb,
+    countries_price_kb,
     confirm_purchase_kb,
     order_actions_kb,
     ready_number_packages_kb,
@@ -121,14 +122,33 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
         )
         return
 
-    await callback.answer()
     countries = await get_active_countries(session)
     if not countries:
+        await callback.answer()
         await callback.message.edit_text(
             I18nService.t("no_countries", language),
         )
         return
 
+    # ── لوحة الأسعار: الدول المرتبة من الأرخص للأغلى مع السعر ──
+    await callback.answer(I18nService.t("fetching_price", language))
+    try:
+        from services.number_catalog_service import build_board
+
+        entries = await build_board(session, service)
+    except Exception:  # noqa: BLE001 - اللوحة تحسّن العرض ولا تكسر الشراء
+        logger.exception("فشل بناء لوحة أسعار الدول")
+        entries = []
+
+    if entries:
+        await callback.message.edit_text(
+            f"{service.emoji} <b>{I18nService.t('numbers_for', language)} {service.name_ar}</b>\n\n"
+            f"{I18nService.t('choose_country_priced', language)}:",
+            reply_markup=countries_price_kb(service_code, entries),
+        )
+        return
+
+    # احتياط: لا أسعار الآن (مزودون بعيدون) — أعرض الدول بدون أسعار
     await callback.message.edit_text(
         f"{service.emoji} <b>{I18nService.t('numbers_for', language)} {service.name_ar}</b>\n\n{I18nService.t('choose_country', language)}:",
         reply_markup=countries_kb(service_code, countries),
@@ -150,7 +170,27 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
         await callback.answer(I18nService.t("number_service_missing", language), show_alert=True)
         return
 
-    await callback.answer()
+    await callback.answer(I18nService.t("fetching_price", language))
+
+    # نحاول لوحة الأسعار أولاً (مرتبة من الأرخص مع السعر لكل دولة)
+    try:
+        from services.number_catalog_service import build_board
+
+        entries = await build_board(session, service)
+    except Exception:  # noqa: BLE001
+        logger.exception("فشل بناء لوحة أسعار الدول")
+        entries = []
+
+    if entries:
+        await callback.message.edit_text(
+            I18nService.t("numbers_page_title", language, emoji=service.emoji, service=service.name_ar)
+            + "\n"
+            + I18nService.t("choose_country_priced", language)
+            + ":",
+            reply_markup=countries_price_kb(service_code, entries, page),
+        )
+        return
+
     countries = await get_active_countries(session)
     await callback.message.edit_text(
         I18nService.t("numbers_page_title", language, emoji=service.emoji, service=service.name_ar),

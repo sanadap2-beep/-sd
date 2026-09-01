@@ -82,6 +82,61 @@ def countries_kb(
     return b.as_markup()
 
 
+def countries_price_kb(
+    service_code: str,
+    entries: list,
+    page: int = 0,
+) -> InlineKeyboardMarkup:
+    """
+    قائمة الدول مع سعر البيع لكل دولة، مرتبة من الأرخص للأغلى.
+
+    entries: قائمة BoardEntry من NumberCatalogService.build_board.
+    الدول بلا سعر أو مخزون لا تظهر في اللوحة أصلاً.
+    """
+    from services.number_catalog_service import format_price
+
+    b = InlineKeyboardBuilder()
+
+    start = page * COUNTRIES_PER_PAGE
+    end = start + COUNTRIES_PER_PAGE
+    page_entries = entries[start:end]
+    total_pages = (len(entries) + COUNTRIES_PER_PAGE - 1) // COUNTRIES_PER_PAGE
+
+    for entry in page_entries:
+        b.button(
+            text=f"{entry.flag} {entry.name_ar} · {format_price(entry.sell_usd)}$",
+            callback_data=(f"num_country:{service_code}:{entry.code}"),
+        )
+
+    # ── أزرار التنقل ──
+    nav_buttons = []
+    if page > 0:
+        b.button(
+            text="◀️ السابق",
+            callback_data=(f"num_page:{service_code}:{page - 1}"),
+        )
+        nav_buttons.append(1)
+    if page < total_pages - 1:
+        b.button(
+            text="التالي ▶️",
+            callback_data=(f"num_page:{service_code}:{page + 1}"),
+        )
+        nav_buttons.append(1)
+
+    b.button(
+        text="🔙 رجوع",
+        callback_data="back_to_main",
+    )
+
+    rows = [1] * len(page_entries)
+    if nav_buttons:
+        rows.append(len(nav_buttons))
+    rows.append(1)
+
+    b.adjust(*rows)
+    return b.as_markup()
+
+
 def confirm_purchase_kb(
     service_code: str,
     country_code: str,

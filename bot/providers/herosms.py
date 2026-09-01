@@ -104,6 +104,16 @@ class HeroSMSProvider(BaseProvider):
         return json.loads(result)
 
     async def get_price(self, country: str, service: str) -> Decimal | None:
+        """يجلب سعر التكلفة بالدولار مع فحص المخزون.
+
+        استجابات getPrices تختلف بين النسخ المستنسخة من SMS-Activate:
+        1) {country: {service: {cost, count}}}
+        2) {service: {cost, count}}            (بدون غلاف الدولة)
+        3) {service: {operator: {cost, count}}} (مشغلون متداخلون)
+
+        نطبّع كل الأشكال، نتجاهل المشغلين بلا مخزون (count=0 صراحةً)،
+        ونرجل أرخص مشغل متاح.
+        """
         result = await self._request(
             {
                 "action": "getPrices",
@@ -113,17 +123,41 @@ class HeroSMSProvider(BaseProvider):
         )
         try:
             data = json.loads(result)
-            country_data = data.get(country, {}).get(service, {})
-            if not country_data:
-                return None
-            first_operator = list(country_data.values())[0]
-            cost = first_operator.get("cost")
-            if cost is None:
-                return None
-            cost_rub = Decimal(str(cost))
-            return self._rub_to_usd(cost_rub)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             return None
+
+        node = data.get(country, data) if isinstance(data, dict) else {}
+        if not isinstance(node, dict):
+            return None
+        payload = node.get(service)
+        if not isinstance(payload, dict):
+            return None
+
+        # جمع المرشحين: سعر مباشر أو مشغلون متداخلون
+        candidates: list[tuple[object, object]] = []
+        if payload.get("cost") is not None:
+            candidates.append((payload.get("cost"), payload.get("count")))
+        else:
+            for op in payload.values():
+                if isinstance(op, dict) and op.get("cost") is not None:
+                    candidates.append((op.get("cost"), op.get("count")))
+
+        cheapest: Decimal | None = None
+        for cost, count in candidates:
+            # نفطع فقط من ينص صراحةً أن مخزونه صفر؛ إن غاب العداد نجيزه
+            if count is not None:
+                try:
+                    if int(count) <= 0:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            try:
+                cost_usd = self._rub_to_usd(Decimal(str(cost)))
+            except Exception:  # noqa: BLE001 - قيمة تالفة لا تُسقط البقية
+                continue
+            if cheapest is None or cost_usd < cheapest:
+                cheapest = cost_usd
+        return cheapest
 
     async def buy_number(
         self,
