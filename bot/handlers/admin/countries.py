@@ -15,6 +15,7 @@ from providers.fivesim import FiveSimProvider
 from services.herosms_sync_service import sync_herosms_countries
 from states.states import AdminCountryStates
 from keyboards.admin import (
+    ADMIN_COUNTRIES_PER_PAGE,
     admin_countries_kb,
     admin_country_detail_kb,
     admin_back_kb,
@@ -30,13 +31,39 @@ router.callback_query.filter(IsAdmin())
 
 @router.callback_query(F.data == "admin:countries")
 async def countries_list(callback: CallbackQuery, session):
+    await _show_countries_list(callback, session, page=0)
+
+
+@router.callback_query(F.data.startswith("admin:countries:"))
+async def countries_list_page(callback: CallbackQuery, session):
+    """تنقل بين صفحات الدول."""
+    try:
+        page = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        page = 0
+    await _show_countries_list(callback, session, page=page)
+
+
+async def _show_countries_list(callback: CallbackQuery, session, page: int = 0):
+    """يعرض قائمة الدول مع ترقيم صفحات وأزرار الإدارة ظاهرة دائماً."""
     countries = await get_all_countries(session)
-    text = "🌍 <b>إدارة الدول</b>\n\n🟢 = مفعّلة | ⚪ = معطّلة\n\n"
+    total_pages = max(
+        1, (len(countries) + ADMIN_COUNTRIES_PER_PAGE - 1) // ADMIN_COUNTRIES_PER_PAGE
+    )
+
+    text = (
+        "🌍 <b>إدارة الدول</b>\n\n"
+        f"📊 العدد الكلي: <b>{len(countries)}</b> دولة"
+        + (f" · صفحة {page + 1}/{total_pages}" if total_pages > 1 else "")
+        + "\n\n🟢 = مفعّلة | ⚪ = معطّلة\n\n"
+    )
     if countries:
         text += "اضغط على أي دولة لتعديلها."
     else:
         text += "لا توجد أي دولة مضافة بعد."
-    await callback.message.edit_text(text, reply_markup=admin_countries_kb(countries))
+    await callback.message.edit_text(
+        text, reply_markup=admin_countries_kb(countries, page)
+    )
 
 
 @router.callback_query(F.data == "admin:country_add")

@@ -537,20 +537,51 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
 
 # ══════════════ الدول ══════════════
 
+# عدد الدول في كل صفحة بلوحة الأدمن.
+# بدون ترقيم صفحات: قائمة طويلة تدفع أزرار الإدارة (سحب/إضافة) لآخر
+# الرسالة حيث لا يراها الأدمن، وتيليجرام يرفض أي لوحة تتجاوز 100 زر.
+ADMIN_COUNTRIES_PER_PAGE = 20
 
-def admin_countries_kb(countries) -> InlineKeyboardMarkup:
+
+def admin_countries_kb(countries, page: int = 0) -> InlineKeyboardMarkup:
+    """قائمة الدول مع ترقيم صفحات وأزرار الإدارة ظاهرة دائماً."""
     b = InlineKeyboardBuilder()
-    for c in countries:
+
+    total_pages = max(
+        1, (len(countries) + ADMIN_COUNTRIES_PER_PAGE - 1) // ADMIN_COUNTRIES_PER_PAGE
+    )
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * ADMIN_COUNTRIES_PER_PAGE
+    page_countries = countries[start : start + ADMIN_COUNTRIES_PER_PAGE]
+
+    for c in page_countries:
         status_icon = "🟢" if c.is_active else "⚪"
         b.button(
             text=f"{status_icon} {c.flag} {c.name_ar}",
             callback_data=f"admin:country_view:{c.id}",
         )
+
+    # ── أزرار التنقل ──
+    nav_buttons = []
+    if page > 0:
+        b.button(text="◀️ السابق", callback_data=f"admin:countries:{page - 1}")
+        nav_buttons.append(1)
+    if page < total_pages - 1:
+        b.button(text="التالي ▶️", callback_data=f"admin:countries:{page + 1}")
+        nav_buttons.append(1)
+
+    # ── أزرار الإدارة (دائماً أسفل الصفحة) ──
     b.button(text="➕ إضافة دولة جديدة", callback_data="admin:country_add")
     b.button(text="🔄 سحب دول من HeroSMS", callback_data="admin:country_sync_herosms")
     b.button(text="📋 أكواد 5sim المرجعية", callback_data="admin:country_reference_list")
     b.button(text="🔙 رجوع", callback_data="admin:main")
-    b.adjust(2, 1, 1, 1)
+
+    rows = [2] * ((len(page_countries) + 1) // 2)
+    if nav_buttons:
+        rows.append(len(nav_buttons))
+    rows.extend([2, 2])
+    b.adjust(*rows)
     return b.as_markup()
 
 
