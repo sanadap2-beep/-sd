@@ -262,3 +262,49 @@ async def test_normalize_prices_operator_shape():
     normalized = _normalize_prices(raw, "6")
     assert normalized["wa"]["cost"] == Decimal("4.5")
     assert normalized["wa"]["count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reset_synced_countries_keeps_manual():
+    """التصفير يحذف دول HeroSMS وقواعد تسعيرها ويُبقي اليدوية."""
+    from database.models import ServicePricing
+    from handlers.admin.countries import _reset_synced_countries
+
+    async with async_session_maker() as session:
+        report = await sync_herosms_countries(
+            session, ["whatsapp"], provider=FakeHeroSMS()
+        )
+        assert report.added  # دول أُنشئت فعلاً
+
+        # دولة يدوية (بدون كود herosms) يجب أن تبقى بعد التصفير
+        session.add(
+            Country(
+                code="manual_land",
+                name_ar="دولة يدوية",
+                herosms_code=None,
+                is_active=True,
+            )
+        )
+        indonesia = await _get_country_by_herosms_code(session, "6")
+        assert indonesia is not None
+        session.add(
+            ServicePricing(
+                service="whatsapp",
+                country_code=indonesia.code,
+                margin_value=Decimal("50"),
+            )
+        )
+        await session.commit()
+
+        deleted = await _reset_synced_countries(session)
+
+        # كل الدول المسحوبة تلقائياً حُذفت (إندونيسيا/فيتنام/الهند/ألمانيا)
+        assert deleted == 4
+        assert await _get_country_by_herosms_code(session, "6") is None
+
+        remaining = list((await session.execute(select(Country))).scalars().all())
+        assert [c.code for c in remaining] == ["manual_land"]
+
+        # قاعدة التسعير الخاصة بدولة محذوفة أُزيلت، والعامة تبقى
+        pricing = list((await session.execute(select(ServicePricing))).scalars().all())
+        assert all(p.country_code is None for p in pricing)

@@ -6,7 +6,7 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import select
+from sqlalchemy import delete as sql_delete, func, select
 
 from config import settings
 from database.models import Country
@@ -18,6 +18,7 @@ from keyboards.admin import (
     admin_countries_kb,
     admin_country_detail_kb,
     admin_back_kb,
+    country_reset_confirm_kb,
     herosms_sync_menu_kb,
 )
 from filters.admin_filter import IsAdmin
@@ -292,3 +293,110 @@ async def country_sync_herosms_go(callback: CallbackQuery, session):
     """سحب الدول مع تفعيل المتاح منها تلقائياً."""
     services_raw = callback.data.split(":", 2)[2]
     await _run_herosms_sync(callback, session, services_raw, activate=True)
+
+
+# ══════════════════════════════════════════════
+# ══════════════ تصفير الدول وإعادة السحب ══════════════
+# ══════════════════════════════════════════════
+
+
+async def _reset_synced_countries(session) -> int:
+    """يحذف الدول المسحوبة تلقائياً من HeroSMS (herosms_code ليس فارغاً).
+
+    يحذف معها قواعد التسعير الخاصة بها (كي لا تبقى قواعد يتيمة)
+    ويمسح كاش أسعار الأرقام. الدول المضافة يدوياً تبقى كما هي،
+    وكذلك المستخدمون والأرصدة والطلبات القديمة (لا يوجد أي مفتاح
+    خارجي يشير لجدول countries). يرجع عدد الدول المحذوفة.
+    """
+    from database.models import ServicePricing
+    from services.price_cache_service import PriceCacheService
+
+    result = await session.execute(
+        select(Country).where(Country.herosms_code.is_not(None))
+    )
+    targets = list(result.scalars().all())
+    if not targets:
+        return 0
+
+    codes = [c.code for c in targets]
+    await session.execute(
+        sql_delete(ServicePricing).where(ServicePricing.country_code.in_(codes))
+    )
+    await session.execute(
+        sql_delete(Country).where(Country.id.in_([c.id for c in targets]))
+    )
+    await session.commit()
+
+    try:
+        await PriceCacheService.invalidate("number-price:")
+    except Exception:  # noqa: BLE001 - فشل الكاش لا يوقف العملية
+        pass
+    return len(targets)
+
+
+@router.callback_query(F.data == "admin:country_reset")
+async def country_reset_confirm(callback: CallbackQuery, session):
+    """شاشة تأكيد تصفير الدول المسحوبة تلقائياً."""
+    synced = (
+        await session.execute(
+            select(func.count(Country.id)).where(Country.herosms_code.is_not(None))
+        )
+    ).scalar_one()
+    total = (
+        await session.execute(select(func.count(Country.id)))
+    ).scalar_one()
+
+    await callback.answer()
+    await callback.message.edit_text(
+        "🗑 <b>تصفير الدول وإعادة السحب</b>\n\n"
+        f"سيتم حذف <b>{synced}</b> دولة (المسحوبة تلقائياً من HeroSMS) "
+        f"من أصل {total} دولة.\n"
+        "الدول المضافة يدوياً ستبقى كما هي.\n\n"
+        "بعدها يبدأ سحب جديد فوراً (واتساب + تيليجرام) مع تفعيل المتوفر.\n\n"
+        "✅ المستخدمون والأرصدة والطلبات القديمة لا تُمس إطلاقاً.\n\n"
+        "متأكد؟",
+        reply_markup=country_reset_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "admin:country_reset_go")
+async def country_reset_go(callback: CallbackQuery, session):
+    """ينفذ التصفير ثم سحباً جديداً من HeroSMS."""
+    if not settings.HEROSMS_API_KEY:
+        await callback.answer(
+            "⚠️ لا يوجد HEROSMS_API_KEY مضبوط في الإعدادات.",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer("⏳ جارٍ التصفير وإعادة السحب... قد يستغرق دقيقة.")
+    status_text = (
+        "🗑 <b>جارٍ حذف الدول المسحوبة ثم سحبها من جديد...</b>\n\n"
+        "لا تغلق الشاشة، قد تستغرق العملية حتى دقيقة."
+    )
+    try:
+        await callback.message.edit_text(status_text)
+    except Exception:
+        await callback.message.answer(status_text)
+
+    try:
+        deleted = await _reset_synced_countries(session)
+        report = await sync_herosms_countries(
+            session,
+            wanted_services=["whatsapp", "telegram"],
+            activate=True,
+        )
+        text = (
+            f"🗑 تم حذف <b>{deleted}</b> دولة قديمة (المسحوبة تلقائياً).\n\n"
+            + report.summary()
+        )
+    except Exception as e:  # noqa: BLE001 - نعرض الخطأ للأدمن بدل الصمت
+        text = f"❌ <b>فشل التصفير/السحب</b>\n\n<code>{type(e).__name__}: {e}</code>"
+
+    from keyboards.admin import admin_countries_kb as _kb
+
+    countries = await get_all_countries(session)
+    try:
+        await callback.message.edit_text(text, reply_markup=_kb(countries))
+    except Exception:
+        await callback.message.answer(text, reply_markup=_kb(countries))

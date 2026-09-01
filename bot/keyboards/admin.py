@@ -567,8 +567,24 @@ def herosms_sync_menu_kb() -> InlineKeyboardMarkup:
         text="⚪ سحب بدون تفعيل (كلاهما)",
         callback_data="admin:country_sync_idle:whatsapp,telegram",
     )
+    b.button(
+        text="🗑 تصفير الدول المسحوبة وإعادة السحب",
+        callback_data="admin:country_reset",
+    )
     b.button(text="🔙 رجوع", callback_data="admin:countries")
-    b.adjust(2, 1, 1, 1)
+    b.adjust(2, 1, 1, 1, 1)
+    return b.as_markup()
+
+
+def country_reset_confirm_kb() -> InlineKeyboardMarkup:
+    """تأكيد تصفير الدول المسحوبة تلقائياً من HeroSMS."""
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="🗑 نعم، صفّر وأعد السحب",
+        callback_data="admin:country_reset_go",
+    )
+    b.button(text="❌ إلغاء", callback_data="admin:country_sync_herosms")
+    b.adjust(1)
     return b.as_markup()
 
 
