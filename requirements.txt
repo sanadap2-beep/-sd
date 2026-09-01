@@ -1,0 +1,15 @@
+aiogram==3.15.0
+SQLAlchemy==2.0.36
+aiosqlite==0.20.0
+asyncpg>=0.29.0,<1.0.0
+pydantic-settings==2.6.1
+aiohttp>=3.9.0,<3.11
+APScheduler==3.10.4
+python-dotenv==1.0.1
+cryptography==42.0.5
+aiofiles==23.2.1
+redis>=5.0.0,<6.0.0
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+sentry-sdk[fastapi]>=2.0.0,<3.0.0
+alembic>=1.13.0,<2.0.0

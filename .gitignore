@@ -1,0 +1,14 @@
+.env
+local.env
+*.db
+data/
+__pycache__/
+*.pyc
+venv/
+.venv/
+.idea/
+.vscode/
+*.log
+
+number-bot-arena-final.zip
+*.patch
