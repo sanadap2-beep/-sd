@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <title>Number Bot Marketplace</title>
+  <link rel="stylesheet" href="/app/styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <span class="eyebrow">NUMBER BOT MARKETPLACE</span>
+        <h1>كل الخدمات الرقمية<br><strong>في مكان واحد</strong></h1>
+        <p>أرقام، ألعاب، SMM، اشتراكات وتراخيص رقمية بمزودين موثوقين.</p>
+      </div>
+      <div class="orb">✦</div>
+    </section>
+
+    <section class="account-card" id="account-card">
+      <div><span>رصيدك</span><strong id="balance">—</strong></div>
+      <div><span>نقاط الولاء</span><strong id="points">—</strong></div>
+      <div><span>المستوى</span><strong id="tier">—</strong></div>
+    </section>
+
+    <section class="toolbar">
+      <label class="search"><span>⌕</span><input id="search" type="search" placeholder="ابحث عن خدمة أو منتج..." autocomplete="off"></label>
+      <div class="cart-actions"><button class="cart-nav" id="cart-button">🛒 السلة</button><button class="cart-nav" id="checkout-cart">🧾 إتمام السلة</button></div>
+      <div class="chips" id="chips"><button class="chip active" data-filter="all">الكل</button></div>
+    </section>
+
+    <section id="message" class="message hidden"></section>
+    <section id="catalog" class="catalog"></section>
+    <section id="empty" class="empty hidden">
+      <div>◌</div><h2>لا توجد نتائج</h2><p>جرّب كلمة أخرى أو اطلب الخدمة من البوت.</p>
+    </section>
+  </main>
+  <script src="/app/app.js"></script>
+</body>
+</html>
