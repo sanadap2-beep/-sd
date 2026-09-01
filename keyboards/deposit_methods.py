@@ -145,10 +145,17 @@ def usdt_networks_kb(mode: str) -> InlineKeyboardMarkup:
             callback_data="usdt_net:manual:BEP20",
         )
     else:
-        b.button(
-            text="🟢 TRC20 (موصى به)",
-            callback_data="usdt_net:auto:TRC20",
-        )
+        # The current Plisio account shown in the operator dashboard has
+        # Tether TRC-20 and Tether BEP-20 enabled. BNB Chain is native BNB,
+        # not a USDT network, so it must not be offered in a USDT invoice.
+        for network, label in (
+            ("TRC20", "🟢 TRC20 (موصى به)"),
+            ("BEP20", "🟡 BEP20"),
+        ):
+            b.button(
+                text=label,
+                callback_data=f"usdt_net:auto:{network}",
+            )
 
     b.button(
         text="🔙 رجوع",

@@ -138,7 +138,7 @@ async def _process_paid_usdt_invoice(session, invoice: AutoInvoice, info: dict, 
         f"(@{user.username or '-'})\n"
         f"💵 المبلغ: <b>{invoice.amount_usd}$</b>\n"
         f"💰 المبلغ: {amount_label}\n"
-        f"🌐 الشبكة: TRC20\n"
+        f"🌐 الشبكة: {invoice.network or 'USDT'}\n"
         f"🆔 فاتورة: #{invoice.id}"
     )
 

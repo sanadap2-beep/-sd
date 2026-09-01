@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,9 +12,11 @@ from sqlalchemy import select
 from config import settings
 from database.engine import async_session_maker
 from database.models import AutoInvoice, AutoInvoiceMethod, AutoInvoiceStatus, Transaction, User
+from handlers import deposit_methods
 from services.payment_method_service import diagnose_payment_method
 from services.plisio_service import PlisioAPIError, PlisioClient
 from services.settings_service import SettingsService
+from keyboards.deposit_methods import usdt_networks_kb
 from tasks import invoice_monitor
 
 
@@ -49,6 +52,90 @@ class _FakeSession:
         self.last_url = url
         self.last_params = data
         return self.response
+
+
+def test_auto_usdt_keyboard_matches_enabled_plisio_usdt_networks():
+    keyboard = usdt_networks_kb("auto")
+    callback_data = {
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+        if button.callback_data
+    }
+
+    assert "usdt_net:auto:TRC20" in callback_data
+    assert "usdt_net:auto:BEP20" in callback_data
+    assert "usdt_net:auto:BNB" not in callback_data
+    assert "usdt_net:auto:ERC20" not in callback_data
+
+
+@pytest.mark.asyncio
+async def test_auto_usdt_amount_uses_selected_network_and_plisio_currency(monkeypatch):
+    class _FakeState:
+        async def get_data(self):
+            return {"network": "BEP20", "plisio_currency": "USDT_BSC"}
+
+        async def clear(self):
+            return None
+
+    class _FakeMessage:
+        text = "10"
+
+        def __init__(self):
+            self.answers = []
+
+        async def answer(self, text, **kwargs):
+            self.answers.append((text, kwargs))
+            return SimpleNamespace(chat=SimpleNamespace(id=88001), message_id=77)
+
+    monkeypatch.setattr(
+        deposit_methods,
+        "_require_payment_method",
+        AsyncMock(return_value=True),
+    )
+
+    async def get_decimal(key, _default):
+        return {
+            "min_deposit_usdt_usd": Decimal("2"),
+            "plisio_max_amount_usd": Decimal("500"),
+            "plisio_fee_percent": Decimal("0"),
+        }[key]
+
+    monkeypatch.setattr(deposit_methods.SettingsService, "get_decimal", get_decimal)
+    create_payment = AsyncMock(
+        return_value={
+            "uuid": "txn-bep20-flow",
+            "url": "https://plisio.example/invoice/txn-bep20-flow",
+            "address": None,
+            "payer_amount": None,
+            "expired_at": None,
+        }
+    )
+    monkeypatch.setattr(deposit_methods.plisio_client, "create_payment", create_payment)
+
+    async with async_session_maker() as session:
+        user = User(telegram_id=88001, balance=Decimal("0"))
+        session.add(user)
+        await session.flush()
+        message = _FakeMessage()
+
+        await deposit_methods.usdt_auto_amount_received(
+            message,
+            _FakeState(),
+            session,
+            user,
+            object(),
+        )
+
+        saved = (
+            await session.execute(
+                select(AutoInvoice).where(AutoInvoice.external_invoice_id == "txn-bep20-flow")
+            )
+        ).scalar_one()
+
+    assert create_payment.await_args.kwargs["currency"] == "USDT_BSC"
+    assert saved.network == "BEP20"
+    assert any("BEP20" in text for text, _kwargs in message.answers)
 
 
 @pytest.mark.asyncio

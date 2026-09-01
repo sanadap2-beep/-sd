@@ -65,6 +65,11 @@ from keyboards.deposit_methods import (
 )
 from keyboards.main_menu import back_to_main_kb
 
+_AUTO_USDT_NETWORK_CURRENCIES = {
+    "TRC20": "USDT_TRX",
+    "BEP20": "USDT_BSC",
+}
+
 logger = logging.getLogger(__name__)
 
 router = Router(name="deposit_methods")
@@ -1023,23 +1028,52 @@ async def usdt_auto_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "deposit_start:usdt_auto")
 async def usdt_auto_amount_ask(callback: CallbackQuery, state: FSMContext):
+    """Ask for the network before asking for the invoice amount."""
     if not await _require_payment_method(callback, "usdt_auto", state):
         return
     await callback.answer()
-    min_deposit = await SettingsService.get_decimal("min_deposit_usdt_usd", Decimal("2"))
+    await state.update_data(network=None, plisio_currency=None)
     await callback.message.edit_text(
-        f"₮ <b>USDT تلقائي (TRC20)</b>\n\n"
+        "₮ <b>USDT تلقائي</b>\n\n"
+        "اختر الشبكة التي ستدفع عبرها:\n\n"
+        "🟢 <b>TRC20</b> - موصى بها ورسومها عادة أقل\n"
+        "🟡 <b>BEP20</b> - متاحة في إعدادات Plisio الحالية",
+        reply_markup=usdt_networks_kb("auto"),
+    )
+    # Keep the existing amount state for backwards compatibility. The amount
+    # handler rejects input until a network has been selected.
+    await state.set_state(UsdtAutoStates.waiting_amount)
+
+
+@router.callback_query(F.data.startswith("usdt_net:auto:"))
+async def usdt_auto_network_selected(callback: CallbackQuery, state: FSMContext):
+    """Store the selected Plisio currency and then ask for the amount."""
+    if not await _require_payment_method(callback, "usdt_auto", state):
+        return
+
+    network = callback.data.split(":", 2)[2].upper()
+    plisio_currency = _AUTO_USDT_NETWORK_CURRENCIES.get(network)
+    if plisio_currency is None:
+        await callback.answer(
+            "⚠️ هذه الشبكة غير متاحة للدفع التلقائي.",
+            show_alert=True,
+        )
+        return
+
+    await state.update_data(network=network, plisio_currency=plisio_currency)
+    await callback.answer()
+
+    min_deposit = await SettingsService.get_decimal(
+        "min_deposit_usdt_usd",
+        Decimal("2"),
+    )
+    await callback.message.edit_text(
+        f"₮ <b>USDT تلقائي - {network}</b>\n\n"
         f"الحد الأدنى: <b>{min_deposit}$</b>\n\n"
         "أرسل المبلغ بالدولار (مثال: 10):",
         reply_markup=cancel_deposit_kb(),
     )
     await state.set_state(UsdtAutoStates.waiting_amount)
-
-
-@router.callback_query(F.data == "usdt_net:auto:TRC20")
-async def usdt_auto_network_alias(callback: CallbackQuery, state: FSMContext):
-    """Compatibility for an older auto-USDT network button."""
-    await usdt_auto_amount_ask(callback, state)
 
 
 @router.message(UsdtAutoStates.waiting_amount)
@@ -1052,6 +1086,19 @@ async def usdt_auto_amount_received(
 ):
     if not await _require_payment_method(message, "usdt_auto", state):
         return
+
+    data = await state.get_data()
+    network = str(data.get("network") or "").upper()
+    # Derive the provider currency from the validated network instead of
+    # trusting a separately stored value that could be stale after a retry.
+    plisio_currency = _AUTO_USDT_NETWORK_CURRENCIES.get(network)
+    if not plisio_currency:
+        await message.answer(
+            "⚠️ اختر شبكة الدفع أولاً:",
+            reply_markup=usdt_networks_kb("auto"),
+        )
+        return
+
     try:
         amount = _parse_positive_amount(message.text)
     except (InvalidOperation, AttributeError):
@@ -1080,7 +1127,7 @@ async def usdt_auto_amount_received(
         payment_data = await plisio_client.create_payment(
             amount=amount_with_fee,
             order_id=order_id,
-            currency="USDT_TRX",
+            currency=plisio_currency,
             order_name=f"Deposit for user {db_user.id}",
             lifetime=max(60, int(settings.PLISIO_INVOICE_EXPIRE_MINUTES) * 60),
         )
@@ -1141,7 +1188,7 @@ async def usdt_auto_amount_received(
         amount_usd=amount,
         amount_original=payer_amount_decimal,
         currency="USDT",
-        network="TRC20",
+        network=network,
         payment_address=address,
         payment_url=payment_url,
         status=AutoInvoiceStatus.PENDING,
@@ -1166,7 +1213,7 @@ async def usdt_auto_amount_received(
         else "📬 تفاصيل العنوان والمبلغ موجودة داخل صفحة الدفع."
     )
     text = (
-        "₮ <b>فاتورة USDT (TRC20)</b>\n\n"
+        f"₮ <b>فاتورة USDT ({network})</b>\n\n"
         f"⏱ الوقت المتبقي: <b>{minutes} دقيقة</b>\n"
         f"{amount_text}\n"
         f"💵 المبلغ المحسوب للشحن: <b>{amount}$</b>\n"
@@ -1174,7 +1221,7 @@ async def usdt_auto_amount_received(
         f"{destination_text}\n\n"
         "🌐 اضغط <b>فتح صفحة الدفع</b> لعرض بيانات التحويل الدقيقة.\n\n"
         "⚠️ <b>مهم جداً:</b>\n"
-        "• حوّل عبر شبكة <b>TRC20</b> فقط\n"
+        f"• حوّل عبر شبكة <b>{network}</b> فقط\n"
         "• أرسل المبلغ المحدد داخل صفحة Plisio بالضبط\n"
         "• سيتم فحص الدفع كل 30 ثانية\n"
         "• عند وصول التحويل يُضاف الرصيد تلقائياً\n\n"
