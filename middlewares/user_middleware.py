@@ -6,6 +6,7 @@
 يحدّث last_activity_at.
 """
 
+import re
 from datetime import datetime
 
 from aiogram import BaseMiddleware
@@ -14,6 +15,25 @@ from sqlalchemy import select
 
 from database.models import User
 from services.settings_service import SettingsService
+
+# /start ref_123  |  /start@BotName ref_123  |  /start ref_123 extra
+_REFERRAL_START_RE = re.compile(
+    r"^/start(?:@[A-Za-z0-9_]+)?(?:\s+|_)ref_(\d+)",
+    re.IGNORECASE,
+)
+
+
+def extract_referrer_telegram_id(text: str | None) -> int | None:
+    """Parse a deep-link payload such as ``/start ref_6707747395``."""
+    if not text:
+        return None
+    match = _REFERRAL_START_RE.match(text.strip())
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
 
 
 class UserMiddleware(BaseMiddleware):
@@ -30,17 +50,15 @@ class UserMiddleware(BaseMiddleware):
         # ── إنشاء مستخدم جديد ──
         if user is None:
             referrer_id = None
-            if isinstance(event, Message) and event.text and event.text.startswith("/start ref_"):
-                try:
-                    ref_tg_id = int(event.text.split("ref_")[1])
+            if isinstance(event, Message):
+                ref_tg_id = extract_referrer_telegram_id(event.text)
+                if ref_tg_id and ref_tg_id != tg_user.id:
                     ref_result = await session.execute(
                         select(User).where(User.telegram_id == ref_tg_id)
                     )
                     ref_user = ref_result.scalar_one_or_none()
-                    if ref_user and ref_user.telegram_id != tg_user.id:
+                    if ref_user is not None:
                         referrer_id = ref_user.id
-                except (ValueError, IndexError):
-                    pass
 
             user = User(
                 telegram_id=tg_user.id,

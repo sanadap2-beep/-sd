@@ -29,6 +29,7 @@ from database.models import (
     CategoryType,
     SubCategory,
 )
+from services.smm_catalog import SMM_APPS, SMM_APP_SPECS, resolve_smm_app
 
 DEFAULT_SETTINGS = {
     # ── مالي ──
@@ -179,20 +180,8 @@ DEFAULT_CHALLENGES = [
 ]
 
 
-# تطبيقات قسم الرشق (SMM): الاسم + إيموجي حديث لكل تطبيق.
-# تُعرض كأزرار أقسام فرعية، ويمكن للأدمن إضافة/تعديل/حذف أي تطبيق من اللوحة.
-SMM_APPS = [
-    ("تيك توك", "🎵"),
-    ("إنستغرام", "📸"),
-    ("يوتيوب", "▶️"),
-    ("تيليجرام", "✈️"),
-    ("فيسبوك", "📘"),
-    ("واتساب", "💬"),
-    ("سناب شات", "👻"),
-    ("إكس (تويتر)", "🐦"),
-    ("ثريدز", "🧵"),
-    ("سبوتيفاي", "🎧"),
-]
+# تطبيقات قسم الرشق (SMM) تأتي من services.smm_catalog.SMM_APPS
+# حتى يبقى الاسم والإيموجي موحّدين بين الزرع والعرض.
 
 DEFAULT_STORE_CATEGORIES = [
     {
@@ -442,9 +431,11 @@ async def init_db() -> None:
                     )
             session.add(Setting(key="fixed_store_categories_seeded", value="true"))
 
-        # ── ضمان وجود تطبيقات قسم الرشق العشرة (تحديث تراكمي) ──
-        # يعمل حتى لو كانت الأقسام مزروعة مسبقاً: يضيف التطبيقات الجديدة فقط
-        # دون المساس بما عدّله الأدمن، ودون إنشاء منتجات تلقائياً.
+        # ── ضمان أسماء وإيموجي تطبيقات قسم الرشق العشرة (تحديث تراكمي) ──
+        # يعمل حتى لو كانت الأقسام مزروعة مسبقاً:
+        # - يحدّث الاسم والإيموجي لأي تطبيق معروف بأسماء قديمة/إنجليزية
+        #   أو باسم يحتوي الإيموجي داخله (مثل «تيك توك 🎵»).
+        # - يضيف التطبيقات الناقصة فقط، دون حذف أقسام فرعية أنشأها الأدمن.
         smm_cat_result = await session.execute(
             select(Category).where(Category.type == CategoryType.SMM)
         )
@@ -453,19 +444,36 @@ async def init_db() -> None:
             existing_result = await session.execute(
                 select(SubCategory).where(SubCategory.category_id == smm_cat.id)
             )
-            existing_names = {sc.name_ar for sc in existing_result.scalars().all()}
-            for index, (app_name, app_emoji) in enumerate(SMM_APPS, start=1):
-                if app_name not in existing_names:
+            existing_subs = list(existing_result.scalars().all())
+            claimed_ids: set[int] = set()
+            for index, app in enumerate(SMM_APP_SPECS, start=1):
+                matched = None
+                for sub in existing_subs:
+                    if sub.id in claimed_ids:
+                        continue
+                    haystack = f"{sub.emoji or ''} {sub.name_ar or ''}"
+                    resolved = resolve_smm_app(haystack) or resolve_smm_app(sub.name_ar or "")
+                    if resolved is not None and resolved.name_ar == app.name_ar:
+                        matched = sub
+                        break
+                if matched is None:
                     session.add(
                         SubCategory(
                             category_id=smm_cat.id,
-                            name_ar=app_name,
-                            emoji=app_emoji,
-                            description=f"منتجات {app_name}",
+                            name_ar=app.name_ar,
+                            emoji=app.emoji,
+                            description=f"منتجات {app.name_ar}",
                             sort_order=index * 10,
                             is_active=True,
                         )
                     )
+                    continue
+                claimed_ids.add(matched.id)
+                matched.name_ar = app.name_ar
+                matched.emoji = app.emoji
+                matched.sort_order = index * 10
+                if not matched.description:
+                    matched.description = f"منتجات {app.name_ar}"
 
         # ── زرع قوالب الإشعارات الافتراضية ──
         from services.notification_center_service import NotificationCenterService

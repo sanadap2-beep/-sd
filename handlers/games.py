@@ -11,6 +11,7 @@ import logging
 from decimal import Decimal
 from html import escape
 from aiogram import Router, F
+from aiogram.filters import Filter, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
@@ -40,6 +41,15 @@ from keyboards.games import sub_categories_kb, products_kb, product_confirm_kb, 
 from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 logger = logging.getLogger(__name__)
 router = Router(name='games')
+
+
+class SmmAppLabelFilter(Filter):
+    """Matches leftover reply-keyboard / typed labels like ``تيك توك 🎵``."""
+
+    async def __call__(self, message: Message) -> bool:
+        from services.smm_catalog import is_smm_app_label
+
+        return is_smm_app_label(message.text or "")
 
 
 def _auto_lang(scope=None) -> str:
@@ -134,6 +144,28 @@ async def favorite_remove(callback: CallbackQuery, session, db_user: User):
         await session.commit()
     await favorites_list(callback, session, db_user)
 
+async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
+    """Render a subcategory's products. ``target`` is a Message or CallbackQuery.
+
+    Products are loaded with an explicit query so AsyncSession never tries a
+    lazy ``sub_cat.products`` IO (MissingGreenlet).
+    """
+    from services.smm_catalog import button_label
+
+    products = await DynamicService.get_active_products(session, sub_cat.id)
+    title = button_label(sub_cat.name_ar, sub_cat.emoji)
+    if not products:
+        text = f"<b>{title}{I18nService.t('ux_games_276_16', language)}"
+        markup = back_to_main_kb(language)
+    else:
+        text = f"<b>{title}{I18nService.t('ux_games_282_17', language)}"
+        markup = products_kb(sub_cat.id, products, sub_cat.category_id)
+    if isinstance(target, CallbackQuery):
+        await target.message.edit_text(text, reply_markup=markup)
+    else:
+        await target.answer(text, reply_markup=markup)
+
+
 @router.callback_query(F.data.startswith('cat:'))
 async def category_selected(callback: CallbackQuery, session):
     category_id = int(callback.data.split(':')[1])
@@ -149,18 +181,35 @@ async def category_selected(callback: CallbackQuery, session):
     await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{I18nService.t('ux_games_252_14', _auto_lang(locals()))}", reply_markup=sub_categories_kb(category_id, sub_cats))
 
 @router.callback_query(F.data.startswith('subcat:'))
-async def sub_category_selected(callback: CallbackQuery, session):
+async def sub_category_selected(callback: CallbackQuery, session, db_user=None):
     sub_cat_id = int(callback.data.split(':')[1])
     sub_cat = await DynamicService.get_sub_category(session, sub_cat_id)
     if not sub_cat or not sub_cat.is_active:
         await callback.answer(I18nService.t('ux_games_266_15', _auto_lang(locals())), show_alert=True)
         return
     await callback.answer()
-    products = await DynamicService.get_active_products(session, sub_cat_id)
-    if not products:
-        await callback.message.edit_text(f"{sub_cat.emoji} <b>{sub_cat.name_ar}{I18nService.t('ux_games_276_16', _auto_lang(locals()))}", reply_markup=back_to_main_kb())
+    language = _glang(db_user) if db_user else _auto_lang(locals())
+    await _show_subcategory(callback, session, sub_cat, language)
+
+
+@router.message(StateFilter(None), SmmAppLabelFilter())
+async def catalog_label_selected(message: Message, session, db_user=None):
+    """Open a رشق app when the user sends its name, e.g. ``تيك توك 🎵``.
+
+    Older clients keep a ReplyKeyboard whose buttons send the label as a
+    Message. Without this handler the text either went nowhere or hit a
+    leftover FSM that lazy-loaded ORM relations and raised MissingGreenlet.
+    """
+    label = (message.text or "").strip()
+    sub_cat = await DynamicService.find_subcategory_by_label(session, label)
+    language = _glang(db_user) if db_user else "ar"
+    if sub_cat is None or not sub_cat.is_active:
+        await message.answer(
+            I18nService.t("ux_games_266_15", language),
+            reply_markup=back_to_main_kb(language),
+        )
         return
-    await callback.message.edit_text(f"{sub_cat.emoji} <b>{sub_cat.name_ar}{I18nService.t('ux_games_282_17', _auto_lang(locals()))}", reply_markup=products_kb(sub_cat_id, products, sub_cat.category_id))
+    await _show_subcategory(message, session, sub_cat, language)
 
 @router.callback_query(F.data.startswith('prod:'))
 async def product_selected(callback: CallbackQuery, session, db_user: User, state: FSMContext):
