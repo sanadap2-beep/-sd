@@ -117,6 +117,7 @@ from tasks.sponsored_ads_job import process_sponsored_ads
 from tasks.special_offers_job import process_special_offers
 from services.feature_service import FeatureService
 from services.smm_sections_service import SmmSectionsService
+from services.subscriptions_sync_service import SubscriptionsSyncService
 from services.marketplace_service import MarketplaceService
 from services.refill_service import RefillService
 from services.drip_feed_service import DripFeedService
@@ -550,6 +551,18 @@ async def main():
                 logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
     except Exception:
         logger.exception("فشل البناء التلقائي لأقسام الرشق عند الإقلاع")
+
+    # ── مزامنة الاشتراكات الرقمية (ggsoma) تلقائياً ──
+    # يسحب كتالوج المزود وينشر منتجاته في قسم الاشتراكات بسعر التكلفة +
+    # هامش الربح المحدد. Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
+    try:
+        async with async_session_maker() as session:
+            if await SubscriptionsSyncService.enabled() and await SubscriptionsSyncService.auto_on_startup():
+                reports = await SubscriptionsSyncService.sync_all(session)
+                for report in reports:
+                    logger.info("🛍 مزامنة الاشتراكات: %s", report)
+    except Exception:
+        logger.exception("فشل مزامنة الاشتراكات الرقمية عند الإقلاع")
 
     logger.info(f"🔑 آيديات الأدمن: {settings.admin_ids_list}")
     logger.info("✅ قاعدة البيانات جاهزة.")

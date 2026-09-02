@@ -7,7 +7,9 @@
 4) يُرسل الطلب للمزود تلقائياً
 5) يُتابع الطلب من order_monitor
 """
+import json
 import logging
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 from aiogram import Router, F
@@ -528,6 +530,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
     external_order_id = None
     order_status = UnifiedOrderStatus.PENDING
     status_message = 'بانتظار تنفيذ الإدارة' if fulfillment == ProductFulfillmentType.MANUAL.value else 'بانتظار التنفيذ'
+    instant_raw = None
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         pass
     elif product.api_provider_id and product.provider_service_id:
@@ -537,8 +540,16 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                 protocol = ProtocolFactory.create_from_provider(provider)
                 result = await protocol.place_order(service_id=product.provider_service_id, target=target, quantity=quantity)
                 external_order_id = result.external_order_id
-                order_status = UnifiedOrderStatus.PROCESSING
-                status_message = 'تم إرسال الطلب للمزود'
+                # مزود لحظي (اشتراكات رقمية ggsoma…): سلّم فوراً في نفس الاستجابة.
+                if str(getattr(result, 'status', '') or '').lower() == 'completed':
+                    order_status = UnifiedOrderStatus.COMPLETED
+                    status_message = 'مكتمل - توصيل فوري'
+                    raw = getattr(result, 'raw', None)
+                    if isinstance(raw, dict):
+                        instant_raw = raw
+                else:
+                    order_status = UnifiedOrderStatus.PROCESSING
+                    status_message = 'تم إرسال الطلب للمزود'
             except ProtocolError as e:
                 logger.error(f'فشل إرسال الطلب للمزود: {e}')
                 await BalanceService.add_balance(session, db_user.id, final_price, TransactionType.REFUND, description='استرجاع - فشل الإرسال للمزود')
@@ -567,7 +578,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     )
                 await state.clear()
                 return
-    order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message)
+    order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message, result_data=json.dumps(instant_raw, ensure_ascii=False) if instant_raw else None, completed_at=datetime.utcnow() if instant_raw else None)
     session.add(order)
     await session.commit()
     await session.refresh(order)
@@ -585,7 +596,15 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         result_text += f'🎯 الهدف: <code>{target}</code>\n'
     if quantity > 1:
         result_text += f'📊 الكمية: {quantity}\n'
-    result_text += f'\n📊 الحالة: {status_message}\nستصلك إشعارات بتحديث حالة طلبك.'
+    result_text += f'\n📊 الحالة: {status_message}'
+    if instant_raw:
+        from services.digital_delivery import format_delivery_html
+
+        delivery_html = format_delivery_html(instant_raw)
+        if delivery_html:
+            result_text += f'\n\n🎁 <b>تم التسليم فوراً — بياناتك:</b>{delivery_html}'
+    else:
+        result_text += '\nستصلك إشعارات بتحديث حالة طلبك.'
     await callback.message.answer(result_text)
     await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {product.name_ar}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {target or '—'}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
     await notifier.notify_successful_unified_order(username=db_user.username, full_name=db_user.full_name, product_name=product.name_ar, price_usd=str(final_price))

@@ -431,6 +431,13 @@ CUSTOM_PROVIDER_CONFIG_PRESETS = {
         "request_format": "json",
         "suggested_api_url": "http://169.58.216.253:8888/api/v1",
     },
+    "ggsoma": {
+        "engine": "ggsoma",
+        "auth": "bearer",
+        "request_format": "json",
+        "balance_optional": False,
+        "suggested_api_url": "https://ggsoma.store/api/partner/v1",
+    },
     "store_rest": {
         "auth": "bearer",
         "request_format": "json",
@@ -512,6 +519,10 @@ CUSTOM_PROVIDER_CONFIG_PRESETS = {
 def custom_provider_presets_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne")
+    b.button(
+        text="✨ ggsoma — اشتراكات رقمية (رابط/كوبون/حساب)",
+        callback_data="admin:aprov_custom_preset:ggsoma",
+    )
     b.button(text="🧙 معالج ربط بدون JSON", callback_data="admin:aprov_custom_wizard")
     b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest")
     b.button(text="🔌 JSON بسيط", callback_data="admin:aprov_custom_preset:simple_json")

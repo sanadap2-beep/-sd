@@ -38,11 +38,15 @@ def _platforms_kb(rows: list[tuple[str, str, str, int]]):
         text="🚀 إنشاء أقسام الرشق تلقائياً (أرخص 5 لكل نوع)",
         callback_data="ps:build",
     )
+    b.button(
+        text="🛍 مزامنة الاشتراكات الرقمية (ggsoma) الآن",
+        callback_data="ps:subsync",
+    )
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     layout = [2] * (len(rows) // 2)
     if len(rows) % 2:
         layout.append(1)
-    layout.extend([1, 1])
+    layout.extend([1, 1, 1])
     b.adjust(*layout)
     return b.as_markup()
 
@@ -179,7 +183,8 @@ async def _show_platforms(callback: CallbackQuery, session) -> None:
             "📥 <b>خدمات مسحوبة</b>\n\n"
             "لا توجد خدمات مسحوبة حالياً.\n"
             "اسحب الخدمات من «مزودو المتجر» أولاً.\n\n"
-            "⚠️ المزامنة <b>لا تنشر</b> شيئاً في البوت تلقائياً.",
+            "⚠️ المزامنة العادية <b>لا تنشر</b> شيئاً — باستثناء زر "
+            "«🛍 مزامنة الاشتراكات الرقمية» الذي ينشر كتالوج ggsoma تلقائياً.",
             reply_markup=_platforms_kb([]),
         )
         return
@@ -224,6 +229,53 @@ async def pulled_build_sections(callback: CallbackQuery, session, state: FSMCont
     lines.append(
         "\nالسعر = تكلفة المزود + هامش الربح المحدد، والترتيب من الأرخص للأغلى.\n"
         "إعادة الضغط لا تكرر المنتجات ولا تمس منتجاتك اليدوية."
+    )
+    await callback.message.edit_text("\n".join(lines), reply_markup=_build_report_kb())
+
+
+@router.callback_query(F.data == "ps:subsync")
+async def pulled_subscriptions_sync(callback: CallbackQuery, session, state: FSMContext):
+    """🛍 مزامنة فورية: منتجات الاشتراكات الرقمية (ggsoma) بسعر + هامش الربح."""
+    from services.subscriptions_sync_service import SubscriptionsSyncService
+
+    await state.clear()
+    await callback.answer("🛍 جارٍ سحب كتالوج ggsoma ونشره...")
+    reports = await SubscriptionsSyncService.sync_all(session)
+    if not reports:
+        await callback.message.edit_text(
+            "🛍 <b>مزامنة الاشتراكات الرقمية</b>\n\n"
+            "⚠️ لا يوجد مزود ggsoma مربوط بعد.\n\n"
+            "أضفه من «🔌 مزودو المتجر» → مزود جديد → قالب "
+            "«✨ ggsoma — اشتراكات رقمية»، ثم املأ الرابط "
+            "https://ggsoma.store/api/partner/v1 والمفتاح (Bearer).",
+            reply_markup=_build_report_kb(),
+        )
+        return
+
+    lines = ["🛍 <b>نتيجة مزامنة الاشتراكات الرقمية</b>\n"]
+    for report in reports:
+        lines.append(
+            f"🔌 <b>{report.get('provider_name', report.get('provider_id'))}</b>"
+        )
+        if report.get("errors"):
+            lines.append(f"⚠️ فشل جلب/نشر الكتالوج (أخطاء: {report['errors']})")
+            lines.append("")
+            continue
+        lines.append(f"📱 تطبيقات/علامات: <b>{report.get('apps', 0)}</b>")
+        lines.append(f"📂 أقسام جديدة: <b>{report.get('sections_created', 0)}</b>")
+        lines.append(f"📦 منتجات جديدة: <b>{report.get('products_created', 0)}</b>")
+        lines.append(
+            f"♻️ أُعيد تفعيلها: <b>{report.get('products_reactivated', 0)}</b> | "
+            f"⏸ عُطّلت (نفد مخزونها): <b>{report.get('products_deactivated', 0)}</b>"
+        )
+        lines.append(
+            f"💱 أُعيد تسعيرها بالهامش: <b>{report.get('products_repriced', 0)}</b> | "
+            f"⏭ منتجات يدوية لم تُمس: <b>{report.get('skipped_manual', 0)}</b>"
+        )
+        lines.append("")
+    lines.append(
+        "السعر = تكلفتك عند المزود + هامش الربح المحدد في «مركز الإضافات» "
+        "(إضافة الاشتراكات). إعادة الضغط لا تكرر المنتجات ولا تحذف شيئاً."
     )
     await callback.message.edit_text("\n".join(lines), reply_markup=_build_report_kb())
 
