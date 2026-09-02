@@ -280,8 +280,13 @@ def sub_categories_list_kb(
 
 def sub_category_detail_kb(
     sub_category: SubCategory,
+    children: list[tuple[SubCategory, int]] | None = None,
 ) -> InlineKeyboardMarkup:
-    """أزرار تفاصيل القسم الفرعي."""
+    """أزرار تفاصيل القسم الفرعي.
+
+    ``children``: الأقسام الداخلية ``[(القسم، عدد منتجاته المفعلة), ...]``
+    لتطبيق يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات في قسم الرشق).
+    """
     b = InlineKeyboardBuilder()
 
     if sub_category.is_active:
@@ -295,18 +300,38 @@ def sub_category_detail_kb(
             callback_data=(f"admin:subcat_toggle:{sub_category.id}"),
         )
 
+    for child, product_count in children or []:
+        status_icon = "🟢" if child.is_active else "🔴"
+        b.button(
+            text=f"└ {status_icon} {child.emoji or ''} {child.name_ar} ({product_count})",
+            callback_data=f"admin:subcat_view:{child.id}",
+        )
+    is_smm_app = (
+        getattr(sub_category, "category", None) is not None
+        and getattr(sub_category.category, "type", None) == CategoryType.SMM
+    )
+    has_children = bool(children)
+    if is_smm_app and sub_category.parent_sub_category_id is None:
+        # أزرار «عرض المنتجات / إضافة منتج» تظهر فقط للتطبيق بلا أقسام داخلية؛
+        # وزر إضافة قسم داخلي متاح دائماً (حتى لإنشاء أول قسم داخل تطبيق فارغ).
+        b.button(
+            text="➕ إضافة قسم داخلي",
+            callback_data=f"admin:subcat_add_child:{sub_category.id}",
+        )
+
     b.button(
         text="➕ أضفه كزر رئيسي",
         callback_data=(f"mb:add_subcat:{sub_category.id}"),
     )
-    b.button(
-        text="📦 عرض المنتجات",
-        callback_data=(f"admin:prod_list:{sub_category.id}"),
-    )
-    b.button(
-        text="➕ إضافة منتج جديد",
-        callback_data=(f"admin:prod_wizard_start:{sub_category.id}"),
-    )
+    if not has_children:
+        b.button(
+            text="📦 عرض المنتجات",
+            callback_data=(f"admin:prod_list:{sub_category.id}"),
+        )
+        b.button(
+            text="➕ إضافة منتج جديد",
+            callback_data=(f"admin:prod_wizard_start:{sub_category.id}"),
+        )
 
     b.button(
         text="✏️ تعديل الاسم",
@@ -333,12 +358,18 @@ def sub_category_detail_kb(
         text="🗑 حذف القسم الفرعي",
         callback_data=(f"admin:subcat_delete_confirm:{sub_category.id}"),
     )
-    b.button(
-        text="🔙 رجوع لقائمة الأقسام الفرعية",
-        callback_data=(f"admin:subcat_list:{sub_category.category_id}"),
-    )
+    if sub_category.parent_sub_category_id is not None:
+        b.button(
+            text="🔙 رجوع للتطبيق",
+            callback_data=(f"admin:subcat_view:{sub_category.parent_sub_category_id}"),
+        )
+    else:
+        b.button(
+            text="🔙 رجوع لقائمة الأقسام الفرعية",
+            callback_data=(f"admin:subcat_list:{sub_category.category_id}"),
+        )
 
-    b.adjust(1, 1, 2, 2, 2, 1, 1)
+    b.adjust(1)
     return b.as_markup()
 
 

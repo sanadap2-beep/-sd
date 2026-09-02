@@ -250,7 +250,13 @@ async def _promotion_map(session, products: list[Product]) -> dict[int, dict]:
 async def catalog(session=Depends(get_session)):
     result = await session.execute(
         select(Category)
-        .options(selectinload(Category.sub_categories).selectinload(SubCategory.products))
+        .options(
+            selectinload(Category.sub_categories).selectinload(SubCategory.products),
+            # أقسام الرشق الداخلية: تطبيق ← أقسام داخلية ← منتجات.
+            selectinload(Category.sub_categories)
+            .selectinload(SubCategory.children)
+            .selectinload(SubCategory.products),
+        )
         .where(Category.is_active.is_(True))
         .order_by(Category.sort_order, Category.id)
     )
@@ -296,6 +302,27 @@ async def catalog(session=Depends(get_session)):
         subcategories = []
         for subcategory in category.sub_categories:
             if not subcategory.is_active:
+                continue
+            children = [child for child in (subcategory.children or []) if child.is_active]
+            if children:
+                # تطبيق يحوي أقساماً داخلية (قسم الرشق): نعرض الأقسام الداخلية
+                # كصفوف مسطّحة بسياق التطبيق حتى تصل منتجاتها للمتجر الصغير.
+                for child in children:
+                    active_products = [
+                        product_out(product)
+                        for product in child.products
+                        if product.status == ProductStatus.ACTIVE
+                    ]
+                    if not active_products:
+                        continue
+                    subcategories.append(
+                        SubCategoryOut(
+                            id=child.id,
+                            name=f"{subcategory.name_ar} {child.name_ar}".strip(),
+                            emoji=child.emoji,
+                            products=active_products,
+                        )
+                    )
                 continue
             active_products = [
                 product_out(product)

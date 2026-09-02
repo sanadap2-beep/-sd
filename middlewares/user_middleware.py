@@ -53,6 +53,7 @@ class UserMiddleware(BaseMiddleware):
         # ── إنشاء مستخدم جديد ──
         if user is None:
             referrer_id = None
+            referral_guard_pending = False
             if isinstance(event, Message):
                 ref_tg_id = extract_referrer_telegram_id(event.text)
                 if ref_tg_id and ref_tg_id != tg_user.id:
@@ -62,6 +63,11 @@ class UserMiddleware(BaseMiddleware):
                     ref_user = ref_result.scalar_one_or_none()
                     if ref_user is not None:
                         referrer_id = ref_user.id
+                        # القادمون عبر روابط الإحالة يمرون بفحص بشري قبل
+                        # التفعيل ومكافأة المحيل (حماية الإحالة من البوتات).
+                        from services.referral_guard_service import ReferralGuardService
+
+                        referral_guard_pending = await ReferralGuardService.enabled()
 
             user = User(
                 telegram_id=tg_user.id,
@@ -69,6 +75,7 @@ class UserMiddleware(BaseMiddleware):
                 full_name=tg_user.full_name,
                 language_code=(tg_user.language_code or "ar")[:8],
                 referrer_id=referrer_id,
+                referral_check_pending=referral_guard_pending,
             )
             session.add(user)
             await session.commit()
@@ -78,6 +85,7 @@ class UserMiddleware(BaseMiddleware):
                 session,
                 tg_user,
                 referrer_id,
+                defer_referrer_notice=referral_guard_pending,
             )
 
         # ── تحديث بيانات المستخدم ──
@@ -126,12 +134,47 @@ class UserMiddleware(BaseMiddleware):
                     )
                 return
 
+        # ── حماية الإحالة: انتظار التحقق البشري ──
+        # المسموح فقط: /start وأزرار الاختبار نفسها (rg:ans:). أي تفاعل آخر
+        # محجوب حتى يجتاز المستخدم الفحص (يمنع البوتات من استعمال المتجر
+        # قبل اكتشافها، ويؤخر مكافأة/إشعار المحيل حتى التأكد).
+        if user.referral_check_pending and not user.is_admin:
+            from services.referral_guard_service import ReferralGuardService
+
+            if await ReferralGuardService.enabled():
+                if isinstance(event, Message):
+                    text = event.text or ""
+                    if not text.startswith("/start"):
+                        await event.answer(
+                            "🛡 <b>أكمل التحقق البشري أولاً</b>\n\n"
+                            "أرسل /start واختر الرقم المطلوب لإثبات أنك إنسان."
+                        )
+                        return
+                elif isinstance(event, CallbackQuery):
+                    if not (event.data or "").startswith("rg:ans:"):
+                        await event.answer(
+                            "🛡 أكمل التحقق البشري أولاً — أرسل /start",
+                            show_alert=True,
+                        )
+                        return
+
         data["db_user"] = user
         return await handler(event, data)
 
 
-async def _notify_new_user_join(bot, session, tg_user, referrer_id: int | None) -> None:
-    """Tell the admin channel (and the referrer) about a first-time join. Fail-open."""
+async def _notify_new_user_join(
+    bot,
+    session,
+    tg_user,
+    referrer_id: int | None,
+    defer_referrer_notice: bool = False,
+) -> None:
+    """Tell the admin channel (and the referrer) about a first-time join. Fail-open.
+
+    When the joiner came through a referral and must pass the human check, the
+    referrer's "new join" notice is deferred until verification succeeds, so
+    bot traffic never reaches the referrer.
+    """
     if bot is None:
         return
     try:
@@ -147,7 +190,7 @@ async def _notify_new_user_join(bot, session, tg_user, referrer_id: int | None) 
             referrer_telegram_id=referrer.telegram_id if referrer else None,
             referrer_username=referrer.username if referrer else None,
         )
-        if referrer is not None:
+        if referrer is not None and not defer_referrer_notice:
             await notifier.notify_referrer_new_join(
                 referrer.telegram_id,
                 referrer.language_code,

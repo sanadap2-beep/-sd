@@ -147,10 +147,21 @@ async def _process_unified_order(session, order: UnifiedOrder, notifier: Notific
 
 async def _handle_completed(session, order, user, product_name, notifier):
     """يعالج الطلب المكتمل."""
+    was_completed = order.status == UnifiedOrderStatus.COMPLETED
     order.status = UnifiedOrderStatus.COMPLETED
     order.status_message = "مكتمل"
     order.completed_at = datetime.utcnow()
     await session.commit()
+
+    if not was_completed:
+        await notifier.live_purchase_success(
+            telegram_id=user.telegram_id,
+            username=user.username,
+            full_name=user.full_name,
+            item=product_name,
+            amount_usd=str(order.price_usd),
+            order_id=order.id,
+        )
 
     if order.product:
         await DynamicService.increment_product_sold(session, order.product_id)
@@ -164,25 +175,9 @@ async def _handle_completed(session, order, user, product_name, notifier):
     )
     await GamificationService.progress_event(session, user.id, "purchase")
 
-    extra = ""
-    try:
-        raw = json.loads(order.result_data or "{}")
-        if isinstance(raw, dict):
-            nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-            code = (
-                nested.get("code")
-                or nested.get("sms")
-                or nested.get("sms_code")
-                or raw.get("code")
-                or raw.get("sms")
-            )
-            phone = nested.get("phone") or nested.get("number") or raw.get("phone")
-            if phone:
-                extra += f"\n📞 الرقم: <code>{phone}</code>"
-            if code:
-                extra += f"\n🔑 الكود: <code>{code}</code>"
-    except Exception:
-        extra = ""
+    from services.digital_delivery import format_delivery_html
+
+    extra = format_delivery_html(order.result_data)
     await notifier.notify_order_completed(
         user_telegram_id=user.telegram_id,
         product_name=product_name,
@@ -227,6 +222,16 @@ async def _handle_partial(session, order, user, product_name, notifier, remains)
                 related_id=order.id,
             )
 
+            await notifier.live_refund(
+                telegram_id=user.telegram_id,
+                username=user.username,
+                full_name=user.full_name,
+                item=product_name,
+                amount_usd=str(refund_amount),
+                reason="الطلب منجز جزئياً — رُجع المتبقي غير المنفَّذ",
+                order_id=order.id,
+            )
+
             await notifier.notify_user(
                 user.telegram_id,
                 f"⚠️ <b>طلب منجز جزئياً</b>\n\n"
@@ -267,6 +272,16 @@ async def _handle_failed(session, order, user, product_name, notifier):
     )
     order.status = UnifiedOrderStatus.REFUNDED
     await session.commit()
+
+    await notifier.live_refund(
+        telegram_id=user.telegram_id,
+        username=user.username,
+        full_name=user.full_name,
+        item=product_name,
+        amount_usd=str(order.price_usd),
+        reason="فشل تنفيذ الطلب لدى المزود",
+        order_id=order.id,
+    )
 
     await notifier.notify_order_failed(
         user_telegram_id=user.telegram_id,

@@ -98,13 +98,52 @@ class PulledServicesService:
 
     @staticmethod
     async def destination_subcategories(session) -> list[SubCategory]:
-        result = await session.execute(
-            select(SubCategory)
-            .options(selectinload(SubCategory.category))
-            .where(SubCategory.is_active.is_(True))
-            .order_by(SubCategory.sort_order, SubCategory.id)
+        """الأقسام القابلة لاستقبال منتج: «الأوراق» فقط (بلا أقسام داخلية).
+
+        القسم الذي يحوي أقساماً داخلية (تطبيق رشق) لا يُنشر فيه مباشرة،
+        بل يُنشر داخل أحد أقسامه الداخلية حتى يظهر للزبون.
+        """
+        return await DynamicService.get_active_leaf_sub_categories(session)
+
+    @staticmethod
+    async def platform_app_subcategory(
+        session, platform_key: str
+    ) -> SubCategory | None:
+        """القسم الفرعي (التطبيق) المقابل لمنصة SMM داخل قسم الرشق."""
+        from database.models import Category, CategoryType
+        from services.smm_catalog import SHORT_TO_PLATFORM, resolve_smm_app
+
+        app_name = SHORT_TO_PLATFORM.get(platform_key)
+        if not app_name:
+            return None
+        smm_category = (
+            await session.execute(select(Category).where(Category.type == CategoryType.SMM))
+        ).scalar_one_or_none()
+        if smm_category is None:
+            return None
+        apps = await DynamicService.get_active_root_sub_categories(session, smm_category.id)
+        for app in apps:
+            haystack = f"{app.emoji or ''} {app.name_ar or ''}"
+            resolved = resolve_smm_app(haystack) or resolve_smm_app(app.name_ar or "")
+            if resolved is not None and resolved.name_ar == app_name:
+                return app
+        return None
+
+    @staticmethod
+    async def app_section_destinations(
+        session, app_sub: SubCategory
+    ) -> list[tuple[SubCategory, int]]:
+        """أقسام تطبيق داخلية مفعلة مع عدد منتجاتها: ``[(section, count), ...]``."""
+        sections = await DynamicService.get_active_child_sections(session, app_sub.id)
+        counts = await DynamicService.active_product_counts_by_sub(
+            session, [section.id for section in sections]
         )
-        return list(result.scalars().all())
+        result = []
+        for section in sections:
+            count = counts.get(section.id, 0)
+            if count > 0:
+                result.append((section, count))
+        return result
 
     @staticmethod
     def parse_sell_price(raw: str) -> Decimal:

@@ -439,6 +439,80 @@ class NotificationService:
             ),
         )
 
+    async def _live_feed_active(self, kind: str = "success") -> bool:
+        """هل إشعارات «مباشر البوت» مفعّلة لهذا النوع من الأحداث؟
+
+        تُدار من لوحة الأدمن: زر «📡 مباشر البوت» (والإضافة
+        ``live_bot_feed`` في مركز الإضافات تحت فئة «الإشعارات»).
+        """
+        try:
+            from services.feature_service import FeatureService
+
+            if not await FeatureService.enabled("live_bot_feed", default=True):
+                return False
+            option = "notify_success" if kind == "success" else "notify_refund"
+            return bool(
+                await FeatureService.config_bool("live_bot_feed", option, True)
+            )
+        except Exception:
+            return False
+
+    async def live_purchase_success(
+        self,
+        *,
+        telegram_id: int,
+        username: str | None = None,
+        full_name: str | None = None,
+        item: str,
+        amount_usd,
+        order_id: int | None = None,
+    ) -> None:
+        """إشعار مباشر للأدمن: شراء ناجح — خُصم رصيد المستخدم وتُفعِّل/اكتمل.
+
+        يُرسل فقط للوحة الأدمن (وليس للقناة العامة)، ويفهم منه صاحب البوت
+        أن العملية تمت فعلاً لا أنها مجرد طلب معلّق.
+        """
+        if not await self._live_feed_active("success"):
+            return
+        name = full_name or username or ""
+        text = (
+            "✅ <b>مباشر البوت — شراء مكتمل</b>\n\n"
+            f"👤 المستخدم: <code>{telegram_id}</code> "
+            f"{f'(@{username})' if username else ''} {name[:40]}\n"
+            f"📦 المنتج: {item}\n"
+            f"💰 خُصم من رصيده: <b>{amount_usd}$</b>"
+        )
+        if order_id is not None:
+            text += f"\n🆔 الطلب: #{order_id}"
+        await self.notify_admin(text, notification_type="live", priority="high")
+
+    async def live_refund(
+        self,
+        *,
+        telegram_id: int,
+        username: str | None = None,
+        full_name: str | None = None,
+        item: str,
+        amount_usd,
+        reason: str,
+        order_id: int | None = None,
+    ) -> None:
+        """إشعار مباشر للأدمن: استرجاع/فشل — رجع الرصيد للمستخدم."""
+        if not await self._live_feed_active("refund"):
+            return
+        name = full_name or username or ""
+        text = (
+            "↩️ <b>مباشر البوت — استرجاع رصيد</b>\n\n"
+            f"👤 المستخدم: <code>{telegram_id}</code> "
+            f"{f'(@{username})' if username else ''} {name[:40]}\n"
+            f"📦 المنتج: {item}\n"
+            f"💵 المبلغ المسترجع: <b>{amount_usd}$</b>\n"
+            f"📄 السبب: {reason}"
+        )
+        if order_id is not None:
+            text += f"\n🆔 الطلب: #{order_id}"
+        await self.notify_admin(text, notification_type="live", priority="high")
+
     async def notify_admin_new_user(
         self,
         telegram_id: int,

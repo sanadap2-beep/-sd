@@ -6,7 +6,7 @@
 
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from database.models import (
@@ -112,7 +112,7 @@ class DynamicService:
 
     @staticmethod
     async def get_active_sub_categories(session, category_id: int) -> list[SubCategory]:
-        """يجلب الأقسام الفرعية المفعلة لقسم رئيسي معين."""
+        """يجلب الأقسام الفرعية المفعلة لقسم رئيسي معين (كل المستويات)."""
         result = await session.execute(
             select(SubCategory)
             .where(
@@ -122,6 +122,112 @@ class DynamicService:
             .order_by(SubCategory.sort_order, SubCategory.id)
         )
         return list(result.scalars().all())
+
+    @staticmethod
+    async def get_active_root_sub_categories(
+        session, category_id: int
+    ) -> list[SubCategory]:
+        """أقسام فرعية من المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)."""
+        result = await session.execute(
+            select(SubCategory)
+            .where(
+                SubCategory.category_id == category_id,
+                SubCategory.parent_sub_category_id.is_(None),
+                SubCategory.is_active.is_(True),
+            )
+            .order_by(SubCategory.sort_order, SubCategory.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_all_root_sub_categories(
+        session, category_id: int
+    ) -> list[SubCategory]:
+        """كل أقسام المستوى الأول (للأدمن) مع تحميل المنتجات المسبق."""
+        result = await session.execute(
+            select(SubCategory)
+            .options(selectinload(SubCategory.products))
+            .where(
+                SubCategory.category_id == category_id,
+                SubCategory.parent_sub_category_id.is_(None),
+            )
+            .order_by(SubCategory.sort_order, SubCategory.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_active_child_sections(
+        session, parent_sub_category_id: int
+    ) -> list[SubCategory]:
+        """الأقسام الداخلية المفعلة التابعة لقسم فرعي (مثل أنواع الرشق)."""
+        result = await session.execute(
+            select(SubCategory)
+            .where(
+                SubCategory.parent_sub_category_id == parent_sub_category_id,
+                SubCategory.is_active.is_(True),
+            )
+            .order_by(SubCategory.sort_order, SubCategory.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_all_child_sections(
+        session, parent_sub_category_id: int
+    ) -> list[SubCategory]:
+        """كل الأقسام الداخلية (مفعلة ومعطلة) للعرض الإداري."""
+        result = await session.execute(
+            select(SubCategory)
+            .where(SubCategory.parent_sub_category_id == parent_sub_category_id)
+            .order_by(SubCategory.sort_order, SubCategory.id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def active_product_counts_by_sub(
+        session, sub_category_ids: list[int]
+    ) -> dict[int, int]:
+        """``{sub_category_id: عدد المنتجات المفعلة}`` — بدون تحميل كسول."""
+        if not sub_category_ids:
+            return {}
+        result = await session.execute(
+            select(Product.sub_category_id, func.count(Product.id))
+            .where(
+                Product.sub_category_id.in_(sub_category_ids),
+                Product.status == ProductStatus.ACTIVE,
+            )
+            .group_by(Product.sub_category_id)
+        )
+        return {row[0]: row[1] for row in result.all()}
+
+    @staticmethod
+    async def get_active_leaf_sub_categories(session) -> list[SubCategory]:
+        """كل الأقسام الفرعية القابلة لاستقبال منتجات (بلا أقسام داخلية)."""
+        result = await session.execute(
+            select(SubCategory)
+            .options(
+                selectinload(SubCategory.category),
+                selectinload(SubCategory.parent),
+            )
+            .where(SubCategory.is_active.is_(True))
+            .order_by(SubCategory.sort_order, SubCategory.id)
+        )
+        subs = list(result.scalars().all())
+        parents_ids = {sub.id for sub in subs if sub.parent_sub_category_id is not None}
+        return [sub for sub in subs if sub.id not in parents_ids]
+
+    @staticmethod
+    async def find_child_section_by_kind(
+        session,
+        parent_sub_category_id: int,
+        kind_key: str,
+    ) -> SubCategory | None:
+        result = await session.execute(
+            select(SubCategory).where(
+                SubCategory.parent_sub_category_id == parent_sub_category_id,
+                SubCategory.kind_key == kind_key,
+            )
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_all_sub_categories(session, category_id: int) -> list[SubCategory]:
@@ -148,6 +254,7 @@ class DynamicService:
             .options(
                 selectinload(SubCategory.products),
                 selectinload(SubCategory.category),
+                selectinload(SubCategory.parent),
             )
             .where(SubCategory.id == sub_category_id)
         )
@@ -216,9 +323,13 @@ class DynamicService:
         emoji: str,
         description: str | None = None,
         sort_order: int = 0,
+        parent_sub_category_id: int | None = None,
+        kind_key: str | None = None,
     ) -> SubCategory:
         sub = SubCategory(
             category_id=category_id,
+            parent_sub_category_id=parent_sub_category_id,
+            kind_key=kind_key,
             name_ar=name_ar,
             emoji=emoji,
             description=description,
@@ -312,6 +423,7 @@ class DynamicService:
         requires_quantity: bool = False,
         display_type: ProductDisplayType | None = None,
         sort_order: int = 0,
+        is_auto_published: bool = False,
     ) -> Product:
         if display_type is None:
             display_type = (
@@ -338,6 +450,7 @@ class DynamicService:
             display_type=display_type,
             sort_order=sort_order,
             status=ProductStatus.ACTIVE,
+            is_auto_published=is_auto_published,
         )
         session.add(product)
         await session.commit()

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
-
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -197,6 +198,12 @@ class CheckoutService:
             )
             raise CheckoutError("فشل إرسال الطلب للمزود وتم استرجاع الرصيد.")
 
+        # منتجات رقمية لحظية (اشتراكات ggsoma…): المزود يسلّم فوراً في نفس
+        # الاستجابة، فنكمل الطلب هنا مباشرة ونعرض التسليم للمشتري فوراً،
+        # بدلاً من انتظار جولة المراقبة. غيرها يبقى قيد المعالجة كالمعتاد.
+        from services.digital_delivery import format_delivery_text
+
+        instant = str(getattr(external, "status", "")).lower() == "completed"
         order = UnifiedOrder(
             user_id=user_id,
             product_id=product.id,
@@ -207,12 +214,19 @@ class CheckoutService:
             quantity=quantity,
             price_usd=price,
             cost_price_usd=product.cost_price_usd,
-            status=UnifiedOrderStatus.PROCESSING,
-            status_message="تم إرسال الطلب للمزود",
+            status=(
+                UnifiedOrderStatus.COMPLETED
+                if instant
+                else UnifiedOrderStatus.PROCESSING
+            ),
+            status_message="مكتمل - توصيل فوري" if instant else "تم إرسال الطلب للمزود",
+            result_data=json.dumps(external.raw, ensure_ascii=False) if instant else None,
+            completed_at=datetime.utcnow() if instant else None,
         )
         session.add(order)
         await session.commit()
         await session.refresh(order)
         if promotion:
             await PromotionService.mark_used(session, promotion.id)
-        return CheckoutResult(order, discount)
+        delivery_value = format_delivery_text(external.raw) if instant else None
+        return CheckoutResult(order, discount, delivery_value)

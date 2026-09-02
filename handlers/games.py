@@ -7,7 +7,9 @@
 4) يُرسل الطلب للمزود تلقائياً
 5) يُتابع الطلب من order_monitor
 """
+import json
 import logging
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 from aiogram import Router, F
@@ -37,7 +39,7 @@ from services.watch_service import WatchService
 from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
-from keyboards.games import sub_categories_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb
+from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb
 from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 logger = logging.getLogger(__name__)
 router = Router(name='games')
@@ -145,21 +147,49 @@ async def favorite_remove(callback: CallbackQuery, session, db_user: User):
     await favorites_list(callback, session, db_user)
 
 async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
-    """Render a subcategory's products. ``target`` is a Message or CallbackQuery.
+    """Render a subcategory.
 
-    Products are loaded with an explicit query so AsyncSession never tries a
-    lazy ``sub_cat.products`` IO (MissingGreenlet).
+    - إذا كان القسم تطبيقاً يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات)
+      تعرض الأقسام الداخلية أولاً (ميزة أقسام الرشق الداخلية).
+    - وإلا تعرض منتجات القسم مباشرة.
+    ``target`` is a Message or CallbackQuery. Products are loaded with an
+    explicit query so AsyncSession never tries a lazy ``sub_cat.products``
+    IO (MissingGreenlet).
     """
+    from services.feature_service import FeatureService
     from services.smm_catalog import button_label
 
-    products = await DynamicService.get_active_products(session, sub_cat.id)
     title = button_label(sub_cat.name_ar, sub_cat.emoji)
-    if not products:
+    products = await DynamicService.get_active_products(session, sub_cat.id)
+
+    inner_sections: list[tuple[object, int]] = []
+    if await FeatureService.enabled("smm_inner_sections", default=True):
+        children = await DynamicService.get_active_child_sections(session, sub_cat.id)
+        if children:
+            counts = await DynamicService.active_product_counts_by_sub(
+                session, [child.id for child in children]
+            )
+            inner_sections = [
+                (child, counts.get(child.id, 0))
+                for child in children
+                if counts.get(child.id, 0) > 0
+            ]
+
+    if inner_sections:
+        text = f"<b>{title}</b>\n\nاختر نوع الخدمة المطلوبة:"
+        markup = sections_kb(sub_cat.category_id, inner_sections)
+    elif products:
+        back_sub_id = sub_cat.parent_sub_category_id
+        text = f"<b>{title}{I18nService.t('ux_games_282_17', language)}"
+        markup = products_kb(
+            sub_cat.id,
+            products,
+            sub_cat.category_id,
+            back_sub_id=back_sub_id,
+        )
+    else:
         text = f"<b>{title}{I18nService.t('ux_games_276_16', language)}"
         markup = back_to_main_kb(language)
-    else:
-        text = f"<b>{title}{I18nService.t('ux_games_282_17', language)}"
-        markup = products_kb(sub_cat.id, products, sub_cat.category_id)
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
     else:
@@ -174,7 +204,9 @@ async def category_selected(callback: CallbackQuery, session):
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
     await callback.answer()
-    sub_cats = await DynamicService.get_active_sub_categories(session, category_id)
+    # المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)؛ الأقسام الداخلية تظهر
+    # عند فتح التطبيق نفسه عبر subcat:.
+    sub_cats = await DynamicService.get_active_root_sub_categories(session, category_id)
     if not sub_cats:
         await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{I18nService.t('ux_games_246_13', _auto_lang(locals()))}", reply_markup=back_to_main_kb())
         return
@@ -498,6 +530,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
     external_order_id = None
     order_status = UnifiedOrderStatus.PENDING
     status_message = 'بانتظار تنفيذ الإدارة' if fulfillment == ProductFulfillmentType.MANUAL.value else 'بانتظار التنفيذ'
+    instant_raw = None
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         pass
     elif product.api_provider_id and product.provider_service_id:
@@ -507,8 +540,16 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                 protocol = ProtocolFactory.create_from_provider(provider)
                 result = await protocol.place_order(service_id=product.provider_service_id, target=target, quantity=quantity)
                 external_order_id = result.external_order_id
-                order_status = UnifiedOrderStatus.PROCESSING
-                status_message = 'تم إرسال الطلب للمزود'
+                # مزود لحظي (اشتراكات رقمية ggsoma…): سلّم فوراً في نفس الاستجابة.
+                if str(getattr(result, 'status', '') or '').lower() == 'completed':
+                    order_status = UnifiedOrderStatus.COMPLETED
+                    status_message = 'مكتمل - توصيل فوري'
+                    raw = getattr(result, 'raw', None)
+                    if isinstance(raw, dict):
+                        instant_raw = raw
+                else:
+                    order_status = UnifiedOrderStatus.PROCESSING
+                    status_message = 'تم إرسال الطلب للمزود'
             except ProtocolError as e:
                 logger.error(f'فشل إرسال الطلب للمزود: {e}')
                 await BalanceService.add_balance(session, db_user.id, final_price, TransactionType.REFUND, description='استرجاع - فشل الإرسال للمزود')
@@ -537,7 +578,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     )
                 await state.clear()
                 return
-    order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message)
+    order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message, result_data=json.dumps(instant_raw, ensure_ascii=False) if instant_raw else None, completed_at=datetime.utcnow() if instant_raw else None)
     session.add(order)
     await session.commit()
     await session.refresh(order)
@@ -555,7 +596,15 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         result_text += f'🎯 الهدف: <code>{target}</code>\n'
     if quantity > 1:
         result_text += f'📊 الكمية: {quantity}\n'
-    result_text += f'\n📊 الحالة: {status_message}\nستصلك إشعارات بتحديث حالة طلبك.'
+    result_text += f'\n📊 الحالة: {status_message}'
+    if instant_raw:
+        from services.digital_delivery import format_delivery_html
+
+        delivery_html = format_delivery_html(instant_raw)
+        if delivery_html:
+            result_text += f'\n\n🎁 <b>تم التسليم فوراً — بياناتك:</b>{delivery_html}'
+    else:
+        result_text += '\nستصلك إشعارات بتحديث حالة طلبك.'
     await callback.message.answer(result_text)
     await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {product.name_ar}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {target or '—'}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
     await notifier.notify_successful_unified_order(username=db_user.username, full_name=db_user.full_name, product_name=product.name_ar, price_usd=str(final_price))

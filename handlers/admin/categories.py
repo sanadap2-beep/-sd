@@ -553,7 +553,7 @@ async def cat_delete(callback: CallbackQuery, session, db_user):
 
 @router.callback_query(F.data.startswith("admin:subcat_list:"))
 async def subcat_list(callback: CallbackQuery, session):
-    """يعرض قائمة الأقسام الفرعية لقسم رئيسي."""
+    """يعرض قائمة الأقسام الفرعية (المستوى الأول) لقسم رئيسي."""
     cat_id = int(callback.data.split(":")[2])
     category = await DynamicService.get_category(session, cat_id)
 
@@ -561,7 +561,8 @@ async def subcat_list(callback: CallbackQuery, session):
         await callback.answer("⚠️ غير موجود", show_alert=True)
         return
 
-    subs = await DynamicService.get_all_sub_categories(session, cat_id)
+    # الأقسام الداخلية (المستوى الثاني في الرشق) تُدار من صفحة التطبيق نفسه.
+    subs = await DynamicService.get_all_root_sub_categories(session, cat_id)
 
     if not subs:
         text = (
@@ -576,7 +577,9 @@ async def subcat_list(callback: CallbackQuery, session):
             f"{category.name_ar}</b>\n\n"
             f"عدد الأقسام الفرعية: <b>{len(subs)}</b>\n\n"
             "🟢 = مفعّل | 🔴 = معطّل\n"
-            "الرقم بين قوسين = عدد المنتجات"
+            "الرقم بين قوسين = عدد المنتجات المباشرة\n\n"
+            "💡 أقسام قسم الرشق الداخلية (متابعون/لايكات/...) "
+            "تُدار من داخل صفحة التطبيق."
         )
 
     await callback.message.edit_text(
@@ -590,9 +593,9 @@ async def subcat_list(callback: CallbackQuery, session):
 
 @router.callback_query(F.data.startswith("admin:subcat_add:"))
 async def subcat_add_start(callback: CallbackQuery, state: FSMContext):
-    """يبدأ Wizard إضافة قسم فرعي."""
+    """يبدأ Wizard إضافة قسم فرعي (مستوى أول)."""
     cat_id = int(callback.data.split(":")[2])
-    await state.update_data(parent_category_id=cat_id)
+    await state.update_data(parent_category_id=cat_id, parent_sub_id=None)
 
     await callback.message.edit_text(
         "📂 <b>إضافة قسم فرعي جديد</b>\n\n"
@@ -601,6 +604,34 @@ async def subcat_add_start(callback: CallbackQuery, state: FSMContext):
         "(مثال: <code>إنستقرام</code> أو "
         "<code>ببجي موبايل</code>)",
         reply_markup=cancel_add_kb(f"admin:subcat_list:{cat_id}"),
+    )
+    await state.set_state(AdminSubCategoryStates.waiting_name)
+
+
+@router.callback_query(F.data.startswith("admin:subcat_add_child:"))
+async def subcat_add_child_start(callback: CallbackQuery, session, state: FSMContext):
+    """يبدأ Wizard إضافة «قسم داخلي» داخل تطبيق (قسم فرعي من المستوى الأول).
+
+    مثال: داخل إنستغرام قسم داخلي «لايكات». الأقسام الداخلية هي التي
+    تستقبل المنتجات وتظهر للزبون عند فتح التطبيق.
+    """
+    parent_sub_id = int(callback.data.split(":")[2])
+    parent = await DynamicService.get_sub_category(session, parent_sub_id)
+    if parent is None:
+        await callback.answer("⚠️ التطبيق غير موجود", show_alert=True)
+        return
+    await state.update_data(
+        parent_category_id=parent.category_id,
+        parent_sub_id=parent.id,
+    )
+    await callback.message.edit_text(
+        f"📂 <b>إضافة قسم داخلي</b> داخل: "
+        f"{parent.emoji or ''} {parent.name_ar}\n\n"
+        "الخطوة 1️⃣ من 4️⃣\n\n"
+        "📝 أرسل اسم القسم الداخلي:\n"
+        "(مثال: <code>لايكات</code> أو <code>متابعون</code> أو "
+        "<code>مشاهدات</code>)",
+        reply_markup=cancel_add_kb(f"admin:subcat_view:{parent.id}"),
     )
     await state.set_state(AdminSubCategoryStates.waiting_name)
 
@@ -627,6 +658,18 @@ async def subcat_name_received(message: Message, state: FSMContext):
     await state.set_state(AdminSubCategoryStates.waiting_emoji)
 
 
+async def _subcat_cancel_target(state: FSMContext) -> str:
+    """زر الإلغاء المناسب أثناء wizard: صفحة التطبيق للقسم الداخلي."""
+    data = await state.get_data()
+    parent_sub_id = data.get("parent_sub_id")
+    if parent_sub_id:
+        return f"admin:subcat_view:{parent_sub_id}"
+    cat_id = data.get("parent_category_id")
+    if cat_id:
+        return f"admin:subcat_list:{cat_id}"
+    return "admin:categories"
+
+
 @router.callback_query(
     AdminSubCategoryStates.waiting_emoji,
     F.data.startswith("admin:cat_emoji:"),
@@ -648,7 +691,7 @@ async def subcat_emoji_selected(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         f"✅ الإيموجي: {emoji}\n\nالخطوة 3️⃣ من 4️⃣\n\n📝 أرسل وصف القسم (اختياري):\nأو اضغط ⏭ للتخطي",
-        reply_markup=cancel_add_kb("admin:categories"),
+        reply_markup=cancel_add_kb(await _subcat_cancel_target(state)),
     )
     await state.set_state(AdminSubCategoryStates.waiting_description)
 
@@ -772,12 +815,14 @@ async def _create_sub_category(
     session,
     db_user,
 ):
-    """ينشئ القسم الفرعي في قاعدة البيانات."""
+    """ينشئ القسم الفرعي في قاعدة البيانات (أو القسم الداخلي إذا وُجد أب)."""
     data = await state.get_data()
+    parent_sub_id = data.get("parent_sub_id")
 
     try:
         sub_category = SubCategory(
             category_id=data["parent_category_id"],
+            parent_sub_category_id=parent_sub_id,
             name_ar=data["name"],
             emoji=data.get("emoji", "📱"),
             description=data.get("description"),
@@ -803,12 +848,17 @@ async def _create_sub_category(
         new_value={
             "name": sub_category.name_ar,
             "emoji": sub_category.emoji,
+            "parent_sub_category_id": parent_sub_id,
         },
         session=session,
     )
 
+    if parent_sub_id:
+        kind_text = "القسم الداخلي"
+    else:
+        kind_text = "القسم الفرعي"
     success_text = (
-        f"✅ <b>تم إنشاء القسم الفرعي بنجاح!</b>\n\n"
+        f"✅ <b>تم إنشاء {kind_text} بنجاح!</b>\n\n"
         f"{sub_category.emoji} <b>{sub_category.name_ar}</b>\n\n"
         "يمكنك الآن إضافة منتجات له."
     )
@@ -820,6 +870,12 @@ async def _create_sub_category(
             await message.edit_text(success_text)
         except Exception:
             pass
+
+    # عند إنشاء قسم داخلي نعيد الأدمن لصفحة التطبيق ليرى القسم الجديد.
+    if parent_sub_id:
+        parent = await session.get(SubCategory, parent_sub_id)
+        if parent is not None:
+            await _show_sub_category_details(message, parent, session, edit=False)
 
     await state.clear()
 
@@ -837,15 +893,20 @@ async def subcat_view(callback: CallbackQuery, session):
         await callback.answer("⚠️ غير موجود", show_alert=True)
         return
 
-    await _show_sub_category_details(callback.message, sub, edit=True)
+    await _show_sub_category_details(callback.message, sub, session, edit=True)
 
 
 async def _show_sub_category_details(
     message,
     sub: SubCategory,
+    session,
     edit: bool = True,
 ):
-    """يعرض تفاصيل قسم فرعي."""
+    """يعرض تفاصيل قسم فرعي.
+
+    إذا كان القسم تطبيقاً يحوي أقساماً داخلية (قسم الرشق) تُعرض الأقسام
+    الداخلية بأزرارها أعلى أزرار الإدارة.
+    """
     status = "🟢 مفعّل" if sub.is_active else "🔴 معطّل"
 
     products_count = len(sub.products) if sub.products else 0
@@ -854,6 +915,13 @@ async def _show_sub_category_details(
         from database.models import ProductStatus
 
         active_products = sum(1 for p in sub.products if p.status == ProductStatus.ACTIVE)
+
+    children = await DynamicService.get_all_child_sections(session, sub.id)
+    child_counts: dict[int, int] = {}
+    if children:
+        child_counts = await DynamicService.active_product_counts_by_sub(
+            session, [child.id for child in children]
+        )
 
     text = (
         f"{sub.emoji} <b>{sub.name_ar}</b>\n"
@@ -866,12 +934,28 @@ async def _show_sub_category_details(
 
     text += f"📦 عدد المنتجات: <b>{products_count}</b>\n🟢 نشطة منها: <b>{active_products}</b>\n\n"
 
+    if children:
+        text += (
+            f"📂 <b>الأقسام الداخلية: {len(children)}</b> "
+            "(متابعون/لايكات/مشاهدات...)\n"
+            "المنتجات تنشر داخل الأقسام الداخلية وليس هنا مباشرةً، "
+            "والرقم بين قوسين = عدد منتجات القسم.\n\n"
+        )
+    elif sub.kind_key:
+        text += (
+            "🏷 هذا القسم قسم داخلي ضمن تطبيق. منتجاته تظهر للزبون عند فتح التطبيق "
+            "ثم اختيار هذا القسم.\n\n"
+        )
+
     if sub.image_file_id or sub.image_url:
         text += "🖼 يحتوي صورة ✅\n\n"
 
     text += f"📅 تاريخ الإنشاء: {sub.created_at.strftime('%Y-%m-%d')}"
 
-    kb = sub_category_detail_kb(sub)
+    kb = sub_category_detail_kb(
+        sub,
+        children=[(child, child_counts.get(child.id, 0)) for child in children],
+    )
 
     if edit:
         try:
@@ -911,7 +995,7 @@ async def subcat_toggle(callback: CallbackQuery, session, db_user):
     await callback.answer(f"{status_text} القسم الفرعي")
 
     await session.refresh(sub)
-    await _show_sub_category_details(callback.message, sub, edit=True)
+    await _show_sub_category_details(callback.message, sub, session, edit=True)
 
 
 # ══════════════ تعديل قسم فرعي ══════════════
@@ -990,7 +1074,7 @@ async def subcat_edit_image_photo(
     await state.clear()
 
     await session.refresh(sub)
-    await _show_sub_category_details(message, sub, edit=False)
+    await _show_sub_category_details(message, sub, session, edit=False)
 
 
 @router.message(AdminSubCategoryStates.waiting_edit_value)
@@ -1086,7 +1170,7 @@ async def subcat_edit_value_received(
     await state.clear()
 
     await session.refresh(sub)
-    await _show_sub_category_details(message, sub, edit=False)
+    await _show_sub_category_details(message, sub, session, edit=False)
 
 
 # ══════════════ حذف قسم فرعي ══════════════
@@ -1103,10 +1187,13 @@ async def subcat_delete_confirm(callback: CallbackQuery, session):
         return
 
     products_count = len(sub.products) if sub.products else 0
+    children = await DynamicService.get_all_child_sections(session, sub.id)
 
     text = f"⚠️ <b>تأكيد حذف القسم الفرعي</b>\n\nسيتم حذف:\n• القسم: {sub.emoji} {sub.name_ar}\n"
     if products_count > 0:
-        text += f"• <b>{products_count}</b> منتج\n"
+        text += f"• <b>{products_count}</b> منتج مباشر\n"
+    if children:
+        text += f"• <b>{len(children)}</b> قسم داخلي وكل منتجاتها\n"
     text += "\n<b>هل أنت متأكد؟ لا يمكن التراجع!</b>"
 
     await callback.message.edit_text(
@@ -1127,7 +1214,8 @@ async def subcat_delete(callback: CallbackQuery, session, db_user):
         return
 
     sub_name = sub.name_ar
-    parent_id = sub.category_id
+    parent_category_id = sub.category_id
+    parent_sub_id = sub.parent_sub_category_id
 
     await AuditService.log_delete(
         admin_id=db_user.id,
@@ -1143,10 +1231,17 @@ async def subcat_delete(callback: CallbackQuery, session, db_user):
     await callback.answer(f"🗑 تم حذف: {sub_name}")
     logger.info(f"الأدمن {db_user.telegram_id} حذف القسم الفرعي #{sub_id}")
 
+    # حذف قسم داخلي؟ نعيد الأدمن لصفحة التطبيق الذي كان يحويه.
+    if parent_sub_id is not None:
+        parent = await session.get(SubCategory, parent_sub_id)
+        if parent is not None:
+            await _show_sub_category_details(callback.message, parent, session, edit=False)
+            return
+
     from types import SimpleNamespace
 
     fake_callback = SimpleNamespace(
-        data=f"admin:subcat_list:{parent_id}",
+        data=f"admin:subcat_list:{parent_category_id}",
         message=callback.message,
         answer=callback.answer,
         from_user=callback.from_user,
