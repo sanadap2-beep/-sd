@@ -1,0 +1,11 @@
+.env
+local.env
+*.db
+data/
+__pycache__/
+*.pyc
+venv/
+.venv/
+.idea/
+.vscode/
+*.log

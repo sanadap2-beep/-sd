@@ -1,0 +1,101 @@
+"""Keyboards for the universal store hub."""
+
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from services.i18n_service import I18nService
+
+
+# Kept as a public mapping for existing callers that validate section names.
+SECTION_LABELS = {
+    "featured": "⭐ مختارات المتجر",
+    "deals": "🔥 عروض اليوم",
+    "bestsellers": "🏆 الأكثر مبيعاً",
+    "instant": "⚡ تسليم فوري",
+    "cheap": "💸 أقل من 2$",
+    "games": "🎮 ألعاب",
+    "smm": "📈 سوشيال ميديا",
+    "apps": "📦 تطبيقات واشتراكات",
+}
+
+
+def section_label(section: str, language: str = "ar") -> str:
+    """Return a translated label while retaining Arabic fallback behavior."""
+    return I18nService.t(f"store_section_{section}", language)
+
+
+def store_home_kb(
+    number_services=None,
+    categories=None,
+    webapp_url: str | None = None,
+    language: str = "ar",
+) -> InlineKeyboardMarkup:
+    """Show every product entry point under one store button."""
+    b = InlineKeyboardBuilder()
+
+    for service in number_services or []:
+        # NumberService currently stores one admin-facing name (Arabic). Keep
+        # the well-known seeded services readable for English users too.
+        service_name = service.name_ar
+        if I18nService.normalize_language(language) == "en":
+            service_name = {
+                "telegram": "Telegram",
+                "tg": "Telegram",
+                "whatsapp": "WhatsApp",
+                "wa": "WhatsApp",
+            }.get(service.code.lower(), service_name)
+        b.button(
+            text=f"{service.emoji} {service_name}",
+            callback_data=f"num_svc:{service.code}",
+        )
+
+    for category in categories or []:
+        b.button(
+            text=f"{category.emoji} {category.name_ar}",
+            callback_data=f"cat:{category.id}",
+        )
+
+    for key in SECTION_LABELS:
+        b.button(text=section_label(key, language), callback_data=f"store:section:{key}")
+
+    b.button(text=I18nService.t("store_search", language), callback_data="menu:search")
+    b.button(text=I18nService.t("store_cart", language), callback_data="menu:cart")
+    b.button(
+        text=I18nService.t("store_product_request", language),
+        callback_data="menu:product_request",
+    )
+    if webapp_url:
+        b.button(
+            text=I18nService.t("store_webapp", language),
+            web_app=WebAppInfo(url=webapp_url),
+        )
+    b.button(text=I18nService.t("store_back", language), callback_data="back_to_main")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def store_products_kb(
+    products,
+    section: str,
+    language: str = "ar",
+) -> InlineKeyboardMarkup:
+    rows = []
+    for product in products:
+        name = product.name_ar if len(product.name_ar) <= 36 else product.name_ar[:35] + "…"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"🛒 {name} · {product.price_usd}$",
+                callback_data=f"prod:{product.id}",
+            )
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text=section_label(section, language),
+            callback_data="store:home",
+        ),
+        InlineKeyboardButton(
+            text=I18nService.t("store_cart", language),
+            callback_data="menu:cart",
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
