@@ -98,6 +98,7 @@ from handlers.admin import (
     sponsored_ads as admin_sponsored_ads,
     special_offers as admin_special_offers,
     pulled_services as admin_pulled_services,
+    ledger as admin_ledger,
 )
 
 from tasks.order_monitor import (
@@ -202,6 +203,7 @@ def register_routers():
     dp.include_router(admin_pricing.router)
     dp.include_router(admin_providers.router)
     dp.include_router(admin_stats.router)
+    dp.include_router(admin_ledger.router)
     dp.include_router(admin_settings.router)
     dp.include_router(admin_support.router)
     dp.include_router(admin_categories.router)
