@@ -21,7 +21,12 @@ from database.models import (
 from protocols.base import ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from protocols.partner_v1 import PartnerV1Protocol, is_partner_v1_config
-from services.partner_catalog_service import PartnerCatalogService
+from services.partner_catalog_service import (
+    PartnerCatalogService,
+    apply_margin,
+    is_ready_number,
+    parse_margin_percent,
+)
 
 
 def test_unwrap_maps_insufficient_balance():
@@ -181,6 +186,38 @@ async def test_publish_one_creates_product_in_chosen_section_only():
         assert len(ours) == 1
 
 
+def test_margin_and_ready_grouping():
+    assert parse_margin_percent("30%") == Decimal("30.00")
+    assert parse_margin_percent("30") == Decimal("30.00")
+    assert apply_margin(Decimal("0.20"), Decimal("30")) == Decimal("0.2600")
+
+    ready = SimpleNamespace(
+        external_id="1001",
+        name="رقم تيليجرام جاهز سوريا",
+        category="جاهزة",
+        description="",
+        service_type="tg",
+        rate=Decimal("0.20"),
+    )
+    waiting = SimpleNamespace(
+        external_id="1002",
+        name="رقم تيليجرام انتظار",
+        category="انتظار",
+        description="",
+        service_type="tg",
+        rate=Decimal("0.15"),
+    )
+    assert is_ready_number(ready) is True
+    assert is_ready_number(waiting) is False
+    groups = PartnerCatalogService.build_groups([ready, waiting], "tg")
+    tokens = [g[0] for g in groups]
+    labels = [g[2] for g in groups]
+    assert "ready" in tokens
+    assert any("الجاهزة" in label for label in labels)
+    ready_group = next(g for g in groups if g[0] == "ready")
+    assert [s.external_id for s in ready_group[3]] == ["1001"]
+
+
 def test_custom_preset_and_pick_button_exist():
     from keyboards.admin_providers_v2 import (
         CUSTOM_PROVIDER_CONFIG_PRESETS,
@@ -207,4 +244,83 @@ def test_custom_preset_and_pick_button_exist():
         for row in provider_detail_kb(provider).inline_keyboard
         for btn in row
     ]
-    assert "🎯 اختيار خدمة واحدة لقسم" in texts
+    assert "📥 سحب قسم بنسبة ربح" in texts
+
+
+@pytest.mark.asyncio
+async def test_publish_group_applies_margin_to_whole_section():
+    async with async_session_maker() as session:
+        provider = ApiProvider(
+            name="صديق",
+            type=ApiProviderType.CUSTOM,
+            protocol_type=ApiProtocolType.CUSTOM,
+            api_url="http://example/api/v1",
+            api_key="pak_test",
+            custom_config='{"engine": "partner_v1"}',
+            is_active=True,
+        )
+        category = Category(
+            name_ar="أرقام", emoji="📞", type=CategoryType.NUMBERS, is_active=True
+        )
+        session.add_all([provider, category])
+        await session.flush()
+        sub = SubCategory(
+            category_id=category.id, name_ar="تيليجرام جاهزة", emoji="✈️", is_active=True
+        )
+        session.add(sub)
+        await session.commit()
+        await session.refresh(provider)
+        await session.refresh(sub)
+
+        def _svc(sid, name, rate):
+            return SimpleNamespace(
+                external_id=str(sid),
+                name=name,
+                category="جاهزة",
+                service_type="tg",
+                rate=Decimal(str(rate)),
+                min_quantity=1,
+                max_quantity=1,
+                description="ready",
+                requires_link=False,
+                requires_quantity=False,
+                requires_player_id=False,
+                supports_refill=False,
+                supports_cancel=True,
+                raw={"service_id": sid},
+            )
+
+        services = [
+            _svc(1101, "Telegram Syria جاهز", "0.20"),
+            _svc(1102, "Telegram Iraq جاهز", "0.30"),
+        ]
+        created, updated = await PartnerCatalogService.publish_group(
+            session, provider, services, sub.id, Decimal("50")
+        )
+        await session.commit()
+        assert created == 2
+        assert updated == 0
+        from sqlalchemy import select
+
+        rows = list(
+            (
+                await session.execute(
+                    select(Product).where(Product.sub_category_id == sub.id)
+                )
+            ).scalars()
+        )
+        assert len(rows) == 2
+        by_sid = {p.provider_service_id: p for p in rows}
+        assert by_sid["1101"].price_usd == Decimal("0.3000")
+        assert by_sid["1102"].price_usd == Decimal("0.4500")
+        assert by_sid["1101"].profit_margin_percent == Decimal("50.0000")
+        created2, updated2 = await PartnerCatalogService.publish_group(
+            session, provider, services, sub.id, Decimal("100")
+        )
+        await session.commit()
+        assert created2 == 0
+        assert updated2 == 2
+        refreshed = (
+            await session.execute(select(Product).where(Product.provider_service_id == "1101"))
+        ).scalar_one()
+        assert refreshed.price_usd == Decimal("0.4000")

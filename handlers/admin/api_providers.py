@@ -578,7 +578,7 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
     if is_partner_v1_provider(provider):
         text += (
             "\n\n⚠️ <b>لا تسحب الكل.</b>\n"
-            "اضغط «اختيار خدمة واحدة» واختر النوع ثم الخدمة ثم القسم عندك."
+            "اضغط «سحب قسم بنسبة ربح» واختر النوع ثم قسم الصديق ثم قسمك ثم النسبة."
         )
         markup = ask_sync_now_kb(provider.id, partner=True)
     else:

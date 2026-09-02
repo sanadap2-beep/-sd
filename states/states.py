@@ -263,6 +263,7 @@ class AdminPulledServicesStates(StatesGroup):
 
 class AdminPartnerPickStates(StatesGroup):
     waiting_sell_price = State()
+    waiting_margin = State()
 
 
 class AdminApiProviderStates(StatesGroup):
