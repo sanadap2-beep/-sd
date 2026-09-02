@@ -422,13 +422,33 @@ async def aprov_custom_currency_received(message: Message, state: FSMContext, se
 async def _show_summary_and_test(message: Message, state: FSMContext):
     """يعرض ملخص البيانات وزر اختبار الاتصال."""
     data = await state.get_data()
+    required = (
+        "protocol_type",
+        "provider_type",
+        "name",
+        "api_url",
+        "api_key",
+        "currency",
+        "rate_to_usd",
+    )
+    missing = [key for key in required if not data.get(key)]
+    if missing:
+        await message.answer(
+            "⚠️ انتهت جلسة إضافة المزود أو نقصت بيانات الخطوة السابقة.\n"
+            "ابدأ إضافة المزود من جديد من قائمة المزودين.",
+            reply_markup=admin_back_kb(),
+        )
+        await state.clear()
+        return
 
+    api_url = str(data["api_url"])
+    url_display = api_url if len(api_url) <= 50 else api_url[:50] + "..."
     text = (
         "📋 <b>ملخص بيانات المزود</b>\n\n"
-        f"🔌 البروتوكول: <b>{data['protocol_type'].upper()}</b>\n"
+        f"🔌 البروتوكول: <b>{str(data['protocol_type']).upper()}</b>\n"
         f"📁 النوع: <b>{data['provider_type']}</b>\n"
         f"📝 الاسم: <b>{data['name']}</b>\n"
-        f"🔗 URL: <code>{data['api_url'][:50]}...</code>\n"
+        f"🔗 URL: <code>{url_display}</code>\n"
         f"💱 العملة: <b>{data['currency']}</b>\n"
         f"💵 سعر الصرف: 1 {data['currency']} = "
         f"{data['rate_to_usd']} USD\n\n"
