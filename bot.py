@@ -21,7 +21,7 @@ from middlewares.user_middleware import UserMiddleware
 from middlewares.subscription_middleware import SubscriptionMiddleware
 from middlewares.state_reset_middleware import StateResetMiddleware
 from middlewares.throttling import GlobalThrottlingMiddleware
-from middlewares.error_middleware import ErrorReportingMiddleware
+from middlewares.error_middleware import ErrorReportingMiddleware, install_asyncio_exception_handler
 
 from handlers import (
     start,
@@ -97,6 +97,9 @@ from handlers.admin import (
     notifications as admin_notifications,
     sponsored_ads as admin_sponsored_ads,
     special_offers as admin_special_offers,
+    pulled_services as admin_pulled_services,
+    ledger as admin_ledger,
+    partner_catalog as admin_partner_catalog,
 )
 
 from tasks.order_monitor import (
@@ -201,11 +204,14 @@ def register_routers():
     dp.include_router(admin_pricing.router)
     dp.include_router(admin_providers.router)
     dp.include_router(admin_stats.router)
+    dp.include_router(admin_ledger.router)
     dp.include_router(admin_settings.router)
     dp.include_router(admin_support.router)
     dp.include_router(admin_categories.router)
     dp.include_router(admin_products.router)
     dp.include_router(admin_api_providers.router)
+    dp.include_router(admin_pulled_services.router)
+    dp.include_router(admin_partner_catalog.router)
     dp.include_router(admin_audit.router)
     dp.include_router(admin_health.router)
     dp.include_router(admin_inventory.router)
@@ -533,6 +539,7 @@ async def main():
 
     register_middlewares()
     register_routers()
+    install_asyncio_exception_handler(bot)
     scheduler = await start_scheduler()
 
     logger.info("🚀 البوت يعمل الآن...")

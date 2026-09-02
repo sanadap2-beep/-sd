@@ -19,7 +19,7 @@ from database.models import (
     UnifiedOrder,
     UnifiedOrderStatus,
 )
-from protocols.base import ProtocolError
+from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.catalog_routing_service import CatalogRoutingService
@@ -30,6 +30,7 @@ from services.gamification_service import GamificationService
 from services.input_validation_service import InputValidationError, InputValidationService
 from services.inventory_service import InventoryError, InventoryService
 from services.loyalty_service import LoyaltyService
+from services.product_service import ProductService
 from services.promotion_service import PromotionService
 from services.tiered_pricing_service import TieredPricingService
 
@@ -62,9 +63,7 @@ class CheckoutService:
                 raise CheckoutError(
                     f"الكمية يجب أن تكون بين {product.min_quantity} و{product.max_quantity}."
                 )
-            total = product.price_usd * Decimal(str(quantity)) / Decimal(str(product.min_quantity))
-        else:
-            total = product.price_usd
+        total = ProductService.calculate_order_total(product, quantity)
         return total.quantize(Decimal("0.0001"))
 
     @staticmethod

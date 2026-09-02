@@ -104,6 +104,30 @@ class ProtocolInvalidServiceError(ProtocolError):
     pass
 
 
+def is_insufficient_funds_error(error: object) -> bool:
+    """Detect provider-side 'not enough funds' messages across SMM panels."""
+    text = str(error or "").lower().replace("_", " ").replace("-", " ")
+    needles = (
+        "insufficient",
+        "not enough fund",
+        "not enough balance",
+        "no enough fund",
+        "balance is too low",
+        "low balance",
+        "out of fund",
+        "not enough money",
+        "not enough credit",
+    )
+    return any(needle in text for needle in needles)
+
+
+def is_invalid_service_error(error: object) -> bool:
+    text = str(error or "").lower().replace("_", " ").replace("-", " ")
+    return "service" in text and (
+        "not found" in text or "invalid" in text or "disabled" in text
+    )
+
+
 # ══════════════ Order Status Mapping ══════════════
 
 ORDER_STATUS_MAPPING = {

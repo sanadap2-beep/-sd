@@ -157,24 +157,31 @@ class ProductService:
         """
         يحسب السعر الإجمالي للطلب بناءً على الكمية ونوع العرض.
 
-        Args:
-            product: المنتج
-            quantity: الكمية المطلوبة
-
-        Returns:
-            السعر الإجمالي بالدولار
+        لقسم الرشق (requires_quantity): السعر المخزّن هو سعر الكمية 1000
+        ما لم يُضبط العرض صراحةً على per_min_quantity أو ثابت.
         """
-        if product.display_type == ProductDisplayType.PER_1000:
-            total = product.price_usd * Decimal(str(quantity)) / Decimal("1000")
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError):
+            quantity = 1
+        if quantity < 1:
+            quantity = 1
 
-        elif product.display_type == ProductDisplayType.PER_MIN_QUANTITY:
-            if product.min_quantity <= 0:
-                return product.price_usd
-            multiplier = Decimal(str(quantity)) / Decimal(str(product.min_quantity))
-            total = product.price_usd * multiplier
+        price = Decimal(str(product.price_usd or 0))
+        if not getattr(product, "requires_quantity", False):
+            return price.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
+        display = getattr(product, "display_type", ProductDisplayType.PER_1000)
+        if display == ProductDisplayType.PER_MIN_QUANTITY:
+            min_qty = int(product.min_quantity or 0)
+            if min_qty <= 0:
+                return price.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+            total = price * Decimal(str(quantity)) / Decimal(str(min_qty))
+        elif display == ProductDisplayType.FIXED_TOTAL:
+            total = price
         else:
-            total = product.price_usd
+            # PER_1000 — سعر الأدمن هو للكمية 1000 وليس للحد الأدنى (غالباً 100).
+            total = price * Decimal(str(quantity)) / Decimal("1000")
 
         return total.quantize(
             Decimal("0.0001"),

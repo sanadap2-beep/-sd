@@ -257,6 +257,15 @@ class AdminProductStates(StatesGroup):
 # ══════════════ الأدمن - المزودين ══════════════
 
 
+class AdminPulledServicesStates(StatesGroup):
+    waiting_sell_price = State()
+
+
+class AdminPartnerPickStates(StatesGroup):
+    waiting_sell_price = State()
+    waiting_margin = State()
+
+
 class AdminApiProviderStates(StatesGroup):
     waiting_protocol_type = State()
     waiting_name = State()

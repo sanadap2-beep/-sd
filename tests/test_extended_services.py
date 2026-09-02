@@ -78,7 +78,7 @@ async def test_cart_reseller_tiered_pricing_and_receipt():
         await session.refresh(product)
         item = await CartService.add(session, user.id, product.id, "https://example.com", 100)
         assert item.quantity == 100
-        assert CartService.total(await CartService.get_items(session, user.id)) == Decimal("2.0000")
+        assert CartService.total(await CartService.get_items(session, user.id)) == Decimal("0.2000")
         discount, _ = await TieredPricingService.discount_for(
             session, user.id, product, Decimal("2"), 1000
         )

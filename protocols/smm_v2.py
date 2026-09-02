@@ -42,6 +42,8 @@ from protocols.base import (
     ProtocolConnectionError,
     ProtocolInsufficientFundsError,
     ProtocolInvalidServiceError,
+    is_insufficient_funds_error,
+    is_invalid_service_error,
     normalize_order_status,
 )
 
@@ -116,23 +118,22 @@ class SmmV2Protocol(BaseProtocol):
                     if isinstance(result, dict):
                         error = result.get("error")
                         if error:
-                            error_str = str(error).lower()
-                            if "insufficient" in error_str or (
-                                "balance" in error_str and "not enough" in error_str
-                            ):
+                            if is_insufficient_funds_error(error):
                                 raise ProtocolInsufficientFundsError(str(error))
-                            if "service" in error_str and (
-                                "not found" in error_str or "invalid" in error_str
-                            ):
+                            if is_invalid_service_error(error):
                                 raise ProtocolInvalidServiceError(str(error))
                             raise ProtocolError(str(error))
 
                     return result
 
+        except ProtocolError:
+            raise
+        except TimeoutError as e:
+            raise ProtocolConnectionError(
+                f"انتهت مهلة الاتصال ({self.timeout} ثانية)"
+            ) from e
         except aiohttp.ClientError as e:
-            raise ProtocolConnectionError(f"خطأ اتصال: {e}")
-        except aiohttp.ClientTimeout:
-            raise ProtocolConnectionError(f"انتهت مهلة الاتصال ({self.timeout} ثانية)")
+            raise ProtocolConnectionError(f"خطأ اتصال: {e}") from e
 
     async def test_connection(self) -> bool:
         """

@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from database.models import (
     ApiProvider,
+    ProductDisplayType,
     ProductFulfillmentType,
     ProductStatus,
     ProviderService,
@@ -116,7 +117,11 @@ async def prod_add_start(callback: CallbackQuery, state: FSMContext):
 @router.message(AdminProductStates.waiting_name)
 async def prod_name_received(message: Message, state: FSMContext):
     await state.update_data(prod_name=message.text.strip())
-    await message.answer("💰 أرسل سعر البيع بالدولار:\n(مثال: 1.50)")
+    await message.answer(
+        "💰 أرسل سعر البيع بالدولار:\n"
+        "(مثال: 1.50)\n\n"
+        "📌 لقسم الرشق: هذا السعر هو <b>لكل 1000</b> وليس لكل 100."
+    )
     await state.set_state(AdminProductStates.waiting_price)
 
 
@@ -456,6 +461,11 @@ async def _save_product(message, state, callback=None):
             min_quantity=data.get("min_quantity", 1),
             max_quantity=data.get("max_quantity", 1),
             estimated_time=data.get("estimated_time"),
+            display_type=(
+                ProductDisplayType.PER_1000
+                if data.get("requires_quantity")
+                else ProductDisplayType.FIXED_TOTAL
+            ),
         )
 
     target = callback.message if callback else message
@@ -496,7 +506,7 @@ async def prod_view(callback: CallbackQuery, session):
         f"📦 <b>{product.name_ar}</b>\n"
         f"🆔 ID: <code>{product.id}</code> | ربط زر: <code>prod:{product.id}</code>\n\n"
         f"الحالة: {status}\n"
-        f"💰 سعر البيع: {product.price_usd}$\n"
+        f"💰 سعر البيع: {product.price_usd}${' / 1000' if product.requires_quantity else ''}\n"
         f"💵 سعر التكلفة: {product.cost_price_usd}$\n"
         f"📈 الربح: {product.price_usd - product.cost_price_usd}$\n"
         f"🔌 المزود: {provider_name}\n"

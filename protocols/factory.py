@@ -24,6 +24,7 @@ from protocols.generic_json import (
     CustomJsonProtocol,
     GamesGenericProtocol,
 )
+from protocols.partner_v1 import PartnerV1Protocol, is_partner_v1_config
 from protocols.smm_v2 import SmmV2Protocol
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,13 @@ class ProtocolFactory:
         Raises:
             ProtocolError: إذا كان النوع غير مدعوم.
         """
+        if is_partner_v1_config(custom_config):
+            return PartnerV1Protocol(
+                api_url=api_url,
+                api_key=api_key,
+                custom_config=custom_config,
+            )
+
         protocol_class = cls._protocols.get(protocol_type)
         if not protocol_class:
             available = ", ".join(p.value for p in cls._protocols.keys())

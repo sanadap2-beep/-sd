@@ -172,18 +172,27 @@ def test_connection_kb() -> InlineKeyboardMarkup:
 # ══════════════ سؤال سحب الخدمات ══════════════
 
 
-def ask_sync_now_kb(provider_id: int) -> InlineKeyboardMarkup:
+def ask_sync_now_kb(provider_id: int, partner: bool = False) -> InlineKeyboardMarkup:
     """يسأل الأدمن هل يريد سحب الخدمات الآن."""
     b = InlineKeyboardBuilder()
-
-    b.button(
-        text="✅ نعم، اسحب الخدمات الآن",
-        callback_data=f"admin:aprov_sync:{provider_id}",
-    )
-    b.button(
-        text="⏰ لاحقاً",
-        callback_data=f"admin:aprov_view:{provider_id}",
-    )
+    if partner:
+        b.button(
+            text="📥 سحب قسم بنسبة ربح",
+            callback_data=f"pk:h:{provider_id}",
+        )
+        b.button(
+            text="📋 فتح المزود",
+            callback_data=f"admin:aprov_view:{provider_id}",
+        )
+    else:
+        b.button(
+            text="✅ نعم، اسحب الخدمات الآن",
+            callback_data=f"admin:aprov_sync:{provider_id}",
+        )
+        b.button(
+            text="⏰ لاحقاً",
+            callback_data=f"admin:aprov_view:{provider_id}",
+        )
     b.adjust(1)
     return b.as_markup()
 
@@ -215,6 +224,10 @@ def provider_detail_kb(
     b.button(
         text=(f"🔄 مزامنة الخدمات ({provider.total_services or 0})"),
         callback_data=f"admin:aprov_sync:{provider.id}",
+    )
+    b.button(
+        text="📥 سحب قسم بنسبة ربح",
+        callback_data=f"pk:h:{provider.id}",
     )
     b.button(
         text="📋 عرض الخدمات",
@@ -251,7 +264,7 @@ def provider_detail_kb(
         callback_data="admin:api_providers",
     )
 
-    b.adjust(1, 2, 1, 2, 2, 1, 1)
+    b.adjust(1, 2, 1, 1, 1, 2, 2, 1, 1)
     return b.as_markup()
 
 
@@ -412,6 +425,12 @@ def sync_in_progress_kb(
 # ══════════════ قوالب المزود المخصص بدون كتابة JSON ══════════════
 
 CUSTOM_PROVIDER_CONFIG_PRESETS = {
+    "tlbkenne": {
+        "engine": "partner_v1",
+        "auth": "bearer",
+        "request_format": "json",
+        "suggested_api_url": "http://169.58.216.253:8888/api/v1",
+    },
     "store_rest": {
         "auth": "bearer",
         "request_format": "json",
@@ -492,6 +511,7 @@ CUSTOM_PROVIDER_CONFIG_PRESETS = {
 
 def custom_provider_presets_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne")
     b.button(text="🧙 معالج ربط بدون JSON", callback_data="admin:aprov_custom_wizard")
     b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest")
     b.button(text="🔌 JSON بسيط", callback_data="admin:aprov_custom_preset:simple_json")
