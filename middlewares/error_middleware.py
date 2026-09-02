@@ -14,6 +14,7 @@ import traceback
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy.exc import MissingGreenlet
 
 from config import settings
 
@@ -27,6 +28,28 @@ _BENIGN_TELEGRAM_ERRORS = (
     "query is too old and response timeout expired",
     "QUERY_EXPIRED",
 )
+
+# عدد الإطارات المرسلة للأدمن من الـ traceback.
+#
+# يجب أن تكون سالبة: traceback.format_exc(limit=N) بقيمة موجبة يأخذ أول N إطارات
+# (أي سلسلة الميدلوير نفسها في كل مرة) ويقطع السبب الحقيقي، بينما القيمة السالبة
+# تأخذ آخر N إطارات وهي الأقرب لمكان الخطأ.
+# انظر StackSummary._extract_from_extended_frame_gen في CPython:
+#   if limit >= 0: frame_gen = itertools.islice(frame_gen, limit)
+#   else:          frame_gen = collections.deque(frame_gen, maxlen=-limit)
+TRACEBACK_FRAME_LIMIT = 25
+
+
+def _error_hint(exc: BaseException) -> str | None:
+    """تلميح تشخيصي للأخطاء التي سببها معروف ويصعب قراءته من الرسالة وحدها."""
+    if isinstance(exc, MissingGreenlet) or "MissingGreenlet" in type(exc).__name__:
+        return (
+            "🔎 <b>السبب:</b> وصول إلى علاقة SQLAlchemy غير محمّلة "
+            "(lazy load) خارج سياق await.\n"
+            "الحل: حمّل العلاقة مسبقاً بـ <code>selectinload(...)</code> في الاستعلام، "
+            "أو اجلب الكائن المرتبط باستعلام مستقل بدل <code>obj.relationship</code>."
+        )
+    return None
 
 
 def _is_benign_telegram_error(exc: Exception) -> bool:
@@ -64,14 +87,17 @@ class ErrorReportingMiddleware(BaseMiddleware):
             event_name = type(event).__name__
             callback_data = getattr(event, "data", None) if isinstance(event, CallbackQuery) else None
             text = getattr(event, "text", None) if isinstance(event, Message) else None
-            tb = traceback.format_exc(limit=6)
+            tb = traceback.format_exc(limit=-TRACEBACK_FRAME_LIMIT)
+            hint = _error_hint(exc)
+            hint_line = f"{hint}\n" if hint else ""
             admin_text = (
                 "🚨 <b>خطأ غير متوقع في البوت</b>\n\n"
                 f"الحدث: <code>{html.escape(event_name)}</code>\n"
                 f"المستخدم: <code>{getattr(user, 'id', '—')}</code> @{html.escape(getattr(user, 'username', '') or '-')}\n"
                 f"Callback: <code>{html.escape(str(callback_data or '—'))}</code>\n"
                 f"Text: <code>{html.escape(str(text or '—')[:200])}</code>\n"
-                f"الخطأ: <code>{html.escape(str(exc)[:500])}</code>\n\n"
+                f"الخطأ: <code>{html.escape(str(exc)[:500])}</code>\n"
+                f"{hint_line}\n"
                 f"<pre>{html.escape(tb[-2500:])}</pre>"
             )
             if bot and settings.ADMIN_NOTIFY_CHAT_ID:

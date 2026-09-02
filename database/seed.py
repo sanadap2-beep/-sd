@@ -8,6 +8,7 @@
 6) خدمات أرقام افتراضية.
 """
 
+import unicodedata
 from datetime import datetime
 
 from sqlalchemy import inspect, select, text
@@ -179,20 +180,63 @@ DEFAULT_CHALLENGES = [
 ]
 
 
-# تطبيقات قسم الرشق (SMM): الاسم + إيموجي حديث لكل تطبيق.
+# تطبيقات قسم الرشق (SMM): الاسم المعتمد + الإيموجي + التهجئات القديمة.
+#
+# كل مدخل: (الاسم المعتمد، الإيموجي، تهجئات/أسماء قديمة تُدمج في هذا الاسم).
+# التهجئات القديمة موجودة لأن قواعد البيانات المزروعة قبل هذا الضبط تحمل أسماءً
+# مثل «انستغرام» أو «واتس اب»، وبدونها كان الزرع يُنشئ صفاً مكرراً للتطبيق نفسه.
+#
 # تُعرض كأزرار أقسام فرعية، ويمكن للأدمن إضافة/تعديل/حذف أي تطبيق من اللوحة.
-SMM_APPS = [
-    ("تيك توك", "🎵"),
-    ("إنستغرام", "📸"),
-    ("يوتيوب", "▶️"),
-    ("تيليجرام", "✈️"),
-    ("فيسبوك", "📘"),
-    ("واتساب", "💬"),
-    ("سناب شات", "👻"),
-    ("إكس (تويتر)", "🐦"),
-    ("ثريدز", "🧵"),
-    ("سبوتيفاي", "🎧"),
+SMM_APPS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("تيك توك", "🎵", ("تيكتوك", "تك توك", "tik tok", "tiktok")),
+    ("إنستغرام", "📸", ("انستغرام", "إنستقرام", "انستقرام", "instagram")),
+    ("يوتيوب", "▶️", ("يوتيب", "يوتيوب", "youtube")),
+    ("تيليجرام", "✈️", ("تليجرام", "تلغرام", "telegram")),
+    ("فيسبوك", "📘", ("فيس بوك", "فيس بوك", "facebook")),
+    # واتساب: الفقاعة الخضراء هي هوية التطبيق، و💬 عامة لأي دردشة.
+    ("واتساب", "🟢", ("واتس اب", "واتساب", "واتس آب", "whats app", "whatsapp")),
+    ("سناب شات", "👻", ("سنابشات", "سناب شات", "سناب", "snapchat")),
+    ("إكس (تويتر)", "🐦", ("إكس", "اكس", "تويتر", "x", "twitter")),
+    ("ثريدز", "🧵", ("threads",)),
+    ("سبوتيفاي", "🎧", ("سبوتيفي", "spotify")),
 ]
+
+
+def _normalize_app_name(value: str | None) -> str:
+    """يوحّد تهجئة اسم التطبيق حتى تتطابق «انستغرام» مع «إنستغرام».
+
+    يزيل التشكيل والتطويل والمسافات، ويوحّد الهمزات والتاء المربوطة والألف
+    المقصورة، لأن أسماء الأقسام الفرعية أُدخلت يدوياً بأكثر من شكل.
+    """
+    if not value:
+        return ""
+    text = unicodedata.normalize("NFKC", value).strip().lower()
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    replacements = {
+        "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا",
+        "ة": "ه", "ى": "ي", "ؤ": "و", "ئ": "ي",
+        "ـ": "", "\u200c": "", "\u200d": "", "\ufeff": "",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return "".join(text.split())
+
+
+# خريطة: الاسم الموحّد ← ترتيب التطبيق المعتمد في SMM_APPS.
+_SMM_APP_INDEX: dict[str, int] = {}
+for _index, (_app_name, _app_emoji, _aliases) in enumerate(SMM_APPS):
+    _SMM_APP_INDEX[_normalize_app_name(_app_name)] = _index
+    for _alias in _aliases:
+        _SMM_APP_INDEX.setdefault(_normalize_app_name(_alias), _index)
+
+
+def match_smm_app(name: str | None) -> tuple[int, str, str] | None:
+    """يرجع (الترتيب، الاسم المعتمد، الإيموجي) لأي تهجئة معروفة لتطبيق رشق."""
+    index = _SMM_APP_INDEX.get(_normalize_app_name(name))
+    if index is None:
+        return None
+    canonical_name, canonical_emoji, _ = SMM_APPS[index]
+    return index, canonical_name, canonical_emoji
 
 DEFAULT_STORE_CATEGORIES = [
     {
@@ -200,7 +244,9 @@ DEFAULT_STORE_CATEGORIES = [
         "emoji": "🚀",
         "type": CategoryType.SMM,
         "sort_order": 10,
-        "subcategories": [{"name": name, "emoji": emoji} for name, emoji in SMM_APPS],
+        "subcategories": [
+            {"name": name, "emoji": emoji} for name, emoji, _aliases in SMM_APPS
+        ],
     },
     {
         "name_ar": "قسم شحن الألعاب",
@@ -442,9 +488,14 @@ async def init_db() -> None:
                     )
             session.add(Setting(key="fixed_store_categories_seeded", value="true"))
 
-        # ── ضمان وجود تطبيقات قسم الرشق العشرة (تحديث تراكمي) ──
-        # يعمل حتى لو كانت الأقسام مزروعة مسبقاً: يضيف التطبيقات الجديدة فقط
-        # دون المساس بما عدّله الأدمن، ودون إنشاء منتجات تلقائياً.
+        # ── ضبط تطبيقات قسم الرشق العشرة (تحديث تراكمي وتصحيحي) ──
+        # يعمل حتى لو كانت الأقسام مزروعة مسبقاً:
+        #   1) يصحّح إيموجي الصفوف الموجودة (الزرع القديم كان ينسخ إيموجي القسم
+        #      الرئيسي 📈 على كل الأقسام الفرعية، فكانت كلها بلا إيموجي خاص).
+        #   2) يوحّد التهجئات القديمة (انستغرام ← إنستغرام) بدل تكرار التطبيق.
+        #   3) يضيف التطبيقات الناقصة فقط.
+        # لا يلمس أي تطبيق أضافه الأدمن باسم خارج هذه القائمة، ولا يحذف شيئاً،
+        # ولا ينشئ منتجات تلقائياً.
         smm_cat_result = await session.execute(
             select(Category).where(Category.type == CategoryType.SMM)
         )
@@ -453,19 +504,37 @@ async def init_db() -> None:
             existing_result = await session.execute(
                 select(SubCategory).where(SubCategory.category_id == smm_cat.id)
             )
-            existing_names = {sc.name_ar for sc in existing_result.scalars().all()}
-            for index, (app_name, app_emoji) in enumerate(SMM_APPS, start=1):
-                if app_name not in existing_names:
-                    session.add(
-                        SubCategory(
-                            category_id=smm_cat.id,
-                            name_ar=app_name,
-                            emoji=app_emoji,
-                            description=f"منتجات {app_name}",
-                            sort_order=index * 10,
-                            is_active=True,
-                        )
+            existing_subs = list(existing_result.scalars().all())
+
+            matched: set[int] = set()
+            for sub in existing_subs:
+                hit = match_smm_app(sub.name_ar)
+                if hit is None:
+                    continue  # تطبيق مخصص من الأدمن: يُترك كما هو
+                index, canonical_name, canonical_emoji = hit
+                if index in matched:
+                    continue  # التطبيق موجود مسبقاً بصف آخر: لا نلمس المكرر
+                matched.add(index)
+                if sub.name_ar != canonical_name:
+                    sub.name_ar = canonical_name
+                if sub.emoji != canonical_emoji:
+                    sub.emoji = canonical_emoji
+                if not sub.description:
+                    sub.description = f"منتجات {canonical_name}"
+
+            for index, (app_name, app_emoji, _aliases) in enumerate(SMM_APPS, start=1):
+                if (index - 1) in matched:
+                    continue
+                session.add(
+                    SubCategory(
+                        category_id=smm_cat.id,
+                        name_ar=app_name,
+                        emoji=app_emoji,
+                        description=f"منتجات {app_name}",
+                        sort_order=index * 10,
+                        is_active=True,
                     )
+                )
 
         # ── زرع قوالب الإشعارات الافتراضية ──
         from services.notification_center_service import NotificationCenterService
