@@ -149,8 +149,8 @@ async def aprov_protocol_selected(callback: CallbackQuery, state: FSMContext):
         return
 
     await callback.message.edit_text(
-        f"✅ البروتوكول: <b>{protocol_type.value.upper()}</b>\\n\\n"
-        "الخطوة 2️⃣ من 6️⃣\\n\\n"
+        f"✅ البروتوكول: <b>{protocol_type.value.upper()}</b>\n\n"
+        "الخطوة 2️⃣ من 6️⃣\n\n"
         "اختر نوع المزود:",
         reply_markup=select_provider_type_kb(),
     )
@@ -283,7 +283,7 @@ async def aprov_custom_config_received(
 
     await state.update_data(custom_config=json.dumps(custom_config, ensure_ascii=False))
     await message.answer(
-        "✅ تم حفظ إعدادات المزود المخصص.\\n\\nالخطوة 2️⃣ من 6️⃣\\n\\nاختر نوع المزود:",
+        "✅ تم حفظ إعدادات المزود المخصص.\n\nالخطوة 2️⃣ من 6️⃣\n\nاختر نوع المزود:",
         reply_markup=select_provider_type_kb(),
     )
     await state.set_state(AdminApiProviderStates.waiting_type)
@@ -397,12 +397,6 @@ async def aprov_currency_selected(callback: CallbackQuery, state: FSMContext, se
 
     await state.update_data(currency=currency_code)
 
-    rate = await CurrencyService.get_rate_to_usd(state.update_data(waiting_custom_currency=True)
-        await callback.answer()
-        return
-
-    await state.update_data(currency=currency_code)
-
     rate = await CurrencyService.get_rate_to_usd(currency_code, session)
     await state.update_data(rate_to_usd=str(rate))
 
@@ -471,9 +465,9 @@ async def _show_summary_and_test(message: Message, state: FSMContext):
         text,
         reply_markup=test_connection_kb(),
     )
-    # ══════════════════════════════════════════════
 
 
+# ══════════════════════════════════════════════
 # ══════════════ اختبار الاتصال + الحفظ ══════════════
 # ══════════════════════════════════════════════
 
