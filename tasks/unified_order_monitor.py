@@ -164,10 +164,31 @@ async def _handle_completed(session, order, user, product_name, notifier):
     )
     await GamificationService.progress_event(session, user.id, "purchase")
 
+    extra = ""
+    try:
+        raw = json.loads(order.result_data or "{}")
+        if isinstance(raw, dict):
+            nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+            code = (
+                nested.get("code")
+                or nested.get("sms")
+                or nested.get("sms_code")
+                or raw.get("code")
+                or raw.get("sms")
+            )
+            phone = nested.get("phone") or nested.get("number") or raw.get("phone")
+            if phone:
+                extra += f"\n📞 الرقم: <code>{phone}</code>"
+            if code:
+                extra += f"\n🔑 الكود: <code>{code}</code>"
+    except Exception:
+        extra = ""
     await notifier.notify_order_completed(
         user_telegram_id=user.telegram_id,
         product_name=product_name,
-        result_text=(f"✅ تم تنفيذ طلبك بنجاح!\n🆔 رقم الطلب: #{order.id}"),
+        result_text=(
+            f"✅ تم تنفيذ طلبك بنجاح!\n🆔 رقم الطلب: #{order.id}{extra}"
+        ),
     )
 
     await notifier.notify_successful_unified_order(

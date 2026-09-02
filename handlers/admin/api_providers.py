@@ -338,8 +338,14 @@ async def aprov_name_received(message: Message, state: FSMContext):
 
 @router.message(AdminApiProviderStates.waiting_api_url)
 async def aprov_url_received(message: Message, state: FSMContext):
-    url = message.text.strip()
-
+    url = (message.text or "").strip()
+    data = await state.get_data()
+    if url in {".", "-", "افتراضي", "default"}:
+        try:
+            cfg = json.loads(data.get("custom_config") or "{}")
+            url = str(cfg.get("suggested_api_url") or "").strip()
+        except Exception:
+            url = ""
     if not url.startswith(("http://", "https://")):
         await message.answer("⚠️ يجب أن يبدأ الرابط بـ http:// أو https://")
         return
@@ -386,6 +392,12 @@ async def aprov_currency_selected(callback: CallbackQuery, state: FSMContext, se
         )
         await state.set_state(AdminApiProviderStates.waiting_currency)
         await state.update_data(waiting_custom_currency=True)
+        await callback.answer()
+        return
+
+    await state.update_data(currency=currency_code)
+
+    rate = await CurrencyService.get_rate_to_usd(state.update_data(waiting_custom_currency=True)
         await callback.answer()
         return
 
@@ -561,11 +573,21 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
     )
     if balance_usd:
         text += f"\n💵 يعادل: <b>{balance_usd}$</b>"
-    text += "\n\n<b>هل تريد سحب خدمات المزود الآن؟</b>\nقد يستغرق وقتاً إذا كانت الخدمات كثيرة."
+    from protocols.partner_v1 import is_partner_v1_provider
+
+    if is_partner_v1_provider(provider):
+        text += (
+            "\n\n⚠️ <b>لا تسحب الكل.</b>\n"
+            "اضغط «اختيار خدمة واحدة» واختر النوع ثم الخدمة ثم القسم عندك."
+        )
+        markup = ask_sync_now_kb(provider.id, partner=True)
+    else:
+        text += "\n\n<b>هل تريد سحب خدمات المزود الآن؟</b>\nقد يستغرق وقتاً إذا كانت الخدمات كثيرة."
+        markup = ask_sync_now_kb(provider.id)
 
     await test_msg.edit_text(
         text,
-        reply_markup=ask_sync_now_kb(provider.id),
+        reply_markup=markup,
     )
     await state.clear()
 

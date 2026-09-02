@@ -99,6 +99,7 @@ from handlers.admin import (
     special_offers as admin_special_offers,
     pulled_services as admin_pulled_services,
     ledger as admin_ledger,
+    partner_catalog as admin_partner_catalog,
 )
 
 from tasks.order_monitor import (
@@ -210,6 +211,7 @@ def register_routers():
     dp.include_router(admin_products.router)
     dp.include_router(admin_api_providers.router)
     dp.include_router(admin_pulled_services.router)
+    dp.include_router(admin_partner_catalog.router)
     dp.include_router(admin_audit.router)
     dp.include_router(admin_health.router)
     dp.include_router(admin_inventory.router)
