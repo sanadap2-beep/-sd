@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import SubCategory, Product
+from services.smm_catalog import button_label
 
 
 def sub_categories_kb(
@@ -17,7 +18,7 @@ def sub_categories_kb(
     b = InlineKeyboardBuilder()
     for sub in sub_categories:
         b.button(
-            text=f"{sub.emoji} {sub.name_ar}",
+            text=button_label(sub.name_ar, sub.emoji),
             callback_data=f"subcat:{sub.id}",
         )
     b.button(

@@ -220,8 +220,6 @@ class NotificationService:
         """
         إرسال إشعار تفعيل رقم ناجح بالقالب المطلوب مع زر شراء مباشر.
         """
-        from config import settings
-
         phone = str(order.phone_number or "")
         if len(phone) > 6:
             masked_phone = phone[:6] + "×××"
@@ -272,19 +270,27 @@ class NotificationService:
             f"➖➖➖➖➖➖"
         )
 
-        bot_username = settings.BOT_USERNAME.lstrip("@")
-        deep_link = f"https://t.me/{bot_username}?start=buy_{order.service}__{order.country_code}"
-        
-        reply_markup = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=f"⚡ اطلب رقم {service_name} ({country_name})",
-                        url=deep_link,
-                    )
-                ]
-            ]
+        from services.bot_identity import resolve_bot_username
+
+        bot_username = await resolve_bot_username(self.bot)
+        deep_link = (
+            f"https://t.me/{bot_username}?start=buy_{order.service}__{order.country_code}"
+            if bot_username
+            else ""
         )
+
+        reply_markup = None
+        if deep_link:
+            reply_markup = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=f"⚡ اطلب رقم {service_name} ({country_name})",
+                            url=deep_link,
+                        )
+                    ]
+                ]
+            )
 
         await self.notify_public_channel(text, reply_markup=reply_markup)
 

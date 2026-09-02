@@ -1020,7 +1020,24 @@ async def _ensure_provider_category(session, provider: ApiProvider) -> Category:
 
 
 async def _ensure_service_subcategory(session, category: Category, service: ProviderService) -> SubCategory:
-    name = (service.category or service.service_type or "منتجات عامة").strip()[:64]
+    from services.smm_catalog import resolve_smm_app
+
+    raw_name = (service.category or service.service_type or "منتجات عامة").strip()
+    matched = None
+    if category.type == CategoryType.SMM:
+        matched = (
+            resolve_smm_app(service.category or "")
+            or resolve_smm_app(service.service_type or "")
+            or resolve_smm_app(service.name or "")
+        )
+
+    if matched is not None:
+        name = matched.name_ar
+        emoji = matched.emoji
+    else:
+        name = (raw_name or "منتجات عامة")[:64]
+        emoji = category.emoji
+
     result = await session.execute(
         select(SubCategory).where(
             SubCategory.category_id == category.id,
@@ -1029,11 +1046,27 @@ async def _ensure_service_subcategory(session, category: Category, service: Prov
     )
     subcategory = result.scalar_one_or_none()
     if subcategory is not None:
+        if matched is not None:
+            subcategory.name_ar = matched.name_ar
+            subcategory.emoji = matched.emoji
         return subcategory
+
+    if matched is not None:
+        existing_result = await session.execute(
+            select(SubCategory).where(SubCategory.category_id == category.id)
+        )
+        for sub in existing_result.scalars().all():
+            haystack = f"{sub.emoji or ''} {sub.name_ar or ''}"
+            resolved = resolve_smm_app(haystack) or resolve_smm_app(sub.name_ar or "")
+            if resolved is not None and resolved.name_ar == matched.name_ar:
+                sub.name_ar = matched.name_ar
+                sub.emoji = matched.emoji
+                return sub
+
     subcategory = SubCategory(
         category_id=category.id,
         name_ar=name,
-        emoji=category.emoji,
+        emoji=emoji,
         description=f"منتجات {name}",
         is_active=True,
         sort_order=100,

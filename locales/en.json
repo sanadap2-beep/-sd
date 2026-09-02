@@ -106,7 +106,7 @@
   "gift_card": "🎁 <b>Gift card</b>\n\nIf you have a gift code, redeem it and its value will be added to your balance instantly.",
   "gift_redeem_prompt": "🎁 <b>Redeem a gift card</b>\n\nSend the card code:",
   "gift_redeemed": "✅ <b>Gift card redeemed!</b>\n\n💰 <b>{amount}$</b> has been added to your balance.",
-  "referral_card": "💎 <b>Referral program</b>\n\nShare the following link with your friends and earn rewards for everyone who joins and activates:\n\n🔗 <code>{link}</code>\n\n💰 Referral bonus: <b>{bonus}$</b> per new user\n📈 Commission from referrals' purchases: <b>{percent}%</b>\n\n👥 Your referrals: <b>{count}</b>",
+  "referral_card": "💎 <b>Referral program</b>\n\nShare the following link with your friends and earn rewards for everyone who joins and activates:\n\n🔗 {link}\n\nTap the link or the share button below. If you copy it, paste it as-is in Telegram.\n\n💰 Referral bonus: <b>{bonus}$</b> per new user\n📈 Commission from referrals' purchases: <b>{percent}%</b>\n\n👥 Your referrals: <b>{count}</b>",
   "loyalty_card": "🎁 <b>Loyalty & rewards</b>\n\nCurrent tier: {tier_emoji} <b>{tier}</b>\n💎 Points: <b>{points}</b>\n🔥 Daily check-in streak: <b>{streak} days</b>\n✨ Benefit: {benefit}\n⚡ Points multiplier: x{multiplier}\n\n{progress}\n\nEarn points from purchases and daily check-ins, then redeem them for usable balance.",
   "loyalty_progress": "📈 Progress toward {emoji} {tier}:\n{bar}\n{current} / {required} points",
   "loyalty_top_tier": "👑 You reached the highest tier!",
@@ -376,5 +376,8 @@
   "ux_account_412_9": "</code>\n📊 الكمية: ",
   "ux_account_412_10": "\n\nهل تريد تنفيذ الطلب مرة أخرى؟",
   "ux_account_450_11": "📊 لا يوجد لديك معاملات مالية بعد.",
-  "choose_country_priced": "Choose a country (sorted by lowest price 🟢)"
+  "choose_country_priced": "Choose a country (sorted by lowest price 🟢)",
+  "referral_share_button": "📤 Share link",
+  "referral_share_text": "Try this bot with me 💎",
+  "referral_link_unavailable": "⚠️ Could not build a referral link right now. Check that the bot username is configured, then try again."
 }

@@ -144,10 +144,68 @@ class DynamicService:
         # through AsyncSession would raise MissingGreenlet at render time.
         result = await session.execute(
             select(SubCategory)
-            .options(selectinload(SubCategory.products))
+            .options(
+                selectinload(SubCategory.products),
+                selectinload(SubCategory.category),
+            )
             .where(SubCategory.id == sub_category_id)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def find_subcategory_by_label(session, label: str) -> SubCategory | None:
+        """Resolve a reply-keyboard / typed label like ``تيك توك 🎵`` without lazy IO."""
+        from services.smm_catalog import normalize_label, resolve_smm_app
+
+        text = (label or "").strip()
+        if not text:
+            return None
+
+        result = await session.execute(
+            select(SubCategory)
+            .options(
+                selectinload(SubCategory.products),
+                selectinload(SubCategory.category),
+            )
+            .where(SubCategory.is_active.is_(True))
+        )
+        subs = list(result.scalars().unique().all())
+        if not subs:
+            return None
+
+        wanted = resolve_smm_app(text)
+        folded = normalize_label(text)
+
+        def _rank(sub: SubCategory) -> tuple[int, int]:
+            # Prefer the SMM (رشق) category when several rows share a name.
+            cat = sub.category
+            is_smm = int(getattr(getattr(cat, "type", None), "value", "") == "smm")
+            return (is_smm, -int(sub.sort_order or 0))
+
+        if wanted is not None:
+            matches = []
+            for sub in subs:
+                haystack = f"{sub.emoji or ''} {sub.name_ar or ''}"
+                resolved = resolve_smm_app(haystack) or resolve_smm_app(sub.name_ar or "")
+                if resolved is not None and resolved.name_ar == wanted.name_ar:
+                    matches.append(sub)
+            if matches:
+                matches.sort(key=_rank, reverse=True)
+                return matches[0]
+
+        exact = []
+        for sub in subs:
+            names = {
+                normalize_label(sub.name_ar or ""),
+                normalize_label(f"{sub.emoji or ''} {sub.name_ar or ''}"),
+                normalize_label(f"{sub.name_ar or ''} {sub.emoji or ''}"),
+            }
+            if folded in names:
+                exact.append(sub)
+        if exact:
+            exact.sort(key=_rank, reverse=True)
+            return exact[0]
+        return None
 
     @staticmethod
     async def create_sub_category(
