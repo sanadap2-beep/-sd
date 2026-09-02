@@ -84,9 +84,11 @@ function renderProducts() {
       <h3>${escapeHtml(product.name)}</h3>
       <p>${escapeHtml(product.description || "خدمة رقمية جاهزة للطلب")}</p>
       <div class="meta"><div><span class="price">${price}$</span>${promo ? `<span class="old">${product.price_usd}$</span>` : ""}</div><span class="rating">${product.rating ? `★ ${product.rating} (${product.reviews_count})` : "جديد"}</span></div>
-      <button class="buy">شراء عبر Telegram</button>
-      <button class="cart">🛒 أضف للسلة</button>
-      <button class="watch">🔔 مراقبة السعر والمخزون</button>
+      <div class="actions">
+        <button class="buy btn btn-green">شراء عبر Telegram</button>
+        <button class="cart btn btn-blue">🛒 أضف للسلة</button>
+        <button class="watch btn btn-ghost">🔔 مراقبة السعر والمخزون</button>
+      </div>
     `;
     card.querySelector(".buy").onclick = () => selectProduct(product);
     card.querySelector(".cart").onclick = () => addToCart(product);
