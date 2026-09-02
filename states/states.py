@@ -243,6 +243,7 @@ class AdminProductStates(StatesGroup):
     waiting_provider_service_id = State()
     waiting_min_quantity = State()
     waiting_max_quantity = State()
+    waiting_estimated_time = State()
     waiting_sort_order = State()
     waiting_pricing_type = State()
     waiting_profit_margin = State()

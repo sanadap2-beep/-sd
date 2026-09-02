@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 import database.migrations as migrations
@@ -56,8 +57,9 @@ def test_known_initial_schema_is_upgraded_instead_of_stamped_as_head(
     assert "display_currency" in {column["name"] for column in inspector.get_columns("users")}
     assert "cart_items" in inspector.get_table_names()
     assert "feature_flags" in inspector.get_table_names()
+    expected_head = ScriptDirectory.from_config(_alembic_config(sync_url)).get_current_head()
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "c9d41f7a2b15"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == expected_head
     engine.dispose()
 
 

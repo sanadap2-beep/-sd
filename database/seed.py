@@ -179,13 +179,28 @@ DEFAULT_CHALLENGES = [
 ]
 
 
+# تطبيقات قسم الرشق (SMM): الاسم + إيموجي حديث لكل تطبيق.
+# تُعرض كأزرار أقسام فرعية، ويمكن للأدمن إضافة/تعديل/حذف أي تطبيق من اللوحة.
+SMM_APPS = [
+    ("تيك توك", "🎵"),
+    ("إنستغرام", "📸"),
+    ("يوتيوب", "▶️"),
+    ("تيليجرام", "✈️"),
+    ("فيسبوك", "📘"),
+    ("واتساب", "💬"),
+    ("سناب شات", "👻"),
+    ("إكس (تويتر)", "🐦"),
+    ("ثريدز", "🧵"),
+    ("سبوتيفاي", "🎧"),
+]
+
 DEFAULT_STORE_CATEGORIES = [
     {
         "name_ar": "قسم الرشق",
-        "emoji": "📈",
+        "emoji": "🚀",
         "type": CategoryType.SMM,
         "sort_order": 10,
-        "subcategories": ["تيك توك", "إنستغرام", "يوتيوب", "تيليجرام", "فيسبوك"],
+        "subcategories": [{"name": name, "emoji": emoji} for name, emoji in SMM_APPS],
     },
     {
         "name_ar": "قسم شحن الألعاب",
@@ -408,18 +423,49 @@ async def init_db() -> None:
                 )
                 session.add(category)
                 await session.flush()
-                for index, sub_name in enumerate(cat_data["subcategories"], start=1):
+                for index, sub in enumerate(cat_data["subcategories"], start=1):
+                    if isinstance(sub, dict):
+                        sub_name = sub["name"]
+                        sub_emoji = sub.get("emoji", cat_data["emoji"])
+                    else:
+                        sub_name = sub
+                        sub_emoji = cat_data["emoji"]
                     session.add(
                         SubCategory(
                             category_id=category.id,
                             name_ar=sub_name,
-                            emoji=cat_data["emoji"],
+                            emoji=sub_emoji,
                             description=f"منتجات {sub_name}",
                             sort_order=index * 10,
                             is_active=True,
                         )
                     )
             session.add(Setting(key="fixed_store_categories_seeded", value="true"))
+
+        # ── ضمان وجود تطبيقات قسم الرشق العشرة (تحديث تراكمي) ──
+        # يعمل حتى لو كانت الأقسام مزروعة مسبقاً: يضيف التطبيقات الجديدة فقط
+        # دون المساس بما عدّله الأدمن، ودون إنشاء منتجات تلقائياً.
+        smm_cat_result = await session.execute(
+            select(Category).where(Category.type == CategoryType.SMM)
+        )
+        smm_cat = smm_cat_result.scalars().first()
+        if smm_cat is not None:
+            existing_result = await session.execute(
+                select(SubCategory).where(SubCategory.category_id == smm_cat.id)
+            )
+            existing_names = {sc.name_ar for sc in existing_result.scalars().all()}
+            for index, (app_name, app_emoji) in enumerate(SMM_APPS, start=1):
+                if app_name not in existing_names:
+                    session.add(
+                        SubCategory(
+                            category_id=smm_cat.id,
+                            name_ar=app_name,
+                            emoji=app_emoji,
+                            description=f"منتجات {app_name}",
+                            sort_order=index * 10,
+                            is_active=True,
+                        )
+                    )
 
         # ── زرع قوالب الإشعارات الافتراضية ──
         from services.notification_center_service import NotificationCenterService

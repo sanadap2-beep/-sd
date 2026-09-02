@@ -97,6 +97,7 @@
   "service": "Service",
   "price": "Price",
   "confirm_purchase_q": "Do you want to confirm the purchase?",
+  "eta_label": "⏱️ Estimated time",
   "send_player_id": "Send your <b>Player ID</b>:",
   "send_link": "Send the <b>link</b>:",
   "quantity_limits": "📊 Minimum: {min_q} | Maximum: {max_q}",

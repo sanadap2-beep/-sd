@@ -97,6 +97,7 @@
   "service": "الخدمة",
   "price": "السعر",
   "confirm_purchase_q": "هل تريد تأكيد الشراء؟",
+  "eta_label": "⏱️ الوقت التقريبي",
   "send_player_id": "أرسل <b>آيدي اللاعب</b> (Player ID):",
   "send_link": "أرسل <b>الرابط</b>:",
   "quantity_limits": "📊 الحد الأدنى: {min_q} | الحد الأقصى: {max_q}",

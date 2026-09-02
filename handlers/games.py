@@ -58,6 +58,14 @@ async def _dual_price(amount, db_user, session):
 def _glang(db_user) -> str:
     return getattr(db_user, 'language_code', 'ar') or 'ar'
 
+
+def _eta_line(product, language: str = "ar") -> str:
+    """سطر الوقت التقريبي للاكتمال إن وُجد."""
+    eta = getattr(product, "estimated_time", None)
+    if eta:
+        return f"\n{I18nService.t('eta_label', language)}: <b>{eta}</b>"
+    return ""
+
 @router.callback_query(F.data == 'menu:search')
 async def search_start(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -169,16 +177,16 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     price_label = I18nService.t('price', language)
     confirm_q = I18nService.t('confirm_purchase_q', language)
     if product.requires_player_id:
-        await callback.message.edit_text(f'🎮 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>\n\n' + I18nService.t('send_player_id', language))
+        await callback.message.edit_text(f'🎮 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
         await state.update_data(product_id=product_id)
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         if product.requires_quantity:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b> / {product.min_quantity}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b> / {product.min_quantity}{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id)
             await state.set_state(SMMOrderStates.waiting_link)
         else:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id, quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:
@@ -201,7 +209,7 @@ async def player_id_received(message: Message, state: FSMContext, session, db_us
         await message.answer(f"⚠️ {exc}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
         return
     await state.update_data(target=player_id, quantity=1)
-    await message.answer(f"🎮 <b>{product.name_ar}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{player_id}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+    await message.answer(f"🎮 <b>{product.name_ar}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{player_id}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_link)
 async def smm_link_received(message: Message, state: FSMContext, session):
@@ -223,7 +231,7 @@ async def smm_link_received(message: Message, state: FSMContext, session):
     else:
         await state.update_data(quantity=1)
         sub_cat = product.sub_category
-        await message.answer(f"📈 <b>{product.name_ar}{I18nService.t('ux_games_450_28', _auto_lang(locals()))}{link}{I18nService.t('ux_games_450_29', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_450_30', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        await message.answer(f"📈 <b>{product.name_ar}{_eta_line(product)}{I18nService.t('ux_games_450_28', _auto_lang(locals()))}{link}{I18nService.t('ux_games_450_29', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_450_30', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_quantity)
 async def smm_quantity_received(message: Message, state: FSMContext, session):
@@ -249,7 +257,7 @@ async def smm_quantity_received(message: Message, state: FSMContext, session):
     await state.update_data(quantity=quantity, total_price=str(total_price))
     sub_cat = product.sub_category
     link = data.get('target', '—')
-    await message.answer(f"📈 <b>{product.name_ar}{I18nService.t('ux_games_501_35', _auto_lang(locals()))}{link}{I18nService.t('ux_games_501_36', _auto_lang(locals()))}{quantity}{I18nService.t('ux_games_501_37', _auto_lang(locals()))}{total_price}{I18nService.t('ux_games_501_38', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+    await message.answer(f"📈 <b>{product.name_ar}{_eta_line(product)}{I18nService.t('ux_games_501_35', _auto_lang(locals()))}{link}{I18nService.t('ux_games_501_36', _auto_lang(locals()))}{quantity}{I18nService.t('ux_games_501_37', _auto_lang(locals()))}{total_price}{I18nService.t('ux_games_501_38', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.callback_query(F.data.startswith('prod_coupon:'))
 async def product_coupon_start(callback: CallbackQuery, state: FSMContext):

@@ -875,6 +875,7 @@ class Product(Base):
     provider_service_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name_ar: Mapped[str] = mapped_column(String(128))
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    estimated_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

@@ -376,7 +376,7 @@ async def prod_requirements_selected(callback: CallbackQuery, state: FSMContext)
         await callback.message.edit_text("📊 أرسل الحد الأدنى للكمية:\n(مثال: 100)")
         await state.set_state(AdminProductStates.waiting_min_quantity)
     else:
-        await _save_product(callback.message, state, callback)
+        await _ask_estimated_time(callback.message, state)
 
     await callback.answer()
 
@@ -407,6 +407,25 @@ async def prod_max_qty_received(message: Message, state: FSMContext):
         return
 
     await state.update_data(max_quantity=max_qty)
+    await _ask_estimated_time(message, state)
+
+
+async def _ask_estimated_time(message: Message, state: FSMContext):
+    await message.answer(
+        "⏱️ أرسل <b>الوقت التقريبي للاكتمال</b>:\n"
+        "(مثال: 5-30 دقيقة / 1-3 ساعات)\n\n"
+        "أو أرسل <b>تخطي</b> لتركه فارغاً."
+    )
+    await state.set_state(AdminProductStates.waiting_estimated_time)
+
+
+@router.message(AdminProductStates.waiting_estimated_time)
+async def prod_estimated_time_received(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text or text in ("تخطي", "skip", "-", "0"):
+        await state.update_data(estimated_time=None)
+    else:
+        await state.update_data(estimated_time=text[:64])
     await _save_product(message, state)
 
 
@@ -436,6 +455,7 @@ async def _save_product(message, state, callback=None):
             requires_quantity=data.get("requires_quantity", False),
             min_quantity=data.get("min_quantity", 1),
             max_quantity=data.get("max_quantity", 1),
+            estimated_time=data.get("estimated_time"),
         )
 
     target = callback.message if callback else message
@@ -481,6 +501,7 @@ async def prod_view(callback: CallbackQuery, session):
         f"📈 الربح: {product.price_usd - product.cost_price_usd}$\n"
         f"🔌 المزود: {provider_name}\n"
         f"🔢 آيدي الخدمة: {product.provider_service_id or '—'}\n"
+        f"⏱️ الوقت التقريبي: {product.estimated_time or '—'}\n"
         f"📥 متطلبات: {req_text}\n"
         f"🛒 إجمالي المبيعات: {product.total_sold}\n"
         f"🔢 الترتيب: {product.sort_order}",
