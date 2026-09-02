@@ -101,6 +101,7 @@ from handlers.admin import (
     pulled_services as admin_pulled_services,
     ledger as admin_ledger,
     partner_catalog as admin_partner_catalog,
+    live_feed as admin_live_feed,
 )
 
 from tasks.order_monitor import (
@@ -239,6 +240,7 @@ def register_routers():
     dp.include_router(admin_notifications.router)
     dp.include_router(admin_sponsored_ads.router)
     dp.include_router(admin_special_offers.router)
+    dp.include_router(admin_live_feed.router)
 
     # آخر Router دائماً: يلتقط أي زر غير مربوط بدل أن يسكت البوت.
     dp.include_router(fallback.router)

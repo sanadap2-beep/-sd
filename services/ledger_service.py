@@ -114,6 +114,45 @@ class LedgerService:
         return [clause for clause in clauses if clause is not None]
 
     @staticmethod
+    async def user_realized_totals(session, user_id: int) -> tuple[Decimal, int]:
+        """إجمالي مشتريات المستخدم المحقَّقة فعلاً + عددها.
+
+        تحتسب فقط ما اكتمل وتفعّل:
+        - الأرقام: بعد وصول الكود وتفعيل الرقم (COMPLETED).
+        - طلبات الرشق/الألعاب/التطبيقات: عند الاكتمال (COMPLETED/PARTIAL).
+
+        لا تحتسب الطلبات المعلّقة أو التي فشلت/استُرجعت، لأن المشتري قد
+        دفع مسبقاً لكن جزءاً كبيراً منها لا يتفعّل ويُرجع رصيده لاحقاً.
+        هذا هو المعروض للمستخدم في «إجمالي مشترياتك» ببطاقة الحساب.
+        """
+        uni_q = (
+            select(
+                func.coalesce(func.sum(UnifiedOrder.price_usd), 0),
+                func.count(UnifiedOrder.id),
+            ).where(
+                UnifiedOrder.user_id == user_id,
+                UnifiedOrder.status.in_(
+                    [UnifiedOrderStatus.COMPLETED, UnifiedOrderStatus.PARTIAL]
+                ),
+            )
+        )
+        uni_sum, uni_count = (await session.execute(uni_q)).one()
+
+        num_q = (
+            select(
+                func.coalesce(func.sum(NumberOrder.price_sell_usd), 0),
+                func.count(NumberOrder.id),
+            ).where(
+                NumberOrder.user_id == user_id,
+                NumberOrder.status == OrderStatus.COMPLETED,
+            )
+        )
+        num_sum, num_count = (await session.execute(num_q)).one()
+
+        total = money(uni_sum) + money(num_sum)
+        return total, int(uni_count or 0) + int(num_count or 0)
+
+    @staticmethod
     async def summary(session, period: str = "m") -> LedgerSummary:
         period = normalize_period(period)
         customers = LedgerService._customer_filter()

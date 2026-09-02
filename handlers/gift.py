@@ -24,12 +24,12 @@ async def _show_gift_menu(target):
 @router.callback_query(F.data == "menu:gift")
 async def gift_menu(callback: CallbackQuery, db_user=None):
     await callback.answer()
-    await _show_gift_menu(callback, db_user)
+    await _show_gift_menu(callback)
 
 
 @router.message(F.text == "🎁 بطاقة هدية")
 async def gift_menu_message(message: Message, db_user=None):
-    await _show_gift_menu(message, db_user)
+    await _show_gift_menu(message)
 
 
 @router.callback_query(F.data == "gift:redeem")

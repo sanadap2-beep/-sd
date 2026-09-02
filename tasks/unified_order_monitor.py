@@ -147,10 +147,21 @@ async def _process_unified_order(session, order: UnifiedOrder, notifier: Notific
 
 async def _handle_completed(session, order, user, product_name, notifier):
     """يعالج الطلب المكتمل."""
+    was_completed = order.status == UnifiedOrderStatus.COMPLETED
     order.status = UnifiedOrderStatus.COMPLETED
     order.status_message = "مكتمل"
     order.completed_at = datetime.utcnow()
     await session.commit()
+
+    if not was_completed:
+        await notifier.live_purchase_success(
+            telegram_id=user.telegram_id,
+            username=user.username,
+            full_name=user.full_name,
+            item=product_name,
+            amount_usd=str(order.price_usd),
+            order_id=order.id,
+        )
 
     if order.product:
         await DynamicService.increment_product_sold(session, order.product_id)
@@ -227,6 +238,16 @@ async def _handle_partial(session, order, user, product_name, notifier, remains)
                 related_id=order.id,
             )
 
+            await notifier.live_refund(
+                telegram_id=user.telegram_id,
+                username=user.username,
+                full_name=user.full_name,
+                item=product_name,
+                amount_usd=str(refund_amount),
+                reason="الطلب منجز جزئياً — رُجع المتبقي غير المنفَّذ",
+                order_id=order.id,
+            )
+
             await notifier.notify_user(
                 user.telegram_id,
                 f"⚠️ <b>طلب منجز جزئياً</b>\n\n"
@@ -267,6 +288,16 @@ async def _handle_failed(session, order, user, product_name, notifier):
     )
     order.status = UnifiedOrderStatus.REFUNDED
     await session.commit()
+
+    await notifier.live_refund(
+        telegram_id=user.telegram_id,
+        username=user.username,
+        full_name=user.full_name,
+        item=product_name,
+        amount_usd=str(order.price_usd),
+        reason="فشل تنفيذ الطلب لدى المزود",
+        order_id=order.id,
+    )
 
     await notifier.notify_order_failed(
         user_telegram_id=user.telegram_id,

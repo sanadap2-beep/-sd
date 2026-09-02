@@ -16,6 +16,7 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     b.button(text="📘 شرح البوت", callback_data="admin:guide")
     b.button(text="📊 إحصائيات البوت", callback_data="admin:stats")
     b.button(text="📒 جرد الحسابات", callback_data="admin:ledger")
+    b.button(text="📡 مباشر البوت", callback_data="admin:live_feed")
     b.button(text="📦 إدارة الطلبات", callback_data="admin:orders")
     b.button(text="📞 طلبات الأرقام", callback_data="admin:number_orders")
     b.button(text="💳 طلبات الشحن", callback_data="admin:deposits")

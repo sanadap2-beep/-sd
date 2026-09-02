@@ -132,11 +132,22 @@ async def _handle_code_received(session, order, status_result, notifier, bot):
             )
         return
 
+    was_completed = order.status == OrderStatus.COMPLETED
     order.status = OrderStatus.COMPLETED
     order.sms_code = status_result.sms_code
     order.full_sms_text = status_result.full_text
     order.completed_at = datetime.utcnow()
     await session.commit()
+
+    if not was_completed:
+        await notifier.live_purchase_success(
+            telegram_id=user.telegram_id,
+            username=user.username,
+            full_name=user.full_name,
+            item=f"رقم <code>{order.phone_number}</code> — خدمة {order.service}",
+            amount_usd=str(order.price_sell_usd),
+            order_id=order.id,
+        )
 
     try:
         await provider_manager.finish_order(order.provider, order.provider_order_id)
@@ -236,6 +247,16 @@ async def _expire_and_refund(session, order, notifier, bot):
     )
     order.status = OrderStatus.REFUNDED
     await session.commit()
+
+    await notifier.live_refund(
+        telegram_id=user.telegram_id,
+        username=user.username,
+        full_name=user.full_name,
+        item=f"رقم <code>{order.phone_number}</code> — خدمة {order.service}",
+        amount_usd=str(order.price_sell_usd),
+        reason="الرقم لم يتفعّل/انتهت صلاحيته",
+        order_id=order.id,
+    )
 
     text = (
         f"⌛ <b>انتهت صلاحية الرقم</b> <code>{order.phone_number}</code>\n"
