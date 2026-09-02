@@ -439,6 +439,57 @@ class NotificationService:
             ),
         )
 
+    async def notify_admin_new_user(
+        self,
+        telegram_id: int,
+        username: str | None,
+        full_name: str | None,
+        *,
+        via_referral: bool,
+        referrer_telegram_id: int | None = None,
+        referrer_username: str | None = None,
+    ) -> None:
+        """Alert the admin channel whenever someone opens the bot for the first time."""
+        source = (
+            f"🔗 رابط إحالة من <code>{referrer_telegram_id}</code> "
+            f"(@{referrer_username or '-'})"
+            if via_referral
+            else "🚪 دخول عادي (بدون إحالة)"
+        )
+        text = (
+            "👤 <b>مستخدم جديد دخل البوت</b>\n\n"
+            f"🆔 الآيدي: <code>{telegram_id}</code>\n"
+            f"👤 الاسم: {full_name or '—'}\n"
+            f"🔗 يوزر: @{username or '-'}\n"
+            f"📥 المصدر: {source}"
+        )
+        await self.notify_admin(text, notification_type="users", priority="normal")
+
+    async def notify_referrer_new_join(
+        self,
+        referrer_telegram_id: int,
+        referrer_language: str | None,
+        new_telegram_id: int,
+        new_username: str | None,
+        new_full_name: str | None,
+    ) -> None:
+        """Tell the referrer immediately that someone used their link."""
+        from services.i18n_service import I18nService
+
+        await self.notify_user(
+            referrer_telegram_id,
+            I18nService.t(
+                "referral_join_notification",
+                referrer_language,
+                name=new_full_name or "مستخدم",
+                username=new_username or "-",
+                user_id=str(new_telegram_id),
+            ),
+            notification_type="referral",
+            priority="normal",
+            title="إحالة جديدة",
+        )
+
     async def notify_insufficient_balance(
         self,
         user_telegram_id: int,

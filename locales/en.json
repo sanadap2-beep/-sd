@@ -379,5 +379,7 @@
   "choose_country_priced": "Choose a country (sorted by lowest price 🟢)",
   "referral_share_button": "📤 Share link",
   "referral_share_text": "Try this bot with me 💎",
-  "referral_link_unavailable": "⚠️ Could not build a referral link right now. Check that the bot username is configured, then try again."
+  "referral_link_unavailable": "⚠️ Could not build a referral link right now. Check that the bot username is configured, then try again.",
+  "provider_insufficient_funds": "❌ The provider does not have enough balance to fulfill your order. Your funds were refunded automatically. Try later or contact support.",
+  "referral_join_notification": "👤 A new user joined via your link!\n\nName: {name}\nUsername: @{username}\nID: <code>{user_id}</code>"
 }

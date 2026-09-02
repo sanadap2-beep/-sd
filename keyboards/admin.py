@@ -29,6 +29,7 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     b.button(text="📞 إدارة خدمات الأرقام", callback_data="admin:number_services")
     b.button(text="🌍 إدارة الدول", callback_data="admin:countries")
     b.button(text="🔌 مزودو المتجر", callback_data="admin:api_providers")
+    b.button(text="📥 خدمات مسحوبة", callback_data="admin:pulled_services")
     b.button(text="🌐 مزودو الأرقام", callback_data="admin:providers")
     b.button(text="📊 جودة مزودي الأرقام", callback_data="admin:number_provider_quality")
     b.button(text="💵 تعديل الأسعار", callback_data="admin:pricing")

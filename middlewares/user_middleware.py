@@ -6,6 +6,7 @@
 يحدّث last_activity_at.
 """
 
+import logging
 import re
 from datetime import datetime
 
@@ -15,6 +16,8 @@ from sqlalchemy import select
 
 from database.models import User
 from services.settings_service import SettingsService
+
+logger = logging.getLogger(__name__)
 
 # /start ref_123  |  /start@BotName ref_123  |  /start ref_123 extra
 _REFERRAL_START_RE = re.compile(
@@ -70,6 +73,12 @@ class UserMiddleware(BaseMiddleware):
             session.add(user)
             await session.commit()
             await session.refresh(user)
+            await _notify_new_user_join(
+                data.get("bot"),
+                session,
+                tg_user,
+                referrer_id,
+            )
 
         # ── تحديث بيانات المستخدم ──
         updated = False
@@ -119,3 +128,32 @@ class UserMiddleware(BaseMiddleware):
 
         data["db_user"] = user
         return await handler(event, data)
+
+
+async def _notify_new_user_join(bot, session, tg_user, referrer_id: int | None) -> None:
+    """Tell the admin channel (and the referrer) about a first-time join. Fail-open."""
+    if bot is None:
+        return
+    try:
+        from services.notification_service import NotificationService
+
+        referrer = await session.get(User, referrer_id) if referrer_id else None
+        notifier = NotificationService(bot)
+        await notifier.notify_admin_new_user(
+            telegram_id=tg_user.id,
+            username=tg_user.username,
+            full_name=tg_user.full_name,
+            via_referral=referrer is not None,
+            referrer_telegram_id=referrer.telegram_id if referrer else None,
+            referrer_username=referrer.username if referrer else None,
+        )
+        if referrer is not None:
+            await notifier.notify_referrer_new_join(
+                referrer.telegram_id,
+                referrer.language_code,
+                tg_user.id,
+                tg_user.username,
+                tg_user.full_name,
+            )
+    except Exception:
+        logger.exception("Failed to notify about new user %s", getattr(tg_user, "id", None))

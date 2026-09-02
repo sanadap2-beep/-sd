@@ -19,6 +19,7 @@ from database.models import (
     CategoryType,
     ProductStatus,
     ProductFulfillmentType,
+    ProductDisplayType,
     ApiProviderType,
 )
 
@@ -309,8 +310,15 @@ class DynamicService:
         requires_player_id: bool = False,
         requires_link: bool = False,
         requires_quantity: bool = False,
+        display_type: ProductDisplayType | None = None,
         sort_order: int = 0,
     ) -> Product:
+        if display_type is None:
+            display_type = (
+                ProductDisplayType.PER_1000
+                if requires_quantity
+                else ProductDisplayType.FIXED_TOTAL
+            )
         product = Product(
             sub_category_id=sub_category_id,
             name_ar=name_ar,
@@ -327,6 +335,7 @@ class DynamicService:
             requires_player_id=requires_player_id,
             requires_link=requires_link,
             requires_quantity=requires_quantity,
+            display_type=display_type,
             sort_order=sort_order,
             status=ProductStatus.ACTIVE,
         )

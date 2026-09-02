@@ -34,7 +34,7 @@ from services.i18n_service import I18nService
 from services.tiered_pricing_service import TieredPricingService
 from services.upsell_service import UpsellService
 from services.watch_service import WatchService
-from protocols.base import ProtocolError
+from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
 from keyboards.games import sub_categories_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb
@@ -231,7 +231,7 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         if product.requires_quantity:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b> / {product.min_quantity}{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id)
             await state.set_state(SMMOrderStates.waiting_link)
         else:
@@ -302,7 +302,7 @@ async def smm_quantity_received(message: Message, state: FSMContext, session):
     if quantity > product.max_quantity:
         await message.answer(f"{I18nService.t('ux_games_485_34', _auto_lang(locals()))}{product.max_quantity}")
         return
-    total_price = (product.price_usd * Decimal(str(quantity)) / Decimal(str(product.min_quantity))).quantize(Decimal('0.0001'))
+    total_price = ProductService.calculate_order_total(product, quantity)
     await state.update_data(quantity=quantity, total_price=str(total_price))
     sub_cat = product.sub_category
     link = data.get('target', '—')
@@ -369,10 +369,7 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
     fsm_data = await state.get_data()
     target = fsm_data.get('target', '')
     quantity = fsm_data.get('quantity', 1)
-    if product.requires_quantity and quantity > 1:
-        total_price = (product.price_usd * Decimal(str(quantity)) / Decimal(str(product.min_quantity))).quantize(Decimal('0.0001'))
-    else:
-        total_price = product.price_usd
+    total_price = ProductService.calculate_order_total(product, quantity)
     promotion, promotion_discount = await PromotionService.get_best_promotion(session, product.id, total_price)
     if fulfillment == ProductFulfillmentType.INVENTORY.value and coupon_code:
         await callback.answer(I18nService.t('ux_games_678_49', _auto_lang(locals())), show_alert=True)
@@ -420,10 +417,7 @@ async def product_final_confirm(callback: CallbackQuery, session, db_user: User,
         await state.clear()
         return
     await callback.answer(I18nService.t('ux_games_767_51', _auto_lang(locals())))
-    if product.requires_quantity and quantity > 1:
-        total_price = (product.price_usd * Decimal(str(quantity)) / Decimal(str(product.min_quantity))).quantize(Decimal('0.0001'))
-    else:
-        total_price = product.price_usd
+    total_price = ProductService.calculate_order_total(product, quantity)
     fulfillment = getattr(product.fulfillment_type, 'value', product.fulfillment_type)
     promotion, promotion_discount = await PromotionService.get_best_promotion(session, product.id, total_price)
     if fulfillment == ProductFulfillmentType.INVENTORY.value and coupon_code:
@@ -518,7 +512,29 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             except ProtocolError as e:
                 logger.error(f'فشل إرسال الطلب للمزود: {e}')
                 await BalanceService.add_balance(session, db_user.id, final_price, TransactionType.REFUND, description='استرجاع - فشل الإرسال للمزود')
-                await callback.message.answer(I18nService.t('ux_games_1007_61', _auto_lang(locals())))
+                provider_name = getattr(provider, 'name', None) or 'المزود'
+                if isinstance(e, ProtocolInsufficientFundsError):
+                    await callback.message.answer(I18nService.t('provider_insufficient_funds', _glang(db_user)))
+                    await notifier.notify_admin(
+                        '🚨 <b>رصيد المزود غير كافٍ</b>\n\n'
+                        f'🔌 المزود: <b>{provider_name}</b>\n'
+                        f'📦 المنتج: {product.name_ar}\n'
+                        f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
+                        f'📊 الكمية: {quantity}\n'
+                        f'💰 المبلغ المسترجع: {final_price}$\n'
+                        f'⚠️ الرد: <code>{e}</code>\n\n'
+                        '🛠 <b>الحل:</b> اشحن رصيد المزود من لوحته، أو عطّل المنتج مؤقتاً، أو انقل الخدمة لمزود آخر لديه رصيد.'
+                    )
+                else:
+                    await callback.message.answer(I18nService.t('ux_games_1007_61', _auto_lang(locals())))
+                    await notifier.notify_admin(
+                        '🚨 <b>فشل إرسال طلب للمزود</b>\n\n'
+                        f'🔌 المزود: <b>{provider_name}</b>\n'
+                        f'📦 المنتج: {product.name_ar}\n'
+                        f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
+                        f'⚠️ الخطأ: <code>{e}</code>\n\n'
+                        '🛠 <b>الحل:</b> تحقق من آيدي الخدمة عند المزود، وصحة الرابط/الكمية، وحالة المزود. تم استرجاع رصيد المستخدم.'
+                    )
                 await state.clear()
                 return
     order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message)
