@@ -29,6 +29,7 @@ from handlers import (
     account,
     cart,
     referral,
+    referral_guard,
     deposit,
     transfer,
     withdrawal,
@@ -114,6 +115,7 @@ from tasks.backup_job import daily_backup
 from tasks.sponsored_ads_job import process_sponsored_ads
 from tasks.special_offers_job import process_special_offers
 from services.feature_service import FeatureService
+from services.smm_sections_service import SmmSectionsService
 from services.marketplace_service import MarketplaceService
 from services.refill_service import RefillService
 from services.drip_feed_service import DripFeedService
@@ -166,6 +168,7 @@ def register_routers():
     dp.include_router(account.router)
     dp.include_router(cart.router)
     dp.include_router(referral.router)
+    dp.include_router(referral_guard.router)
     dp.include_router(deposit.router)
     dp.include_router(deposit_methods_router)
     dp.include_router(transfer.router)
@@ -534,6 +537,18 @@ async def main():
     await FeatureService.reload()
     async with async_session_maker() as session:
         await TaskService.seed_defaults(session)
+
+    # ── بناء أقسام الرشق الداخلية تلقائياً ──
+    # ينشئ لكل تطبيق أقسامه (متابعون/لايكات/مشاهدات...) من الخدمات المسحوبة
+    # وينشر أرخص 5 خدمات بكل قسم. Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
+    try:
+        async with async_session_maker() as session:
+            if await SmmSectionsService.auto_build_enabled():
+                report = await SmmSectionsService.build(session)
+                logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
+    except Exception:
+        logger.exception("فشل البناء التلقائي لأقسام الرشق عند الإقلاع")
+
     logger.info(f"🔑 آيديات الأدمن: {settings.admin_ids_list}")
     logger.info("✅ قاعدة البيانات جاهزة.")
 

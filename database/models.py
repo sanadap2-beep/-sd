@@ -246,6 +246,12 @@ class User(Base):
     is_activated: Mapped[bool] = mapped_column(Boolean, default=False)
     referral_bonus_paid: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # ── حماية الإحالة من البوتات ──
+    # المستخدم الذي دخل عبر رابط ref_ يبقى pending حتى يجتاز اختبار البشر،
+    # وعندها فقط يُفعَّل ويُدفع لمحيله. الفشل المتكرر = روبوت → عقوبة للمحيل.
+    referral_check_pending: Mapped[bool] = mapped_column(Boolean, default=False)
+    referral_check_fails: Mapped[int] = mapped_column(Integer, default=0)
+
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -737,12 +743,23 @@ class SubCategory(Base):
     """
     الأقسام الفرعية الديناميكية.
     مثال: ببجي، فري فاير، إنستقرام، تيك توك.
+
+    يمكن للقسم الفرعي أن يحتوي أقساماً داخلية (Sections) عبر
+    ``parent_sub_category_id``: في قسم الرشق يمثل التطبيق (إنستغرام)
+    ويمثل الفرع الداخلي النوع (متابعون/لايكات/مشاهدات...). ``kind_key``
+    يحفظ النوع المعياري من services.smm_catalog لربط الأقسام المولّدة
+    تلقائياً بخدمات المزود المسحوبة.
     """
 
     __tablename__ = "sub_categories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), index=True)
+    parent_sub_category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sub_categories.id"), nullable=True, index=True
+    )
+    # النوع المعياري (followers/likes/views/...) للأقسام الداخلية المولّدة آلياً.
+    kind_key: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📱")
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -753,6 +770,14 @@ class SubCategory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     category: Mapped["Category"] = relationship(back_populates="sub_categories")
+    parent: Mapped["SubCategory | None"] = relationship(
+        remote_side=[id],
+        back_populates="children",
+    )
+    children: Mapped[list["SubCategory"]] = relationship(
+        back_populates="parent",
+        cascade="all, delete-orphan",
+    )
     products: Mapped[list["Product"]] = relationship(
         back_populates="sub_category", cascade="all, delete-orphan"
     )
@@ -905,6 +930,10 @@ class Product(Base):
         SAEnum(ProductFulfillmentType),
         default=ProductFulfillmentType.API,
     )
+    # منتج أُنشئ تلقائياً من «أول N خدمات مسحوبة» في أقسام الرشق الداخلية.
+    # يستخدمه البناء التلقائي لإعادة الترتيب/الإخفاء عند تغيّر أسعار المزود،
+    # ويبقى مميزاً عن المنتجات التي ينشرها الأدمن يدوياً بسعره الخاص.
+    is_auto_published: Mapped[bool] = mapped_column(Boolean, default=False)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
     is_bestseller: Mapped[bool] = mapped_column(Boolean, default=False)
 

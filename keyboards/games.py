@@ -10,6 +10,14 @@ from database.models import SubCategory, Product
 from services.smm_catalog import button_label
 
 
+def _short_name(name: str, limit: int = 42) -> str:
+    """تقصير اسم المنتج حتى لا يكسر حد طول زر تيليجرام (64 حرفاً)."""
+    name = (name or "").strip()
+    if len(name) <= limit:
+        return name
+    return name[: limit - 1].rstrip() + "…"
+
+
 def sub_categories_kb(
     category_id: int,
     sub_categories: list[SubCategory],
@@ -29,21 +37,53 @@ def sub_categories_kb(
     return b.as_markup()
 
 
-def products_kb(
-    sub_category_id: int,
-    products: list[Product],
+def sections_kb(
     category_id: int,
+    sections: list[tuple[SubCategory, int]],
 ) -> InlineKeyboardMarkup:
-    """قائمة المنتجات مع الأسعار بالدولار."""
+    """قائمة الأقسام الداخلية لتطبيق (متابعون/لايكات/مشاهدات...).
+
+    كل عنصر: ``(القسم الداخلي، عدد منتجاته المفعلة)``.
+    """
     b = InlineKeyboardBuilder()
-    for p in products:
+    for section, count in sections:
+        label = button_label(section.name_ar, section.emoji)
         b.button(
-            text=f"{p.name_ar} - {p.price_usd}$",
-            callback_data=f"prod:{p.id}",
+            text=f"{label} ({count})",
+            callback_data=f"subcat:{section.id}",
         )
     b.button(
         text="🔙 رجوع",
         callback_data=f"cat:{category_id}",
+    )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def products_kb(
+    sub_category_id: int,
+    products: list[Product],
+    category_id: int,
+    back_sub_id: int | None = None,
+) -> InlineKeyboardMarkup:
+    """قائمة المنتجات مع الأسعار بالدولار.
+
+    ``back_sub_id`` يُستخدم للمنتجات داخل قسم داخلي (تطبيق): الزر «رجوع»
+    يعيد إلى التطبيق بدل قائمة التطبيقات.
+    """
+    b = InlineKeyboardBuilder()
+    for p in products:
+        b.button(
+            text=f"{_short_name(p.name_ar)} - {p.price_usd}$",
+            callback_data=f"prod:{p.id}",
+        )
+    if back_sub_id is not None:
+        back_callback = f"subcat:{back_sub_id}"
+    else:
+        back_callback = f"cat:{category_id}"
+    b.button(
+        text="🔙 رجوع",
+        callback_data=back_callback,
     )
     b.adjust(1)
     return b.as_markup()
@@ -88,7 +128,7 @@ def product_search_results_kb(products) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for product in products:
         b.button(
-            text=f"{product.name_ar} - {product.price_usd}$",
+            text=f"{_short_name(product.name_ar)} - {product.price_usd}$",
             callback_data=f"prod:{product.id}",
         )
     b.button(text="🔎 بحث جديد", callback_data="menu:search")
@@ -102,7 +142,7 @@ def favorites_kb(products) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for product in products:
         b.button(
-            text=f"📦 {product.name_ar} - {product.price_usd}$",
+            text=f"📦 {_short_name(product.name_ar)} - {product.price_usd}$",
             callback_data=f"prod:{product.id}",
         )
         b.button(

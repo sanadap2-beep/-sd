@@ -6,10 +6,12 @@ from decimal import Decimal
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart, CommandObject
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from keyboards.main_menu import build_main_menu
 from keyboards.common import check_subscription_kb
+from services.referral_guard_service import ReferralGuardService
 from keyboards.numbers import confirm_purchase_kb
 from providers.countries import get_country_by_code, get_number_service_by_code
 from providers.manager import provider_manager
@@ -49,7 +51,7 @@ async def _main_header(session, db_user) -> str:
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject, session, db_user):
+async def cmd_start(message: Message, command: CommandObject, session, db_user, state: FSMContext):
     # 1. التحقق من الاشتراك الإجباري بالقنوات
     is_ok, missing = await SubscriptionService.is_user_subscribed_all(
         message.bot, session, db_user.telegram_id
@@ -61,6 +63,18 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user):
             reply_markup=check_subscription_kb(missing),
         )
         return
+
+    # 1.5 التحقق البشري لروابط الإحالة (حماية من البوتات):
+    # لا يُفعَّل الحساب ولا تُدفع مكافأة المحيل قبل نجاح الاختبار.
+    if await ReferralGuardService.requires_check(db_user):
+        from handlers.referral_guard import send_human_check
+
+        await send_human_check(message, state, db_user)
+        return
+    if db_user.referral_check_pending:
+        # الميزة معطلة حالياً → نلغي الانتظار ونتابع كالمعتاد.
+        db_user.referral_check_pending = False
+        await session.commit()
 
     # 2. تفعيل المستخدم ومكافأة الإحالة
     if not db_user.is_activated:
@@ -174,13 +188,30 @@ async def _try_pay_referral_bonus(session, user, bot):
 
 
 @router.callback_query(F.data == "check_subscription")
-async def check_subscription_callback(callback: CallbackQuery, session, db_user, bot):
+async def check_subscription_callback(
+    callback: CallbackQuery,
+    session,
+    db_user,
+    bot,
+    state: FSMContext,
+):
     """التحقق من الاشتراك بالقنوات الإجبارية."""
     is_ok, missing = await SubscriptionService.is_user_subscribed_all(
         bot, session, db_user.telegram_id
     )
 
     if is_ok:
+        # التحقق البشري أولاً لمن دخل عبر رابط إحالة.
+        if await ReferralGuardService.requires_check(db_user):
+            await callback.answer()
+            from handlers.referral_guard import send_human_check
+
+            await send_human_check(callback.message, state, db_user)
+            return
+        if db_user.referral_check_pending:
+            # الميزة معطلة حالياً → نلغي الانتظار.
+            db_user.referral_check_pending = False
+            await session.commit()
         if not db_user.is_activated:
             db_user.is_activated = True
             await session.commit()

@@ -37,7 +37,7 @@ from services.watch_service import WatchService
 from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
-from keyboards.games import sub_categories_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb
+from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb
 from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 logger = logging.getLogger(__name__)
 router = Router(name='games')
@@ -145,21 +145,49 @@ async def favorite_remove(callback: CallbackQuery, session, db_user: User):
     await favorites_list(callback, session, db_user)
 
 async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
-    """Render a subcategory's products. ``target`` is a Message or CallbackQuery.
+    """Render a subcategory.
 
-    Products are loaded with an explicit query so AsyncSession never tries a
-    lazy ``sub_cat.products`` IO (MissingGreenlet).
+    - إذا كان القسم تطبيقاً يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات)
+      تعرض الأقسام الداخلية أولاً (ميزة أقسام الرشق الداخلية).
+    - وإلا تعرض منتجات القسم مباشرة.
+    ``target`` is a Message or CallbackQuery. Products are loaded with an
+    explicit query so AsyncSession never tries a lazy ``sub_cat.products``
+    IO (MissingGreenlet).
     """
+    from services.feature_service import FeatureService
     from services.smm_catalog import button_label
 
-    products = await DynamicService.get_active_products(session, sub_cat.id)
     title = button_label(sub_cat.name_ar, sub_cat.emoji)
-    if not products:
+    products = await DynamicService.get_active_products(session, sub_cat.id)
+
+    inner_sections: list[tuple[object, int]] = []
+    if await FeatureService.enabled("smm_inner_sections", default=True):
+        children = await DynamicService.get_active_child_sections(session, sub_cat.id)
+        if children:
+            counts = await DynamicService.active_product_counts_by_sub(
+                session, [child.id for child in children]
+            )
+            inner_sections = [
+                (child, counts.get(child.id, 0))
+                for child in children
+                if counts.get(child.id, 0) > 0
+            ]
+
+    if inner_sections:
+        text = f"<b>{title}</b>\n\nاختر نوع الخدمة المطلوبة:"
+        markup = sections_kb(sub_cat.category_id, inner_sections)
+    elif products:
+        back_sub_id = sub_cat.parent_sub_category_id
+        text = f"<b>{title}{I18nService.t('ux_games_282_17', language)}"
+        markup = products_kb(
+            sub_cat.id,
+            products,
+            sub_cat.category_id,
+            back_sub_id=back_sub_id,
+        )
+    else:
         text = f"<b>{title}{I18nService.t('ux_games_276_16', language)}"
         markup = back_to_main_kb(language)
-    else:
-        text = f"<b>{title}{I18nService.t('ux_games_282_17', language)}"
-        markup = products_kb(sub_cat.id, products, sub_cat.category_id)
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
     else:
@@ -174,7 +202,9 @@ async def category_selected(callback: CallbackQuery, session):
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
     await callback.answer()
-    sub_cats = await DynamicService.get_active_sub_categories(session, category_id)
+    # المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)؛ الأقسام الداخلية تظهر
+    # عند فتح التطبيق نفسه عبر subcat:.
+    sub_cats = await DynamicService.get_active_root_sub_categories(session, category_id)
     if not sub_cats:
         await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{I18nService.t('ux_games_246_13', _auto_lang(locals()))}", reply_markup=back_to_main_kb())
         return
