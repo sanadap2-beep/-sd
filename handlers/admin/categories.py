@@ -330,17 +330,24 @@ async def _show_category_details(
     if category.sub_categories:
         active_subs = sum(1 for s in category.sub_categories if s.is_active)
 
+    margin_text = (
+        f"{category.profit_margin_percent}% (خاص بالقسم)"
+        if category.profit_margin_percent is not None
+        else "غير مضبوط — المنتجات ترث الهامش العالمي"
+    )
     text = (
         f"{category.emoji} <b>{category.name_ar}</b>\n"
         f"🆔 ID: <code>{category.id}</code> | ربط زر: <code>cat:{category.id}</code>\n\n"
         f"📁 النوع: {type_label}\n"
         f"📊 الحالة: {status}\n"
-        f"🔢 الترتيب: {category.sort_order}\n\n"
+        f"🔢 الترتيب: {category.sort_order}\n"
+        f"💵 هامش الربح: <b>{margin_text}</b>\n\n"
         f"📂 عدد الأقسام الفرعية: <b>{subs_count}</b>\n"
-        f"🟢 نشطة منها: <b>{active_subs}</b>\n\n"
-        f"📅 تاريخ الإنشاء: "
-        f"{category.created_at.strftime('%Y-%m-%d')}"
+        f"🟢 نشطة منها: <b>{active_subs}</b>\n"
     )
+    if category.description:
+        text += f"\n📝 الشرح: <i>{category.description}</i>\n"
+    text += f"\n📅 تاريخ الإنشاء: {category.created_at.strftime('%Y-%m-%d')}"
 
     kb = category_detail_kb(category)
 
@@ -408,6 +415,7 @@ async def cat_edit_start(callback: CallbackQuery, state: FSMContext):
         "name": "📝 أرسل الاسم الجديد للقسم:",
         "emoji": "🎨 أرسل الإيموجي الجديد:",
         "sort": ("🔢 أرسل رقم الترتيب الجديد (الأصغر يظهر أولاً):"),
+        "desc": "📝 أرسل شرح القسم (يظهر للزبون عند فتح القسم):\nأرسل <b>مسح</b> لإزالة الشرح:",
     }
 
     prompt = field_prompts.get(field, "أرسل القيمة الجديدة:")
@@ -467,6 +475,15 @@ async def cat_edit_value_received(
             return
         old_value = category.sort_order
         category.sort_order = sort_val
+
+    elif field == "desc":
+        if value in ("مسح", "-", "", "0"):
+            value = ""
+        if len(value) > 500:
+            await message.answer("⚠️ الشرح طويل جداً (الحد الأقصى 500 حرف).")
+            return
+        old_value = category.description
+        category.description = value or None
 
     await session.commit()
 
@@ -923,10 +940,16 @@ async def _show_sub_category_details(
             session, [child.id for child in children]
         )
 
+    sub_margin_text = (
+        f"{sub.profit_margin_percent}% (خاص بالقسم)"
+        if sub.profit_margin_percent is not None
+        else "غير مضبوط — يرث هامش القسم الرئيسي/العالمي"
+    )
     text = (
         f"{sub.emoji} <b>{sub.name_ar}</b>\n"
         f"🆔 ID: <code>{sub.id}</code> | ربط زر: <code>subcat:{sub.id}</code>\n\n"
-        f"📊 الحالة: {status}\n🔢 الترتيب: {sub.sort_order}\n\n"
+        f"📊 الحالة: {status}\n🔢 الترتيب: {sub.sort_order}\n"
+        f"💵 هامش الربح: <b>{sub_margin_text}</b>\n\n"
     )
 
     if sub.description:

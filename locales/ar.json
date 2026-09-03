@@ -152,6 +152,7 @@
   "points_pay_question": "💳 <b>طريقة الدفع</b>\n\nالإجمالي: <b>{total}$</b>\n{summary}\n\nاختر كيف تدفع:",
   "transfer_fee_notice": "💸 عمولة التحويل: {fee}% ({fee_amount}$)\n💰 سيصل للمستلم: {net}$",
   "menu_extras": "🧩 خدمات وميزات البوت الأخرى",
+  "menu_agent": "💼 كن وكيلاً واحصل على خصم يصل إلى {percent}%",
   "menu_withdraw": "💸 سحب الرصيد",
   "menu_notifications": "🔔 الإشعارات",
   "menu_bot_info": "ℹ️ معلومات البوت",

@@ -105,6 +105,20 @@ FEATURES: tuple[FeatureSpec, ...] = (
         require_min_account_age_hours=24,
     ),
     _spec(
+        "agent_program",
+        "برنامج الوكلاء (خصم حتى 10%)",
+        "Agent Program",
+        "الاقتصاد",
+        "وكلاء بخصم على كل المنتجات والخدمات: الأدمن يصدر كوداً، ومن يدخله "
+        "يصبح وكلاً. يُسحب من وُجد إيداعه الأسبوعي أقل من الحد.",
+        False,
+        default_percent=10,
+        min_weekly_deposit_usd=20,
+        check_interval_hours=6,
+        min_percent=1,
+        max_percent=50,
+    ),
+    _spec(
         "tasks_system",
         "المهام مقابل نقاط",
         "Tasks for Points",
@@ -258,6 +272,26 @@ FEATURES: tuple[FeatureSpec, ...] = (
         True,
         quantities_json='[5,10,25,50]',
         max_cards=8,
+    ),
+    _spec(
+        "numbers_availability_board",
+        "التوفر المتقطع (قناة الأرقام الحية)",
+        "Numbers Availability Board",
+        "الأرقام",
+        "قناة حية تُحدَّث كل دقيقة بأعلى الدول الجاهزة للطلب فوراً من المزود مع السعر، "
+        "والضغط على أي دولة ينقل المستخدم للبوت مباشرة لطلب رقم. تحل مشكلة "
+        "«ضغطت على دولة واكتشفت بعد ساعة أنها نفدت».",
+        False,
+        channel_chat_id="",
+        service_code="whatsapp",
+        top_n=10,
+        refresh_seconds=60,
+        header_text=(
+            "📡 <b>التوفر المتقطع — أرقام {service} الآن</b>\n"
+            "هذه الدول متوفرة <b>فورياً</b> عند المزود لحظياً. "
+            "اضغط على الدولة لينقلك للبوت مباشرة واطلب رقمك.\n"
+            "تُحدَّث هذه اللوحة تلقائياً كل دقيقة."
+        ),
     ),
     _spec(
         "smart_number_routing",

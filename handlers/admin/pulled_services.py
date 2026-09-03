@@ -11,10 +11,11 @@ import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import func, select
 
-from database.models import ApiProvider, ProviderService, SubCategory
+from database.models import ApiProvider, Category, ProviderService, ProviderServiceStatus, SubCategory
 from filters.admin_filter import IsAdmin
 from services.pulled_services_service import SERVICES_PER_PAGE, PulledServicesService
 from services.smm_catalog import kind_meta, platform_meta
@@ -42,11 +43,15 @@ def _platforms_kb(rows: list[tuple[str, str, str, int]]):
         text="🛍 مزامنة الاشتراكات الرقمية (ggsoma) الآن",
         callback_data="ps:subsync",
     )
+    b.button(
+        text="🏬 مزامنة متجر كامل ← قسم باسم المتجر",
+        callback_data="ps:storesync",
+    )
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     layout = [2] * (len(rows) // 2)
     if len(rows) % 2:
         layout.append(1)
-    layout.extend([1, 1, 1])
+    layout.extend([1, 1, 1, 1])
     b.adjust(*layout)
     return b.as_markup()
 
@@ -64,10 +69,14 @@ def _kinds_kb(platform_key: str, rows: list[tuple[str, str, str, int]]):
 
 
 def _services_kb(platform_key: str, kind_key: str, services, page: int, total: int):
+    from services.service_localization_service import display_service_name
+
     b = InlineKeyboardBuilder()
     for service in services:
         rate = service.rate_usd or 0
-        name = (service.name or "خدمة")[:36]
+        name = display_service_name(
+            service.name, service.category, service.service_type
+        )[:36]
         b.button(
             text=f"{rate}$ · {name}",
             callback_data=f"ps:sv:{service.id}",
@@ -280,6 +289,97 @@ async def pulled_subscriptions_sync(callback: CallbackQuery, session, state: FSM
     await callback.message.edit_text("\n".join(lines), reply_markup=_build_report_kb())
 
 
+@router.callback_query(F.data == "ps:storesync")
+async def pulled_storesync_pickers(callback: CallbackQuery, session):
+    """اختيار المتجر الذي سيتم مزامنته كاملة إلى قسم باسمه."""
+    from sqlalchemy import func
+
+    from database.models import ApiProvider, ProviderService
+
+    await callback.answer()
+    result = await session.execute(
+        select(ApiProvider, func.count(ProviderService.id))
+        .outerjoin(
+            ProviderService,
+            ProviderService.api_provider_id == ApiProvider.id,
+        )
+        .where(ProviderService.status == ProviderServiceStatus.ACTIVE)
+        .group_by(ApiProvider.id)
+        .order_by(func.count(ProviderService.id).desc())
+    )
+    rows = result.all()
+    b = InlineKeyboardBuilder()
+    for provider, count in rows:
+        if not count:
+            continue
+        b.button(
+            text=f"🏬 {provider.name} ({count} خدمة)",
+            callback_data=f"ps:storesync_p:{provider.id}",
+        )
+    b.button(text="🔙 رجوع", callback_data="admin:pulled_services")
+    if not rows or all(not count for _p, count in rows):
+        await callback.message.edit_text(
+            "🏬 <b>مزامنة متجر كامل</b>\n\n"
+            "لا توجد خدمات مزامنة لأي مزود بعد.\n"
+            "اسحب الخدمات أولاً من «🔌 مزودو المتجر» (زر مزامنة الخدمات).",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:pulled_services")]]
+            ),
+        )
+        return
+    await callback.message.edit_text(
+        "🏬 <b>مزامنة متجر كامل ← قسم باسم المتجر</b>\n\n"
+        "اختر المتجر (المزود) الذي تريد نشر كل خدماته:\n\n"
+        "سيُنشأ قسم باسم المتجر مع كل خدماته (تكلفة + الهامش العالمي) "
+        "بالعربية ومن الأرخص للأغلى.\n\n"
+        "بعدها تملك السيطرة الكاملة: أوقف ما لا تريد بيعه، عدّل هامش أي "
+        "منتج/قسم، أو انشر أي خدمة بسعرك في أي قسم آخر.",
+        reply_markup=b.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:storesync_p:"))
+async def pulled_storesync_run(callback: CallbackQuery, session):
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    await callback.answer("⏳ جارٍ مزامنة المتجر...")
+    try:
+        report = await PulledServicesService.sync_store_to_section(session, provider)
+    except Exception:
+        logger.exception("فشل مزامنة متجر %s", provider.id)
+        await callback.message.edit_text(
+            f"❌ <b>فشل مزامنة متجر {provider.name}</b>\nراجع السجل.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:pulled_services")]]
+            ),
+        )
+        return
+    category: Category = report["category"]
+    section: SubCategory = report["section"]
+    await callback.message.edit_text(
+        "🏬 <b>تمت مزامنة المتجر</b>\n\n"
+        f"🔌 المتجر: <b>{provider.name}</b>\n"
+        f"📂 القسم: <code>cat:{category.id}</code> — {category.emoji} {category.name_ar}\n"
+        f"🗂 القسم الفرعي: <code>subcat:{section.id}</code>\n\n"
+        f"🆕 منتجات جديدة: <b>{report['created']}</b>\n"
+        f"♻️ أعيد تفعيلها: <b>{report['reactivated']}</b>\n"
+        f"🔀 أعيد ترتيبها: <b>{report['reordered']}</b>\n"
+        f"⏭ منتجات يدوية لم تُمس: <b>{report['skipped_manual']}</b>\n\n"
+        "الأسعار = تكلفة المزود + الهامش العالمي حالياً.\n"
+        "لضبط هامش القسم/المنتج: «📂 إدارة الأقسام»، ولإيقاف أي منتج: "
+        "«📦 إدارة المنتجات».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📂 فتح القسم", callback_data=f"cat:{category.id}")],
+                [InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:pulled_services")],
+            ]
+        ),
+    )
+
+
 @router.callback_query(F.data.startswith("ps:pl:"))
 async def pulled_platform(callback: CallbackQuery, session, state: FSMContext):
     await state.clear()
@@ -345,10 +445,20 @@ async def pulled_service_view(callback: CallbackQuery, session, state: FSMContex
     provider_name = provider.name if provider is not None else f"#{service.api_provider_id}"
     p_emoji, p_label = platform_meta(platform_key)
     k_emoji, k_label = kind_meta(kind_key)
+
+    from services.service_localization_service import display_service_name, is_arabic
+
+    display_name = display_service_name(
+        service.name, service.category, service.service_type
+    )
+    name_lines = f"الاسم: {display_name}\n"
+    if not is_arabic(service.name or "") and display_name != (service.name or ""):
+        name_lines += f"<i>أصلي: {service.name}</i>\n"
+
     await callback.answer()
     await callback.message.edit_text(
         "📦 <b>خدمة مسحوبة</b>\n\n"
-        f"الاسم: {service.name}\n"
+        f"{name_lines}"
         f"المنصة: {p_emoji} {p_label}\n"
         f"النوع: {k_emoji} {k_label}\n"
         f"🔌 المزود: {provider_name}\n"
@@ -374,6 +484,12 @@ async def pulled_publish_start(callback: CallbackQuery, session, state: FSMConte
         await callback.answer("الخدمة غير موجودة", show_alert=True)
         return
     platform_key, kind_key = PulledServicesService.classify(service)
+
+    from services.service_localization_service import display_service_name
+
+    svc_display = display_service_name(
+        service.name, service.category, service.service_type
+    )
     await state.clear()
     await callback.answer()
 
@@ -392,7 +508,7 @@ async def pulled_publish_start(callback: CallbackQuery, session, state: FSMConte
                     f"{p_emoji} <b>{p_label}</b> ← {k_emoji} {k_label}\n\n"
                     "📂 <b>اختر القسم الداخلي الذي سيظهر فيه المنتج</b>\n"
                     "(الرقم بين قوسين = عدد المنتجات الظاهرة حالياً)\n\n"
-                    f"الخدمة: {service.name}",
+                    f"الخدمة: {svc_display}",
                     reply_markup=_sections_dest_kb(service_id, sections, platform_key, kind_key, 0),
                 )
                 return
@@ -469,9 +585,14 @@ async def pulled_sub_picked(callback: CallbackQuery, session, state: FSMContext)
     await state.update_data(ps_service_id=service_id, ps_sub_id=sub_id)
     await state.set_state(AdminPulledServicesStates.waiting_sell_price)
     await callback.answer()
+    from services.service_localization_service import display_service_name
+
+    svc_display = display_service_name(
+        service.name, service.category, service.service_type
+    )
     await callback.message.edit_text(
         "💰 <b>سعر البيع لكل 1000</b>\n\n"
-        f"الخدمة: {service.name}\n"
+        f"الخدمة: {svc_display}\n"
         f"تكلفة المزود: {service.rate_usd}$ / 1000\n\n"
         "أرسل سعر البيع بالدولار <b>لكل 1000</b> (مثال: 1.50).\n"
         "هذا السعر هو الذي يراه المستخدم، وليس لكل 100."

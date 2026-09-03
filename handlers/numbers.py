@@ -1,18 +1,26 @@
 """
 هاندلر شراء واستعراض الأرقام:
 - عرض الدول مرتبة تصاعدياً من الأرخص للأغلى.
-- تقسيم العرض إلى 10 دول في كل صفحة بدقة.
+- 25 دولة في كل صفحة بشكل مربعات (زراين) جنب بعض.
+- أسماء الدول معربة دائماً مع العلم والسعر.
 - الشراء الفردي والجملة مع استرجاع الرصيد التلقائي عند أي خطأ.
 """
 
 import json
 import logging
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy import select, func
 
 from database.models import (
@@ -36,6 +44,7 @@ from services.currency_service import CurrencyService
 from services.i18n_service import I18nService
 from services.settings_service import SettingsService
 from services.price_lock_service import PriceLockService
+from services.agent_service import AgentService
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.bulk_number_service import BulkError, BulkNumberService
 from services.feature_service import FeatureService
@@ -45,6 +54,7 @@ from keyboards.numbers import (
     bulk_quantity_kb,
     countries_price_kb,
     confirm_purchase_kb,
+    numbers_hub_kb,
     order_actions_kb,
     code_received_kb,
     ready_number_packages_kb,
@@ -97,6 +107,35 @@ async def _check_active_orders_limit(session, user_id: int) -> bool:
         )
     )
     return result.scalar_one() < max_orders
+
+
+# ══════════════ قسم الأرقام الموحّد (واتساب + تيليجرام + أي قسم جديد) ══════════════
+
+
+@router.callback_query(F.data == "num_hub")
+async def numbers_hub(callback: CallbackQuery, session, db_user=None):
+    """زر «📱 الأرقام» في المتجر: يفتح كل خدمات الأرقام المفعلة."""
+    services = await get_active_number_services(session)
+    if not services:
+        await callback.message.edit_text(
+            "📱 <b>الأرقام</b>\n\nلا توجد خدمات أرقام مفعلة حالياً.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔙 رجوع للمتجر", callback_data="store:home"
+                        )
+                    ]
+                ]
+            ),
+        )
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        "📱 <b>الأرقام</b>\n\nاختر نوع الخدمة المطلوبة:",
+        reply_markup=numbers_hub_kb(services, back_to_store=True),
+    )
+    await callback.answer()
 
 
 # ══════════════ اختيار الخدمة (عرض أول 10 دول مرتبة من الأرخص) ══════════════
@@ -226,9 +265,11 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
         sell_price,
     )
 
+    from services.country_localization_service import display_flag, display_name
+
     price_display = await CurrencyService.format_dual(sell_price, db_user, session)
     await callback.message.edit_text(
-        f"🌍 <b>الدولة:</b> {country.flag} {country.name_ar}\n"
+        f"🌍 <b>الدولة:</b> {display_flag(country)} {display_name(country)}\n"
         f"{service.emoji} <b>الخدمة:</b> {service.name_ar}\n"
         f"💰 <b>السعر:</b> <b>{price_display}</b>\n\n"
         "🛡 <b>الضمان:</b> إذا لم يصل الكود خلال 5 دقائق يُسترجع رصيدك تلقائياً.\n\n"
@@ -332,17 +373,31 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
         await callback_or_message.answer(f"⚠️ {exc}")
         return
 
+    from services.country_localization_service import display_flag, display_name
+
     unit_display = await CurrencyService.format_dual(quote["unit_price_usd"], db_user, session)
     total_display = await CurrencyService.format_dual(quote["total_usd"], db_user, session)
     discount_display = await CurrencyService.format_dual(quote["discount_usd"], db_user, session)
 
+    agent_pct = await AgentService.active_percent(session, db_user.id)
+    agent_line = ""
+    final_total = quote["total_usd"]
+    if agent_pct > 0:
+        final_total = (
+            quote["total_usd"] * (Decimal("100") - agent_pct) / Decimal("100")
+        ).quantize(Decimal("0.0001"))
+        final_total_display = await CurrencyService.format_dual(final_total, db_user, session)
+        total_display = final_total_display
+        agent_line = f"💼 خصم الوكيل: <b>{agent_pct}%</b>\n"
+
     text = (
         "📦 <b>تأكيد شراء دفعة أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
-        f"🌍 الدولة: {country.flag} <b>{country.name_ar}</b>\n"
+        f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
         f"🔢 الكمية: <b>{quantity}</b>\n"
         f"💵 السعر الفردي: <b>{unit_display}</b>\n"
         f"🎁 خصم الجملة: <b>{quote['discount_percent']}%</b> (-{discount_display})\n"
+        f"{agent_line}"
         f"💰 الإجمالي المطلوب: <b>{total_display}</b>\n\n"
         "🛡 إذا فشل أي رقم يتم استرجاع قيمته تلقائياً."
     )
@@ -370,10 +425,12 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
 
     max_qty = await BulkNumberService.max_quantity()
     await callback.answer()
+    from services.country_localization_service import display_flag, display_name
+
     await callback.message.edit_text(
         f"📦 <b>شراء أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
-        f"🌍 الدولة: {country.flag} <b>{country.name_ar}</b>\n"
+        f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
         f"🔢 اختر الكمية أو اكتب كمية مخصصة (الحد الأقصى: <b>{max_qty}</b>):",
         reply_markup=bulk_quantity_kb(service_code, country_code, quote_token),
     )
@@ -437,11 +494,21 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
         await callback.answer(str(exc), show_alert=True)
         return
 
-    if db_user.balance < quote["total_usd"]:
+    # خصم الوكيل على إجمالي الدفعة (يُطبق قبل التحقق من الرصيد والخصم)
+    agent_pct = await AgentService.active_percent(session, db_user.id)
+    payable_total = quote["total_usd"]
+    if agent_pct > 0:
+        payable_total = (
+            quote["total_usd"]
+            * (Decimal("100") - agent_pct)
+            / Decimal("100")
+        ).quantize(Decimal("0.0001"))
+
+    if db_user.balance < payable_total:
         notifier = NotificationService(bot)
         await notifier.notify_insufficient_balance(
             user_telegram_id=db_user.telegram_id,
-            required_usd=str(quote["total_usd"]),
+            required_usd=str(payable_total),
             current_balance_usd=f"{db_user.balance:.2f}",
             reply_markup=insufficient_balance_kb(),
         )
@@ -460,6 +527,7 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
             country,
             quantity,
             timeout_minutes=await _get_order_timeout(),
+            discount_percent=agent_pct if agent_pct > 0 else None,
         )
     except BulkError as exc:
         await callback.message.answer(f"⚠️ {exc}")
@@ -563,6 +631,9 @@ async def confirm_buy(
             preferred_provider = ProviderName(quote.provider)
         except ValueError:
             preferred_provider = None
+
+    # خصم الوكيل على سعر البيع (إن كان وكلاً فعّلاً)
+    sell_price = await AgentService.apply_discount(session, db_user.id, sell_price)
 
     if db_user.balance < sell_price:
         notifier = NotificationService(bot)

@@ -8,9 +8,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from services.dynamic_service import DynamicService
+from services.feature_service import FeatureService
+from services.availability_board_service import FEATURE_KEY as AVAIL_FEATURE, AvailabilityBoardService
 from states.states import AdminNumberServiceStates
 from keyboards.admin import (
     admin_number_services_kb,
+    admin_nsvc_avail_kb,
+    admin_nsvc_avail_services_kb,
     admin_nsvc_detail_kb,
     admin_back_kb,
 )
@@ -221,3 +225,125 @@ async def nsvc_delete(callback: CallbackQuery, session):
     else:
         await callback.answer("⚠️ غير موجود.", show_alert=True)
     await number_services_list(callback, session)
+
+
+# ══════════════ قناة التوفر المتقطع (الأرقام الحية) ══════════════
+
+
+async def _avail_status_text() -> str:
+    enabled = await AvailabilityBoardService.enabled()
+    chat_id = await AvailabilityBoardService.channel_chat_id()
+    service_code = await AvailabilityBoardService.service_code()
+    top_n = await AvailabilityBoardService.top_n()
+    refresh = await AvailabilityBoardService.refresh_seconds()
+    channel = f"<code>{chat_id}</code>" if chat_id else "⚪ لم تُضبط"
+    status = "🟢 مفعّلة" if enabled else "⚪ معطّلة (من مركز الإضافات)"
+    return (
+        "📡 <b>التوفر المتقطع — قناة الأرقام الحية</b>\n\n"
+        "تُنشر في القناة المحددة لوحة كل دقيقة بأعلى الدول الجاهزة "
+        "للطلب فوراً من المزود مع السعر، والضغط على أي دولة ينقل "
+        "المستخدم للبوت مباشرة لطلب رقم.\n\n"
+        f"الحالة: {status}\n"
+        f"القناة: {channel}\n"
+        f"الخدمة: <code>{service_code}</code>\n"
+        f"عدد الدول: <b>{top_n}</b>\n"
+        f"الحدّث: كل <b>{refresh}</b> ثانية"
+    )
+
+
+@router.callback_query(F.data == "admin:nsvc_avail")
+async def nsvc_avail_home(callback: CallbackQuery):
+    text = await _avail_status_text()
+    await callback.message.edit_text(text, reply_markup=admin_nsvc_avail_kb())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_channel")
+async def nsvc_avail_channel_start(callback: CallbackQuery, state: FSMContext):
+    chat_id = await AvailabilityBoardService.channel_chat_id()
+    current = f"\n\nالقناة الحالية: <code>{chat_id}</code>" if chat_id else ""
+    await callback.message.edit_text(
+        " أرسل آيدي قناة التوفر:\n"
+        "(مثال: -1001234567890)\n"
+        "أضف البوت أدمن في القناة أولًا.\n"
+        "أو أرسل 0 لإيقاف النشر."
+        f"{current}",
+        reply_markup=admin_nsvc_avail_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_availability_channel)
+    await callback.answer()
+
+
+@router.message(AdminNumberServiceStates.waiting_availability_channel)
+async def nsvc_avail_channel_received(message: Message, state: FSMContext, session):
+    raw = (message.text or "").strip()
+    if raw not in ("0",) and not (raw.lstrip("-").isdigit()):
+        await message.answer("⚠️ أرسل آيدي القناة رقمياً (أو 0 للإيقاف).")
+        return
+    await FeatureService.set_option(session, AVAIL_FEATURE, "channel_chat_id", raw)
+    await state.clear()
+    await message.answer(
+        "✅ تم تحديث قناة التوفر.",
+        reply_markup=admin_nsvc_avail_kb(),
+    )
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_topn")
+async def nsvc_avail_topn_start(callback: CallbackQuery, state: FSMContext):
+    current = await AvailabilityBoardService.top_n()
+    await callback.message.edit_text(
+        f"🔢 أرسل عدد الدول المعروضة (3–25).\n\nالحالي: <b>{current}</b>",
+        reply_markup=admin_nsvc_avail_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_availability_topn)
+    await callback.answer()
+
+
+@router.message(AdminNumberServiceStates.waiting_availability_topn)
+async def nsvc_avail_topn_received(message: Message, state: FSMContext, session):
+    raw = (message.text or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        await message.answer("⚠️ أرسل رقماً فقط.")
+        return
+    if not (3 <= value <= 25):
+        await message.answer("⚠️ القيمة بين 3 و25.")
+        return
+    await FeatureService.set_option(session, AVAIL_FEATURE, "top_n", value)
+    await state.clear()
+    await message.answer("✅ تم تحديث عدد الدول.", reply_markup=admin_nsvc_avail_kb())
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_services")
+async def nsvc_avail_services(callback: CallbackQuery, session):
+    services = await DynamicService.get_all_number_services(session)
+    current = await AvailabilityBoardService.service_code()
+    lines = ["📱 <b>اختر خدمة التوفر المتقطع</b>", ""]
+    for svc in services:
+        mark = "🟢" if svc.code == current else "⚪"
+        lines.append(f"{mark} {svc.emoji} {svc.name_ar} (<code>{svc.code}</code>)")
+    await callback.message.edit_text(
+        "\n".join(lines),
+        reply_markup=admin_nsvc_avail_services_kb(services),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_avail_svc:"))
+async def nsvc_avail_service_selected(callback: CallbackQuery, session, state: FSMContext):
+    code = callback.data.rsplit(":", 1)[1]
+    await FeatureService.set_option(session, AVAIL_FEATURE, "service_code", code)
+    await callback.answer("✅ تم اختيار الخدمة.")
+    await nsvc_avail_home(callback)
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_post")
+async def nsvc_avail_post(callback: CallbackQuery, session, bot):
+    await callback.answer("⏳ جاري النشر...")
+    result = await AvailabilityBoardService.post_board(bot)
+    text = await _avail_status_text()
+    await callback.message.edit_text(
+        f"{text}\n\n<b>نتيجة الاختبار:</b>\n{result}",
+        reply_markup=admin_nsvc_avail_kb(),
+    )

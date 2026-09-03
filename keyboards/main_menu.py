@@ -23,6 +23,8 @@ def build_main_menu(
     show_tasks: bool = False,
     show_points: bool = False,
     dynamic_buttons: list[MainMenuButton] | None = None,
+    show_agent: bool = False,
+    agent_percent: str = "10",
 ) -> InlineKeyboardMarkup:
     """Build the compact top-level menu.
 
@@ -49,6 +51,8 @@ def build_main_menu(
     b.button(text=t("menu_bot_info"), callback_data="info:home")
     b.button(text=t("menu_transfer"), callback_data="menu:transfer")
     b.button(text=t("menu_extras"), callback_data="extras:home")
+    if show_agent:
+        b.button(text=t("menu_agent", percent=agent_percent), callback_data="agent:home")
 
     b.adjust(2, 2, 2, 2, 2)
     return b.as_markup()

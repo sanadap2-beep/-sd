@@ -22,6 +22,7 @@ from database.models import (
 )
 from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
+from services.agent_service import AgentService
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.catalog_routing_service import CatalogRoutingService
 from services.cashback_service import CashbackService
@@ -100,6 +101,8 @@ class CheckoutService:
         if discount == tier_discount and tier_discount > promotion_discount:
             promotion = None
         price = total - discount
+        # خصم الوكيل (إن كان مستخدمه وكلاً فعّلاً): على السعر بعد كل الخصومات
+        price = await AgentService.apply_discount(session, user_id, price)
 
         if fulfillment == ProductFulfillmentType.INVENTORY.value:
             if target:

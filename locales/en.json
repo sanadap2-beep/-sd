@@ -152,6 +152,7 @@
   "points_pay_question": "💳 <b>Payment method</b>\n\nTotal: <b>${total}</b>\n{summary}\n\nChoose how to pay:",
   "transfer_fee_notice": "💸 Transfer fee: {fee}% (${fee_amount})\n💰 Recipient gets: ${net}",
   "menu_extras": "🧩 Other bot services & features",
+  "menu_agent": "💼 Become an agent & get up to {percent}% off",
   "menu_withdraw": "💸 Withdraw",
   "menu_notifications": "🔔 Notifications",
   "menu_bot_info": "ℹ️ Bot Info",

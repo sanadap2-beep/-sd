@@ -1,7 +1,8 @@
 """
 أزرار خدمة الأرقام:
-- عرض 10 دول في كل صفحة بدقة.
+- عرض 25 دولة في كل صفحة بشكل مربعات (زراين) جنب بعض.
 - إظهار السعر النهائي وعلم الدولة على كل زر.
+- ترتيب دائم من الأرخص إلى الأغلى.
 - أزرار تنقل واضحة بين الصفحات وسهلة الاستخدام.
 """
 
@@ -10,8 +11,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import Country, NumberService
 
-# تحديد 10 دول في كل صفحة
-COUNTRIES_PER_PAGE = 10
+# تحديد 25 دولة في كل صفحة (صف بمربعين)
+COUNTRIES_PER_PAGE = 25
 
 
 def format_price_display(price) -> str:
@@ -41,12 +42,35 @@ def number_services_kb(
     return b.as_markup()
 
 
+def numbers_hub_kb(
+    services: list[NumberService],
+    back_to_store: bool = True,
+) -> InlineKeyboardMarkup:
+    """قسم «الأرقام» الموحّد: كل خدمات الأرقام (واتساب/تيليجرام/جديدة).
+
+    أي خدمة أرقام يضيفها الأدمن من «إدارة خدمات الأرقام» تظهر هنا
+    تلقائياً دون تعديل الكود.
+    """
+    b = InlineKeyboardBuilder()
+    for svc in services:
+        b.button(
+            text=f"{svc.emoji} أرقام {svc.name_ar}",
+            callback_data=f"num_svc:{svc.code}",
+        )
+    if back_to_store:
+        b.button(text="🔙 رجوع للمتجر", callback_data="store:home")
+    else:
+        b.button(text="🔙 رجوع", callback_data="back_to_main")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def countries_kb(
     service_code: str,
     countries: list[Country],
     page: int = 0,
 ) -> InlineKeyboardMarkup:
-    """قائمة الدول بدون أسعار (احتياطية)."""
+    """قائمة الدول بدون أسعار (احتياطية) — 25 دولة بمربعات جنب بعض."""
     b = InlineKeyboardBuilder()
 
     start = page * COUNTRIES_PER_PAGE
@@ -104,8 +128,9 @@ def countries_price_kb(
 ) -> InlineKeyboardMarkup:
     """
     قائمة الدول مرتبة من الأرخص للأغلى:
-    - 10 دول في كل صفحة.
-    - السعر النهائي (التكلفة + نسبة الربح) ظاهر على كل زر.
+    - 25 دولة في كل صفحة.
+    - شكل مربعات: زران جنب بعض في كل صف.
+    - السعر النهائي (التكلفة + نسبة الربح) ظاهر على كل زر مع العلم.
     """
     b = InlineKeyboardBuilder()
 
@@ -116,11 +141,15 @@ def countries_price_kb(
     end = start + COUNTRIES_PER_PAGE
     page_entries = entries[start:end]
 
-    # عرض أزرار الدول في عمود واحد لتفادي قص الأسماء والأسعار
+    # عرض أزرار الدول بشكل مربعات (زراين في كل صف) مع العلم والسعر
     for entry in page_entries:
         price_str = format_price_display(entry.sell_usd)
+        name = entry.name_ar
+        # نختصر الاسم الطويل حتى لا يُقص السعر مع العرض بصفين
+        if len(name) > 18:
+            name = name[:17] + "…"
         b.button(
-            text=f"{entry.flag} {entry.name_ar} — {price_str}$",
+            text=f"{entry.flag} {name} — {price_str}$",
             callback_data=f"num_country:{service_code}:{entry.code}",
         )
 
@@ -151,7 +180,10 @@ def countries_price_kb(
         callback_data="store:home",
     )
 
-    rows = [1] * len(page_entries)
+    # صف بمربعين للدول، ثم صف التنقل، ثم الرجوع
+    rows = [2] * (len(page_entries) // 2)
+    if len(page_entries) % 2:
+        rows.append(1)
     if nav_buttons_count:
         rows.append(nav_buttons_count)
     rows.append(1)

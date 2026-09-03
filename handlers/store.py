@@ -38,14 +38,31 @@ async def store_home(callback: CallbackQuery, session, db_user):
         I18nService.t("store_apps_count", language, count=counts.get("apps", 0)),
         I18nService.t("store_total_count", language, count=overview["total_products"]),
     ]
+    # الأزرار تُبنى من التحكم المركزي بالأدمن: أي زر يُطفأ من
+    # «🛍 التحكم بالمتجر» يختفي هنا فوراً، وأي قسم جديد يُضاف يظهر.
+    from services.store_section_service import StoreEntry, StoreSectionService
+
+    entries = [
+        entry
+        for entry in await StoreSectionService.list_entries(include_inactive=True)
+        if entry.is_active
+    ]
+    # الأقسام الديناميكية تظهر بعد الأقسام الذكية (حسب ترتيبها في الإدارة).
+    for category in categories:
+        entries.append(
+            StoreEntry(
+                key=f"cat:{category.id}",
+                label=f"{category.emoji} {category.name_ar}",
+                action=f"cat:{category.id}",
+                is_active=True,
+                sort_order=40 + min(max(category.sort_order, 0), 55),
+                is_builtin=True,
+            )
+        )
+    entries.sort(key=lambda item: (item.sort_order, item.key))
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=store_home_kb(
-            number_services,
-            categories,
-            settings.WEBAPP_URL,
-            language,
-        ),
+        reply_markup=store_home_kb(entries=entries, webapp_url=settings.WEBAPP_URL, language=language),
     )
     await callback.answer()
 

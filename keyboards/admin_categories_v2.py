@@ -198,6 +198,14 @@ def category_detail_kb(
     )
 
     b.button(
+        text="💵 هامش ربح القسم (%)",
+        callback_data=f"admin:cat_margin:{category.id}",
+    )
+    b.button(
+        text="📝 شرح القسم",
+        callback_data=f"admin:cat_edit:desc:{category.id}",
+    )
+    b.button(
         text="✏️ تعديل الاسم",
         callback_data=f"admin:cat_edit:name:{category.id}",
     )
@@ -306,14 +314,10 @@ def sub_category_detail_kb(
             text=f"└ {status_icon} {child.emoji or ''} {child.name_ar} ({product_count})",
             callback_data=f"admin:subcat_view:{child.id}",
         )
-    is_smm_app = (
-        getattr(sub_category, "category", None) is not None
-        and getattr(sub_category.category, "type", None) == CategoryType.SMM
-    )
     has_children = bool(children)
-    if is_smm_app and sub_category.parent_sub_category_id is None:
-        # أزرار «عرض المنتجات / إضافة منتج» تظهر فقط للتطبيق بلا أقسام داخلية؛
-        # وزر إضافة قسم داخلي متاح دائماً (حتى لإنشاء أول قسم داخل تطبيق فارغ).
+    if sub_category.parent_sub_category_id is None:
+        # أي قسم فرعي جذر (تطبيق رشق أو قسم أي قسم آخر) يمكن أن يحوي
+        # أقساماً داخلية — سلطة كاملة للأدمن في بناء الترتيب.
         b.button(
             text="➕ إضافة قسم داخلي",
             callback_data=f"admin:subcat_add_child:{sub_category.id}",
@@ -333,6 +337,10 @@ def sub_category_detail_kb(
             callback_data=(f"admin:prod_wizard_start:{sub_category.id}"),
         )
 
+    b.button(
+        text="💵 هامش ربح هذا القسم (%)",
+        callback_data=(f"admin:subcat_margin:{sub_category.id}"),
+    )
     b.button(
         text="✏️ تعديل الاسم",
         callback_data=(f"admin:subcat_edit:name:{sub_category.id}"),

@@ -129,7 +129,7 @@ class _FakeNumberProvider:
     async def get_price(self, country: str, service: str):
         return self.price
 
-    async def buy_number(self, country: str, service: str, operator=None):
+    async def buy_number(self, country: str, service: str, operator=None, **kwargs):
         self.bought += 1
         return PurchasedNumber(
             provider_order_id=f"{self.provider.value}-1",
@@ -347,7 +347,15 @@ async def test_extras_page_collects_old_features_and_dynamic_buttons(monkeypatch
         async def answer(self):
             return None
 
-    monkeypatch.setattr(extras_handler, "_enabled", enabled)
+    # الرؤية الآن تمر عبر ExtrasSectionService (تقودها FeatureService الفعلية
+    # + مفاتيح الأدمن)، لا عبر _enabled المباشر.
+    import services.extras_section_service as extras_section_module
+
+    monkeypatch.setattr(
+        extras_section_module.FeatureService,
+        "enabled",
+        staticmethod(enabled),
+    )
     monkeypatch.setattr(extras_handler.MainButtonService, "list_buttons", list_buttons)
     callback = FakeCallback()
     await extras_handler.extras_home(callback, SimpleNamespace(language_code="en"))
