@@ -12,6 +12,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+from services.html_guard import esc
 from services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
@@ -308,8 +309,8 @@ class NotificationService:
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         text = (
             "✅ <b>عملية شراء ناجحة!</b>\n\n"
-            f"👤 المستخدم: {masked}\n"
-            f"🛒 المنتج: {product_name}\n"
+            f"👤 المستخدم: {esc(masked)}\n"
+            f"🛒 المنتج: {esc(product_name)}\n"
             f"💰 المبلغ: {price_usd}$\n"
             f"📅 التاريخ: {now} UTC"
         )
@@ -478,8 +479,8 @@ class NotificationService:
         text = (
             "✅ <b>مباشر البوت — شراء مكتمل</b>\n\n"
             f"👤 المستخدم: <code>{telegram_id}</code> "
-            f"{f'(@{username})' if username else ''} {name[:40]}\n"
-            f"📦 المنتج: {item}\n"
+            f"{f'(@{esc(username)})' if username else ''} {esc(name[:40])}\n"
+            f"📦 المنتج: {esc(item)}\n"
             f"💰 خُصم من رصيده: <b>{amount_usd}$</b>"
         )
         if order_id is not None:
@@ -504,10 +505,10 @@ class NotificationService:
         text = (
             "↩️ <b>مباشر البوت — استرجاع رصيد</b>\n\n"
             f"👤 المستخدم: <code>{telegram_id}</code> "
-            f"{f'(@{username})' if username else ''} {name[:40]}\n"
-            f"📦 المنتج: {item}\n"
+            f"{f'(@{esc(username)})' if username else ''} {esc(name[:40])}\n"
+            f"📦 المنتج: {esc(item)}\n"
             f"💵 المبلغ المسترجع: <b>{amount_usd}$</b>\n"
-            f"📄 السبب: {reason}"
+            f"📄 السبب: {esc(reason)}"
         )
         if order_id is not None:
             text += f"\n🆔 الطلب: #{order_id}"
@@ -526,15 +527,15 @@ class NotificationService:
         """Alert the admin channel whenever someone opens the bot for the first time."""
         source = (
             f"🔗 رابط إحالة من <code>{referrer_telegram_id}</code> "
-            f"(@{referrer_username or '-'})"
+            f"(@{esc(referrer_username or '-')})"
             if via_referral
             else "🚪 دخول عادي (بدون إحالة)"
         )
         text = (
             "👤 <b>مستخدم جديد دخل البوت</b>\n\n"
             f"🆔 الآيدي: <code>{telegram_id}</code>\n"
-            f"👤 الاسم: {full_name or '—'}\n"
-            f"🔗 يوزر: @{username or '-'}\n"
+            f"👤 الاسم: {esc(full_name or '—')}\n"
+            f"🔗 يوزر: @{esc(username or '-')}\n"
             f"📥 المصدر: {source}"
         )
         await self.notify_admin(text, notification_type="users", priority="normal")
@@ -555,8 +556,8 @@ class NotificationService:
             I18nService.t(
                 "referral_join_notification",
                 referrer_language,
-                name=new_full_name or "مستخدم",
-                username=new_username or "-",
+                name=esc(new_full_name or "مستخدم"),
+                username=esc(new_username or "-"),
                 user_id=str(new_telegram_id),
             ),
             notification_type="referral",
