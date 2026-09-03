@@ -10,6 +10,8 @@ router = Router(name="bot_info")
 
 def _info_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 🛡 طلبات أنجزناها", callback_data="info:stats")],
+        [InlineKeyboardButton(text="🔴 🔺 شروط الاستخدام", callback_data="info:terms")],
         [InlineKeyboardButton(text="📖 شرح الأزرار والخدمات", callback_data="info:guide")],
         [InlineKeyboardButton(text="💳 كيف تشحن حسابك", callback_data="info:deposit")],
         [InlineKeyboardButton(text="💸 كيف تسحب رصيدك", callback_data="info:withdraw")],
@@ -33,6 +35,46 @@ async def bot_info_home(callback: CallbackQuery):
         "جميع الأسعار الداخلية بالدولار، ويمكن عرض ما يعادلها بالعملة المحلية حسب سعر الصرف اليومي.\n\n"
         "👨‍💻 حقوق البرمجة والتطوير: <b>المطور</b>\n"
         "📩 التواصل والدعم: @hefawe7",
+        reply_markup=_info_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "info:stats")
+async def public_stats(callback: CallbackQuery, session):
+    from sqlalchemy import func, select
+    from database.models import NumberOrder, OrderStatus, UnifiedOrder, UnifiedOrderStatus
+
+    number_count = (
+        await session.execute(
+            select(func.count(NumberOrder.id)).where(NumberOrder.status == OrderStatus.COMPLETED)
+        )
+    ).scalar_one()
+    unified_count = (
+        await session.execute(
+            select(func.count(UnifiedOrder.id)).where(UnifiedOrder.status == UnifiedOrderStatus.COMPLETED)
+        )
+    ).scalar_one()
+    total = int(number_count or 0) + int(unified_count or 0)
+    await callback.message.edit_text(
+        "🟢 🛡 <b>طلبات أنجزناها</b>\n\n"
+        f"أنجزنا حتى الآن <b>{total}</b> طلب بنجاح داخل المنصة.\n"
+        "نواصل مراقبة الطلبات واسترجاع الرصيد تلقائياً عند فشل أي رقم أو خدمة.",
+        reply_markup=_info_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "info:terms")
+async def terms(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "🔴 🔺 <b>شروط الاستخدام</b>\n\n"
+        "1) استخدم الخدمات بشكل قانوني ومسؤول.\n"
+        "2) أسعار الأرقام والخدمات متغيرة حسب المزود قبل تأكيد الطلب.\n"
+        "3) في حال نفاد الرقم أو عدم وصول الكود خلال المهلة، يرجع الرصيد تلقائياً.\n"
+        "4) طلبات المتجر اليدوية تُراجع من الإدارة، والرفض يعني استرجاع الرصيد.\n"
+        "5) يمنع الاحتيال، إساءة استخدام الإحالات، أو نشر محتوى مخالف عبر الإعلانات والسوق.\n\n"
+        "متابعتك للشراء تعني موافقتك على هذه الشروط.",
         reply_markup=_info_kb(),
     )
     await callback.answer()

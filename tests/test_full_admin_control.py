@@ -159,6 +159,17 @@ def test_admin_main_has_changelog_button():
     assert "admin:changelog" in buttons
 
 
+def test_admin_main_is_grouped_into_four_tabs():
+    from keyboards.admin import admin_main_kb
+
+    kb = admin_main_kb()
+    buttons = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert "admin:tab:finance" in buttons
+    assert "admin:tab:catalog" in buttons
+    assert "admin:tab:users" in buttons
+    assert "admin:tab:system" in buttons
+
+
 @pytest.mark.asyncio
 async def test_changelog_screen_shows_today_updates():
     from handlers.admin.panel import CHANGELOG_ENTRIES, _changelog_chunks, admin_changelog

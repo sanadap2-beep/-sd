@@ -149,6 +149,26 @@ async def test_resolve_bot_username_falls_back_to_env(monkeypatch):
     reset_bot_username_cache()
 
 
+@pytest.mark.asyncio
+async def test_resolve_bot_username_live_bot_overrides_cached_env(monkeypatch):
+    reset_bot_username_cache()
+
+    class LiveMe:
+        username = "LiveShop_bot"
+
+    class LiveBot:
+        async def get_me(self):
+            return LiveMe()
+
+    monkeypatch.setattr(
+        "services.bot_identity.settings",
+        SimpleNamespace(BOT_USERNAME="@EnvShop_bot"),
+    )
+    assert await resolve_bot_username(None) == "EnvShop_bot"
+    assert await resolve_bot_username(LiveBot()) == "LiveShop_bot"
+    reset_bot_username_cache()
+
+
 @pytest.mark.parametrize(
     "text, expected",
     [

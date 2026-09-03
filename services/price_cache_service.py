@@ -7,12 +7,12 @@ docker-compose.yml. النتيجة: كل worker لديه أسعار مختلفة
 كلياً عند إعادة التشغيل، ولا يمكن تشغيل أكثر من نسخة من البوت.
 
 الحل: واجهة واحدة بنسختين.
-- إن كان REDIS_URL مضبوطاً وتعمل الميزة `redis_cache`، يُستخدم Redis
-  فيشارك كل الـ workers نفس الأسعار.
+- إن كان REDIS_URL مضبوطاً، يُستخدم Redis مباشرة فيشارك كل الـ workers
+  نفس الأسعار (الميزة `redis_cache` تبقى لضبط TTL من لوحة الأدمن فقط).
 - وإلا يُستخدم كاش الذاكرة كما كان، فلا ينكسر أي تثبيت قائم.
 
-الأهم: أي عطل في Redis لا يُسقط البيع. يُسجَّل الخطأ ويُعاد None
-(أي «لا كاش») فيتابع المزود جلب السعر من مصدره الحقيقي.
+الأهم: أي عطل في Redis لا يُسقط البيع. يُسجَّل الخطأ ويتم الرجوع
+لكاش الذاكرة، وإن لم توجد قيمة مخزنة يتابع المزود جلب السعر من مصدره الحقيقي.
 """
 
 from __future__ import annotations
@@ -172,22 +172,18 @@ class PriceCacheService:
 
     @classmethod
     async def _backend(cls):
-        """يختار Redis إن كان مضبوطاً والميزة مفعّلة، وإلا الذاكرة."""
-        if cls._redis is not None:
-            return cls._redis
+        """يختار Redis إن كان REDIS_URL مضبوطاً، وإلا الذاكرة."""
         if not settings.REDIS_URL:
             return cls._memory
-        # نتجنب استيراد FeatureService على مستوى الوحدة لأن ذلك يُنشئ
-        # دورة استيراد (feature_service -> database.engine -> config).
+        if cls._redis is None or cls._redis._url != settings.REDIS_URL:
+            cls._redis = _RedisBackend(settings.REDIS_URL)
+        # جرّب الاتصال الآن حتى نستطيع الرجوع للذاكرة عند تعطل Redis بدلاً
+        # من فقدان الكاش كلياً رغم أن واجهة البيع يجب أن تبقى fail-open.
         try:
-            from services.feature_service import FeatureService
-
-            if not await FeatureService.enabled("redis_cache"):
-                return cls._memory
+            client = await cls._redis._connect()
         except Exception:  # noqa: BLE001
-            return cls._memory
-        cls._redis = _RedisBackend(settings.REDIS_URL)
-        return cls._redis
+            client = None
+        return cls._redis if client is not None else cls._memory
 
     @staticmethod
     def _normalize(value: dict) -> dict:

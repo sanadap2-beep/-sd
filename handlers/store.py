@@ -6,7 +6,13 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from config import settings
-from keyboards.store import SECTION_LABELS, section_label, store_home_kb, store_products_kb
+from keyboards.store import (
+    SECTION_LABELS,
+    section_label,
+    store_empty_section_kb,
+    store_home_kb,
+    store_products_kb,
+)
 from services.currency_service import CurrencyService
 from services.feature_service import FeatureService
 from services.i18n_service import I18nService
@@ -83,12 +89,7 @@ async def store_section(callback: CallbackQuery, session, db_user):
         await callback.message.edit_text(
             f"{section_label(section, language)}\n\n"
             f"{I18nService.t('store_no_products', language)}",
-            reply_markup=store_home_kb(
-                await get_active_number_services(session),
-                await DynamicService.get_active_categories(session),
-                settings.WEBAPP_URL,
-                language,
-            ),
+            reply_markup=store_empty_section_kb(language),
         )
         await callback.answer()
         return

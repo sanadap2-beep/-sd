@@ -17,6 +17,9 @@
   --red: #ef4444;
   --red-2: #dc2626;
   --red-ink: #3d0b0b;
+  /* aliases for older JS/components */
+  --brand: var(--green);
+  --danger: var(--red);
 
   --glow: 0 8px 26px rgba(0, 0, 0, .35);
 }

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_UP
 from time import monotonic
@@ -23,6 +24,58 @@ logger = logging.getLogger(__name__)
 BOARD_TTL_SECONDS = 60
 BOARD_CONCURRENCY = 10
 
+# دول نادرة/مرتفعة الطلب يتذبذب مخزونها عادةً، وتستحق الظهور في قناة
+# «التوفر المتقطع» عند رجوعها للمخزون بدل الاكتفاء بأرخص الدول الثابتة.
+# تُكتب بصيغ متعددة لأن بعض السجلات تستخدم ISO-2 (ae) وبعضها أسماء مزودين
+# مثل uae/united_arab_emirates.
+DEFAULT_INTERMITTENT_COUNTRY_CODES = frozenset(
+    {
+        "ae",
+        "uae",
+        "united_arab_emirates",
+        "sa",
+        "ksa",
+        "saudi_arabia",
+        "us",
+        "usa",
+        "united_states",
+        "gb",
+        "uk",
+        "united_kingdom",
+        "qa",
+        "qatar",
+        "kw",
+        "kuwait",
+        "bh",
+        "bahrain",
+        "om",
+        "oman",
+        "jo",
+        "jordan",
+        "eg",
+        "egypt",
+        "de",
+        "germany",
+        "fr",
+        "france",
+        "ca",
+        "canada",
+        "au",
+        "australia",
+    }
+)
+
+
+def normalize_country_code(code: str | None) -> str:
+    """Normalize country identifiers used by DB rows/providers/settings."""
+    value = str(code or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return re.sub(r"[^a-z0-9_]", "", value)
+
+
+def is_intermittent_country_code(code: str | None) -> bool:
+    """Best-effort static classification for rare/intermittent countries."""
+    return normalize_country_code(code) in DEFAULT_INTERMITTENT_COUNTRY_CODES
+
 
 @dataclass
 class BoardEntry:
@@ -32,6 +85,7 @@ class BoardEntry:
     flag: str
     cost_usd: Decimal
     sell_usd: Decimal
+    is_intermittent: bool = False
 
 
 _BOARD_CACHE: dict[str, tuple[float, list[BoardEntry]]] = {}
@@ -54,10 +108,25 @@ def invalidate_board(service_code: str | None = None) -> None:
         _BOARD_CACHE.pop(service_code, None)
 
 
-async def _fetch_cost(manager, service, country) -> tuple[object, Decimal] | None:
+async def _fetch_cost(
+    manager,
+    service,
+    country,
+    use_provider_cache: bool = True,
+) -> tuple[object, Decimal] | None:
     """جلب أرخص تكلفة متوفرة لدولة معينة مع التأكد من وجود أرقام."""
     try:
-        prices = await manager.get_cheapest_price(service, country, session=None)
+        try:
+            prices = await manager.get_cheapest_price(
+                service,
+                country,
+                session=None,
+                use_cache=use_provider_cache,
+            )
+        except TypeError as exc:
+            if "use_cache" not in str(exc):
+                raise
+            prices = await manager.get_cheapest_price(service, country, session=None)
     except Exception:
         return None
 
@@ -79,8 +148,8 @@ async def build_board(session, service, manager=None, use_cache: bool = True) ->
     - تطبيق نسبة ربح الأدمن.
     - الترتيب من الأرخص إلى الأغلى.
 
-    ``use_cache=False`` يجبر الجلب المباشر (تستخدمه قناة التوفر الحية
-    حتى تعكس كل تحديث حتى لو دخل كاش آخر للتو).
+    ``use_cache=False`` يجبر الجلب المباشر ويتجاوز كاش اللوحة وكاش أسعار
+    المزودين (تستخدمه قناة التوفر الحية حتى ترصد عودة المخزون فوراً).
     """
     from providers.manager import provider_manager as default_manager
 
@@ -104,7 +173,12 @@ async def build_board(session, service, manager=None, use_cache: bool = True) ->
 
     async def _worker(country):
         async with semaphore:
-            fetched = await _fetch_cost(manager, service, country)
+            fetched = await _fetch_cost(
+                manager,
+                service,
+                country,
+                use_provider_cache=use_cache,
+            )
             if fetched is not None:
                 costs[country.code] = fetched
 
@@ -138,6 +212,7 @@ async def build_board(session, service, manager=None, use_cache: bool = True) ->
                 flag=display_flag(country),
                 cost_usd=cost,
                 sell_usd=sell,
+                is_intermittent=is_intermittent_country_code(country.code),
             )
         )
 

@@ -50,10 +50,13 @@ def normalize_bot_username(raw: str | None) -> str:
 
 
 async def resolve_bot_username(bot=None) -> str:
-    """Return the bot's @-less username, preferring Telegram's getMe result."""
+    """Return the bot's @-less username, preferring Telegram's getMe result.
+
+    If a previous call cached the environment fallback, a later call that has a
+    live ``bot`` object must still query ``get_me()``.  This prevents stale or
+    malformed ``BOT_USERNAME`` values from leaking into public channel links.
+    """
     global _cached_username
-    if _cached_username:
-        return _cached_username
 
     if bot is not None:
         try:
@@ -64,6 +67,11 @@ async def resolve_bot_username(bot=None) -> str:
                 return username
         except Exception as exc:  # noqa: BLE001 - env fallback must still work
             logger.warning("تعذّر جلب يوزرنيم البوت من Telegram: %s", exc)
+            if _cached_username:
+                return _cached_username
+
+    if _cached_username:
+        return _cached_username
 
     username = normalize_bot_username(getattr(settings, "BOT_USERNAME", None))
     if username:
@@ -77,6 +85,24 @@ def referral_start_link(username: str, telegram_id: int) -> str:
     if not clean:
         return ""
     return f"https://t.me/{clean}?start=ref_{int(telegram_id)}"
+
+
+def number_buy_start_link(username: str, service_code: str, country_code: str) -> str:
+    """Build a buy deep link for the live availability channel.
+
+    Telegram's ``start`` payload may safely contain letters, digits and
+    underscores.  We still strip accidental ``@``/URL prefixes from the bot
+    username through :func:`normalize_bot_username` so channel buttons never
+    produce «username not found» because of a malformed environment value.
+    """
+    clean = normalize_bot_username(username)
+    if not clean:
+        return ""
+    service = re.sub(r"[^A-Za-z0-9_\-]", "_", str(service_code or "")).strip("_")
+    country = re.sub(r"[^A-Za-z0-9_\-]", "_", str(country_code or "")).strip("_")
+    if not service or not country:
+        return ""
+    return f"https://t.me/{clean}?start=buy_{service}__{country}"
 
 
 def referral_share_url(link: str, share_text: str = "") -> str:

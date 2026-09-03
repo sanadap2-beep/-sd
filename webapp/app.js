@@ -7,7 +7,7 @@ const message = document.getElementById("message");
 function showMessage(text, error = false) {
   message.textContent = text;
   message.classList.toggle("hidden", !text);
-  message.style.color = error ? "var(--danger)" : "var(--brand)";
+  message.style.color = error ? "var(--red)" : "var(--green)";
 }
 
 function authHeaders() {

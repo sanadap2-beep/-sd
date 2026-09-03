@@ -24,6 +24,10 @@ def section_label(section: str, language: str = "ar") -> str:
     return I18nService.t(f"store_section_{section}", language)
 
 
+def _main_menu_label(language: str = "ar") -> str:
+    return "🏠 القائمة الرئيسية" if I18nService.normalize_language(language) == "ar" else "🏠 Main menu"
+
+
 def store_home_kb(
     number_services=None,
     categories=None,
@@ -60,7 +64,7 @@ def store_home_kb(
                 b.button(text=entry.label, url=entry.action)
             else:
                 b.button(text=entry.label, callback_data=entry.action)
-        b.button(text=I18nService.t("store_back", language), callback_data="back_to_main")
+        b.button(text=_main_menu_label(language), callback_data="back_to_main")
         b.adjust(2)
         return b.as_markup()
 
@@ -99,9 +103,33 @@ def store_home_kb(
             text=I18nService.t("store_webapp", language),
             web_app=WebAppInfo(url=webapp_url),
         )
-    b.button(text=I18nService.t("store_back", language), callback_data="back_to_main")
+    b.button(text=_main_menu_label(language), callback_data="back_to_main")
     b.adjust(2)
     return b.as_markup()
+
+
+def store_empty_section_kb(language: str = "ar") -> InlineKeyboardMarkup:
+    """Keyboard shown for empty smart store sections.
+
+    Keep it intentionally small: the user should see that the section is empty,
+    then choose either returning to store sections or leaving to the main menu.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=I18nService.t("store_back", language),
+                    callback_data="store:home",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=_main_menu_label(language),
+                    callback_data="back_to_main",
+                )
+            ],
+        ]
+    )
 
 
 def store_products_kb(
@@ -120,7 +148,7 @@ def store_products_kb(
         ])
     rows.append([
         InlineKeyboardButton(
-            text=section_label(section, language),
+            text=I18nService.t("store_back", language),
             callback_data="store:home",
         ),
         InlineKeyboardButton(

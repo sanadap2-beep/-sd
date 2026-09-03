@@ -328,6 +328,7 @@ class AdminNumberServiceStates(StatesGroup):
     waiting_edit_value = State()
     waiting_availability_channel = State()
     waiting_availability_topn = State()
+    waiting_availability_watchlist = State()
 
 
 class AdminMaintenanceStates(StatesGroup):
