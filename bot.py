@@ -5,7 +5,7 @@
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -13,6 +13,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import settings
+from services.html_guard import HtmlGuardedBot
 from database.engine import async_session_maker
 from database.seed import init_db
 
@@ -143,7 +144,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 init_observability()
 
-bot = Bot(
+bot = HtmlGuardedBot(
     token=settings.BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
 )

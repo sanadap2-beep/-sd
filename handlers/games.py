@@ -11,7 +11,6 @@ import json
 import logging
 from datetime import datetime
 from decimal import Decimal
-from html import escape
 from aiogram import Router, F
 from aiogram.filters import Filter, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -20,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType
 from services.agent_service import AgentService
+from services.html_guard import esc
 from services.dynamic_service import DynamicService
 from services.player_id_service import PlayerIdError, PlayerIdService
 from services.balance_service import BalanceService, InsufficientBalanceError
@@ -76,8 +76,24 @@ def _eta_line(product, language: str = "ar") -> str:
     """سطر الوقت التقريبي للاكتمال إن وُجد."""
     eta = getattr(product, "estimated_time", None)
     if eta:
-        return f"\n{I18nService.t('eta_label', language)}: <b>{eta}</b>"
+        return f"\n{I18nService.t('eta_label', language)}: {esc(str(eta))}"
     return ""
+
+
+def catalog_header(title: str, description: str | None = None) -> str:
+    """رأس شاشة المتجر: عنوان عريض + شرح اختياري، كله نص آمن للـ HTML.
+
+    كل النصوص هنا قادمة من قاعدة البيانات (اسم القسم، شرح كتبه الأدمن، أو
+    اسم خدمة مسحوب من المزود) لذا تُهرّب وإلا كسرت تحليل تيليجرام للرسالة
+    بأكملها: ``Bad Request: can't parse entities``.
+    """
+    head = f"<b>{esc(title)}</b>"
+    desc = (description or "").strip()
+    if desc:
+        head += f"\n<i>{esc(desc)}</i>\n"
+    else:
+        head += "\n"
+    return head
 
 @router.callback_query(F.data == 'menu:search')
 async def search_start(callback: CallbackQuery, state: FSMContext):
@@ -95,9 +111,9 @@ async def search_query_received(message: Message, state: FSMContext, session):
     products = await ProductService.search_products(session, query_text, limit=20, active_only=True)
     await state.clear()
     if not products:
-        await message.answer(f"{I18nService.t('ux_games_119_3', _auto_lang(locals()))}{query_text}</b>.", reply_markup=back_to_main_kb())
+        await message.answer(f"{I18nService.t('ux_games_119_3', _auto_lang(locals()))}{esc(query_text)}</b>.", reply_markup=back_to_main_kb())
         return
-    await message.answer(f"{I18nService.t('ux_games_125_4', _auto_lang(locals()))}{query_text}{I18nService.t('ux_games_125_5', _auto_lang(locals()))}{len(products)}{I18nService.t('ux_games_125_6', _auto_lang(locals()))}", reply_markup=product_search_results_kb(products))
+    await message.answer(f"{I18nService.t('ux_games_125_4', _auto_lang(locals()))}{esc(query_text)}{I18nService.t('ux_games_125_5', _auto_lang(locals()))}{len(products)}{I18nService.t('ux_games_125_6', _auto_lang(locals()))}", reply_markup=product_search_results_kb(products))
 
 @router.callback_query(F.data == 'menu:favorites')
 async def favorites_list(callback: CallbackQuery, session, db_user: User):
@@ -160,9 +176,9 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
     from services.feature_service import FeatureService
     from services.smm_catalog import button_label
 
-    title = button_label(sub_cat.name_ar, sub_cat.emoji)
-    # شرح القسم الفرعي (إن ضبطه الأدمن)
-    sub_desc = f"\n<i>{sub_cat.description}</i>\n" if sub_cat.description else ""
+    # العنوان والشرح من قاعدة البيانات → تهريب إلزامي، وإلا حرف «<» في اسم
+    # خدمة مسحوب من المزود يكسر شاشة القسم كلها.
+    header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
     products = await DynamicService.get_active_products(session, sub_cat.id)
 
     inner_sections: list[tuple[object, int]] = []
@@ -179,11 +195,11 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
             ]
 
     if inner_sections:
-        text = f"<b>{title}</b>{sub_desc}\nاختر نوع الخدمة المطلوبة:"
+        text = f"{header}{I18nService.t('smm_choose_inner_service', language)}"
         markup = sections_kb(sub_cat.category_id, inner_sections)
     elif products:
         back_sub_id = sub_cat.parent_sub_category_id
-        text = f"<b>{title}</b>{sub_desc}{I18nService.t('ux_games_282_17', language)}"
+        text = f"{header}{I18nService.t('ux_games_282_17', language)}"
         markup = products_kb(
             sub_cat.id,
             products,
@@ -191,7 +207,7 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
             back_sub_id=back_sub_id,
         )
     else:
-        text = f"<b>{title}</b>{sub_desc}{I18nService.t('ux_games_276_16', language)}"
+        text = f"{header}{I18nService.t('ux_games_276_16', language)}"
         markup = back_to_main_kb(language)
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
@@ -207,15 +223,16 @@ async def category_selected(callback: CallbackQuery, session):
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
     await callback.answer()
-    # شرح القسم (إن ضبطه الأدمن) يظهر للزبون أعلى الشاشة
-    desc_line = f"\n\n<i>{category.description}</i>\n" if category.description else "\n"
     # المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)؛ الأقسام الداخلية تظهر
     # عند فتح التطبيق نفسه عبر subcat:.
+    language = _auto_lang(locals())
+    # شرح القسم (إن ضبطه الأدمن) يظهر للزبون أعلى الشاشة — ضمن رأس مُهرَّب.
+    header = f"{esc(category.emoji)} {catalog_header(category.name_ar, category.description)}"
     sub_cats = await DynamicService.get_active_root_sub_categories(session, category_id)
     if not sub_cats:
-        await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{desc_line}{I18nService.t('ux_games_246_13', _auto_lang(locals()))}", reply_markup=back_to_main_kb())
+        await callback.message.edit_text(f"{header}{I18nService.t('ux_games_246_13', language)}", reply_markup=back_to_main_kb())
         return
-    await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{desc_line}{I18nService.t('ux_games_252_14', _auto_lang(locals()))}", reply_markup=sub_categories_kb(category_id, sub_cats))
+    await callback.message.edit_text(f"{header}{I18nService.t('ux_games_252_14', language)}", reply_markup=sub_categories_kb(category_id, sub_cats))
 
 @router.callback_query(F.data.startswith('subcat:'))
 async def sub_category_selected(callback: CallbackQuery, session, db_user=None):
@@ -248,6 +265,17 @@ async def catalog_label_selected(message: Message, session, db_user=None):
         return
     await _show_subcategory(message, session, sub_cat, language)
 
+def _product_head(product, icon: str) -> str:
+    """سطر عنوان صفحة المنتج (الاسم + شرح الأدمن/المزود) مُهرّباً.
+
+    أسماء الخدمات المسحوبة من المزود مليئة بـ ``<`` و``&`` (مثل
+    ``Followers < 1h & HQ``)؛ بدون تهريب ترفض تيليجرام الرسالة كلها.
+    """
+    desc = (getattr(product, "description", None) or "").strip()
+    desc_line = f"\n<i>{esc(desc)}</i>" if desc else ""
+    return f"{icon} <b>{esc(product.name_ar)}</b>{desc_line}"
+
+
 @router.callback_query(F.data.startswith('prod:'))
 async def product_selected(callback: CallbackQuery, session, db_user: User, state: FSMContext):
     await state.clear()
@@ -262,23 +290,24 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     price_display = await _dual_price(product.price_usd, db_user, session)
     price_label = I18nService.t('price', language)
     confirm_q = I18nService.t('confirm_purchase_q', language)
-    # شرح/وصف الخدمة (إن ضبطه الأدمن)
-    desc_line = f"\n<i>{product.description}</i>" if product.description else ""
     if product.requires_player_id:
-        await callback.message.edit_text(f'🎮 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
+        head = _product_head(product, '🎮')
+        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
         await state.update_data(product_id=product_id)
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
+        head = _product_head(product, '📈')
         if product.requires_quantity:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id)
             await state.set_state(SMMOrderStates.waiting_link)
         else:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id, quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:
-        await callback.message.edit_text(f'📦 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b>\n\n{confirm_q}', reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        head = _product_head(product, '📦')
+        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>\n\n{confirm_q}', reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(GamesOrderStates.waiting_player_id)
 async def player_id_received(message: Message, state: FSMContext, session, db_user: User):
@@ -294,10 +323,10 @@ async def player_id_received(message: Message, state: FSMContext, session, db_us
     try:
         player_id = await PlayerIdService.validate(message.text or '', context=context)
     except PlayerIdError as exc:
-        await message.answer(f"⚠️ {exc}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
+        await message.answer(f"⚠️ {esc(exc)}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
         return
     await state.update_data(target=player_id, quantity=1)
-    await message.answer(f"🎮 <b>{product.name_ar}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{player_id}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+    await message.answer(f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_link)
 async def smm_link_received(message: Message, state: FSMContext, session):
@@ -319,7 +348,7 @@ async def smm_link_received(message: Message, state: FSMContext, session):
     else:
         await state.update_data(quantity=1)
         sub_cat = product.sub_category
-        await message.answer(f"📈 <b>{product.name_ar}{_eta_line(product)}{I18nService.t('ux_games_450_28', _auto_lang(locals()))}{link}{I18nService.t('ux_games_450_29', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_450_30', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        await message.answer(f"📈 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_450_28', _auto_lang(locals()))}{esc(link)}{I18nService.t('ux_games_450_29', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_450_30', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_quantity)
 async def smm_quantity_received(message: Message, state: FSMContext, session):
@@ -345,7 +374,7 @@ async def smm_quantity_received(message: Message, state: FSMContext, session):
     await state.update_data(quantity=quantity, total_price=str(total_price))
     sub_cat = product.sub_category
     link = data.get('target', '—')
-    await message.answer(f"📈 <b>{product.name_ar}{_eta_line(product)}{I18nService.t('ux_games_501_35', _auto_lang(locals()))}{link}{I18nService.t('ux_games_501_36', _auto_lang(locals()))}{quantity}{I18nService.t('ux_games_501_37', _auto_lang(locals()))}{total_price}{I18nService.t('ux_games_501_38', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+    await message.answer(f"📈 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_501_35', _auto_lang(locals()))}{esc(link)}{I18nService.t('ux_games_501_36', _auto_lang(locals()))}{quantity}{I18nService.t('ux_games_501_37', _auto_lang(locals()))}{total_price}{I18nService.t('ux_games_501_38', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.callback_query(F.data.startswith('prod_coupon:'))
 async def product_coupon_start(callback: CallbackQuery, state: FSMContext):
@@ -373,7 +402,7 @@ async def product_coupon_received(message: Message, state: FSMContext, session, 
         return
     discount = CouponService.calculate_discount(coupon, product.price_usd)
     sub_cat = product.sub_category
-    await message.answer(f"{I18nService.t('ux_games_553_41', _auto_lang(locals()))}{coupon.code}{I18nService.t('ux_games_553_42', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_553_43', _auto_lang(locals()))}{discount}{I18nService.t('ux_games_553_44', _auto_lang(locals()))}{product.price_usd - discount}$</b>", reply_markup=product_confirm_with_coupon_kb(product_id, sub_cat.id if sub_cat else 0, coupon.code, str(discount)))
+    await message.answer(f"{I18nService.t('ux_games_553_41', _auto_lang(locals()))}{esc(coupon.code)}{I18nService.t('ux_games_553_42', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_553_43', _auto_lang(locals()))}{discount}{I18nService.t('ux_games_553_44', _auto_lang(locals()))}{product.price_usd - discount}$</b>", reply_markup=product_confirm_with_coupon_kb(product_id, sub_cat.id if sub_cat else 0, coupon.code, str(discount)))
 
 @router.callback_query(F.data.startswith('prod_confirm:'))
 async def product_confirm(callback: CallbackQuery, session, db_user: User, bot, state: FSMContext):
@@ -470,7 +499,7 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
     if final_price >= large_confirm:
         language = _glang(db_user)
         amount_display = await _dual_price(final_price, db_user, session)
-        await callback.message.answer(I18nService.t('large_order_confirm', language, product=product.name_ar, amount=amount_display), reply_markup=confirm_large_order_kb(f"prod_final:{product_id}:{coupon_code or 'none'}", language))
+        await callback.message.answer(I18nService.t('large_order_confirm', language, product=esc(product.name_ar), amount=esc(amount_display)), reply_markup=confirm_large_order_kb(f"prod_final:{product_id}:{coupon_code or 'none'}", language))
         return
     await _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion)
 
@@ -539,9 +568,9 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         await GamificationService.progress_event(session, db_user.id, 'purchase')
         delivery_note = ''
         if metadata and metadata.get('note'):
-            delivery_note = f"\\n📝 ملاحظة: {escape(str(metadata['note']))}"
-        await callback.message.answer(f"{I18nService.t('ux_games_899_54', _auto_lang(locals()))}{escape(product.name_ar)}{I18nService.t('ux_games_899_55', _auto_lang(locals()))}{order.id}{I18nService.t('ux_games_899_56', _auto_lang(locals()))}{final_price}{I18nService.t('ux_games_899_57', _auto_lang(locals()))}{escape(delivered_value)}</code>{delivery_note}{I18nService.t('ux_games_899_58', _auto_lang(locals()))}")
-        await notifier.notify_admin(f'📦 <b>تم تسليم منتج من المخزون</b>\\n\\n🆔 الطلب: #{order.id}\\n👤 المستخدم: {db_user.telegram_id}\\n📦 المنتج: {escape(product.name_ar)}\\n💰 المبلغ: {final_price}$')
+            delivery_note = f"\n📝 ملاحظة: {esc(metadata['note'])}"
+        await callback.message.answer(f"{I18nService.t('ux_games_899_54', _auto_lang(locals()))}{esc(product.name_ar)}{I18nService.t('ux_games_899_55', _auto_lang(locals()))}{order.id}{I18nService.t('ux_games_899_56', _auto_lang(locals()))}{final_price}{I18nService.t('ux_games_899_57', _auto_lang(locals()))}{esc(delivered_value)}</code>{delivery_note}{I18nService.t('ux_games_899_58', _auto_lang(locals()))}")
+        await notifier.notify_admin(f'📦 <b>تم تسليم منتج من المخزون</b>\n\n🆔 الطلب: #{order.id}\n👤 المستخدم: {db_user.telegram_id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$')
         upsells = await UpsellService.recommend(session, product.id)
         if upsells:
             await callback.message.answer(I18nService.t('ux_games_917_59', _auto_lang(locals())), reply_markup=product_search_results_kb(upsells))
@@ -602,7 +631,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                         await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
                         await LoyaltyService.award_purchase_points(session, db_user.id, 'unified_orders', order.id, final_price)
                         await callback.message.answer(
-                            f"✅ <b>تم شراء {escape(product.name_ar)}</b>\n\n"
+                            f"✅ <b>تم شراء {esc(product.name_ar)}</b>\n\n"
                             f"🆔 رقم الطلب: #{order.id}\n"
                             f"💰 المبلغ: {final_price}$\n\n"
                             "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
@@ -612,11 +641,11 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
 
                         await notifier.notify_admin(
                             "🚨 <b>رصيد المزود غير كافٍ — اشتراك رقمي</b>\n\n"
-                            f"🔌 المزود: <b>{provider.name}</b>\n"
+                            f"🔌 المزود: <b>{esc(provider.name)}</b>\n"
                             f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
-                            f"📦 المنتج: {escape(product.name_ar)}\n"
+                            f"📦 المنتج: {esc(product.name_ar)}\n"
                             f"🆔 الطلب: <b>#{order.id}</b>\n"
-                            f"🎯 الهدف: {escape(str(target)) if target else '—'}\n"
+                            f"🎯 الهدف: {esc(target) if target else '—'}\n"
                             f"💰 المبلغ: {final_price}$\n\n"
                             "✅ «أرسل البيانات يدوياً» بعد شحن رصيد المزود وجلب "
                             "الحساب — يُشعر المستخدم فوراً.\n"
@@ -650,8 +679,8 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     await callback.message.answer(I18nService.t('provider_insufficient_funds', _glang(db_user)))
                     await notifier.notify_admin(
                         '🚨 <b>رصيد المزود غير كافٍ</b>\n\n'
-                        f'🔌 المزود: <b>{provider_name}</b>\n'
-                        f'📦 المنتج: {product.name_ar}\n'
+                        f'🔌 المزود: <b>{esc(provider_name)}</b>\n'
+                        f'📦 المنتج: {esc(product.name_ar)}\n'
                         f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
                         f'📊 الكمية: {quantity}\n'
                         f'💰 المبلغ المسترجع: {final_price}$\n'
@@ -662,8 +691,8 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     await callback.message.answer(I18nService.t('ux_games_1007_61', _auto_lang(locals())))
                     await notifier.notify_admin(
                         '🚨 <b>فشل إرسال طلب للمزود</b>\n\n'
-                        f'🔌 المزود: <b>{provider_name}</b>\n'
-                        f'📦 المنتج: {product.name_ar}\n'
+                        f'🔌 المزود: <b>{esc(provider_name)}</b>\n'
+                        f'📦 المنتج: {esc(product.name_ar)}\n'
                         f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
                         f'⚠️ الخطأ: <code>{e}</code>\n\n'
                         '🛠 <b>الحل:</b> تحقق من آيدي الخدمة عند المزود، وصحة الرابط/الكمية، وحالة المزود. تم استرجاع رصيد المستخدم.'
@@ -678,14 +707,14 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         await PromotionService.mark_used(session, promotion.id)
     await DynamicService.increment_product_sold(session, product.id, quantity)
     cashback = await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
-    result_text = f'✅ <b>تم إرسال طلبك بنجاح!</b>\n\n🆔 رقم الطلب: #{order.id}\n📦 المنتج: {product.name_ar}\n💰 المبلغ: {final_price}$\n'
+    result_text = f'✅ <b>تم إرسال طلبك بنجاح!</b>\n\n🆔 رقم الطلب: #{order.id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$\n'
     if discount > 0:
         label = 'العرض' if promotion else 'الكوبون'
         result_text += f'🎁 {label}: -{discount}$\n'
     if cashback > 0:
         result_text += f'🎁 كاشباك: {cashback}$\n'
     if target:
-        result_text += f'🎯 الهدف: <code>{target}</code>\n'
+        result_text += f'🎯 الهدف: <code>{esc(target)}</code>\n'
     if quantity > 1:
         result_text += f'📊 الكمية: {quantity}\n'
     result_text += f'\n📊 الحالة: {status_message}'
@@ -710,8 +739,8 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             "🖐 <b>طلب يدوي جديد — بانتظار تنفيذك</b>\n\n"
             f"🆔 الطلب: <b>#{order.id}</b>\n"
             f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
-            f"📦 المنتج: {escape(product.name_ar)}\n"
-            f"🎯 الهدف: {escape(str(target)) if target else '—'}\n"
+            f"📦 المنتج: {esc(product.name_ar)}\n"
+            f"🎯 الهدف: {esc(target) if target else '—'}\n"
             f"📊 الكمية: {quantity}\n"
             f"💰 المبلغ: {final_price}$\n\n"
             "✅ نفّذت الطلب؟ «نفذته» لإشعار المستخدم.\n"
@@ -725,6 +754,6 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             ),
         )
     else:
-        await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {product.name_ar}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {target or '—'}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
+        await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {esc(target or '—')}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
     await notifier.notify_successful_unified_order(username=db_user.username, full_name=db_user.full_name, product_name=product.name_ar, price_usd=str(final_price))
     await state.clear()
