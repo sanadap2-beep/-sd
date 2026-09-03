@@ -225,7 +225,7 @@ async def test_smart_number_routing_prefers_reliable_provider_over_slightly_chea
         assert result.provider == ProviderName.SMSHUB
 
 
-def test_main_menu_is_compact_and_keeps_only_requested_routes():
+def test_main_menu_is_compact_and_moves_language_currency_to_account():
     from keyboards.main_menu import build_main_menu
     from services.i18n_service import I18nService
     from services.main_button_service import MainMenuButton
@@ -243,33 +243,42 @@ def test_main_menu_is_compact_and_keeps_only_requested_routes():
     rows = keyboard.inline_keyboard
     buttons = [button for row in rows for button in row]
 
-    assert [len(row) for row in rows] == [2, 2, 2, 2, 2]
-    assert len(buttons) == 10
+    assert [len(row) for row in rows] == [2, 2, 2, 2]
     assert [button.callback_data for button in buttons] == [
         "store:home",
         "menu:account",
         "menu:deposit",
-        "menu:support",
-        "menu:referral",
-        "menu:language",
-        "menu:currency",
-        "info:home",
         "menu:transfer",
+        "menu:referral",
         "extras:home",
+        "info:terms",
+        "menu:support",
     ]
     assert [button.text for button in buttons] == [
         I18nService.t("menu_full_store", "en"),
         I18nService.t("menu_account_with_balance", "en", balance="$12.50"),
         I18nService.t("menu_deposit", "en"),
-        I18nService.t("menu_support", "en"),
-        I18nService.t("menu_referral", "en"),
-        I18nService.t("menu_language", "en"),
-        I18nService.t("menu_currency", "en"),
-        I18nService.t("menu_bot_info", "en"),
         I18nService.t("menu_transfer", "en"),
+        I18nService.t("menu_referral", "en"),
         I18nService.t("menu_extras", "en"),
+        I18nService.t("menu_terms", "en"),
+        I18nService.t("menu_support", "en"),
     ]
+    assert "menu:language" not in [button.callback_data for button in buttons]
+    assert "menu:currency" not in [button.callback_data for button in buttons]
     assert all(button.url is None and button.web_app is None for button in buttons)
+
+
+def test_main_menu_moves_language_and_currency_into_account_page():
+    from keyboards.main_menu import build_main_menu
+
+    keyboard = build_main_menu(number_services=[], categories=[], balance_usd="0.00", language="ar")
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+
+    assert "menu:language" not in callbacks
+    assert "menu:currency" not in callbacks
+    assert "menu:account" in callbacks
+    assert "info:terms" in callbacks
 
 
 def test_store_menu_contains_number_services_all_catalog_categories_and_sections():
@@ -315,7 +324,7 @@ def test_store_menu_contains_number_services_all_catalog_categories_and_sections
 
 
 @pytest.mark.asyncio
-async def test_extras_page_collects_old_features_and_dynamic_buttons(monkeypatch):
+async def test_extras_page_is_grouped_into_three_sections_and_keeps_dynamic_buttons(monkeypatch):
     from types import SimpleNamespace
 
     from handlers import extras as extras_handler
@@ -364,14 +373,30 @@ async def test_extras_page_collects_old_features_and_dynamic_buttons(monkeypatch
     callbacks = [button.callback_data for button in buttons]
     labels = [button.text for button in buttons]
 
-    assert "extras:exchange" in callbacks
-    assert "tasks:home" in callbacks
-    assert "points:home" in callbacks
-    assert "custom:home" in callbacks
-    assert "store:home" not in callbacks
-    assert any(button.url == "https://example.com" for button in buttons)
+    assert callbacks == [
+        "extras:section:rewards",
+        "extras:section:market",
+        "extras:section:tools",
+        "menu:main",
+    ]
+    assert labels[:3] == [
+        "Loyalty & rewards (5)",
+        "Marketplace & ads (4)",
+        "Advanced tools & services (9)",
+    ]
     assert "🧩 Other bot services & features" in callback.message.text
     assert labels[-1] == "🔙 Back to main menu"
+
+    # Dynamic/admin shortcuts are kept inside the Advanced tools section.
+    callback.message.reply_markup = None
+    callback.data = "extras:section:tools"
+    await extras_handler.extras_section(callback, SimpleNamespace(language_code="en"))
+    section_buttons = [button for row in callback.message.reply_markup.inline_keyboard for button in row]
+    section_callbacks = [button.callback_data for button in section_buttons]
+    assert "extras:exchange" in section_callbacks
+    assert "custom:home" in section_callbacks
+    assert "store:home" not in section_callbacks
+    assert any(button.url == "https://example.com" for button in section_buttons)
 
 
 @pytest.mark.asyncio

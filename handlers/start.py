@@ -3,6 +3,7 @@
 """
 
 from decimal import Decimal
+from html import escape
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart, CommandObject
@@ -37,6 +38,7 @@ async def _build_menu(session, db_user):
     agent_percent = str(
         await FeatureService.config("agent_program", "default_percent", 10)
     )
+    completed_orders = await _completed_orders_count(session)
     return build_main_menu(
         number_services=[],
         categories=[],
@@ -45,7 +47,26 @@ async def _build_menu(session, db_user):
         balance_display=balance_display,
         show_agent=show_agent,
         agent_percent=agent_percent,
+        completed_orders_count=completed_orders,
     )
+
+
+async def _completed_orders_count(session) -> int:
+    """إجمالي الطلبات المنجزة لزر الإنجازات في القائمة الرئيسية."""
+    from sqlalchemy import func, select
+    from database.models import NumberOrder, OrderStatus, UnifiedOrder, UnifiedOrderStatus
+
+    number_count = (
+        await session.execute(
+            select(func.count(NumberOrder.id)).where(NumberOrder.status == OrderStatus.COMPLETED)
+        )
+    ).scalar_one()
+    unified_count = (
+        await session.execute(
+            select(func.count(UnifiedOrder.id)).where(UnifiedOrder.status == UnifiedOrderStatus.COMPLETED)
+        )
+    ).scalar_one()
+    return int(number_count or 0) + int(unified_count or 0)
 
 
 async def _main_header(session, db_user) -> str:
@@ -90,8 +111,35 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
         await session.commit()
         await _try_pay_referral_bonus(session, db_user, message.bot)
 
-    # 3. معالجة رابط الشراء السريع القادم من زر القناة العامة
+    # 3. معالجة روابط المنتجات/الشراء السريع القادمة من inline أو قناة التوفر
     args = command.args
+    if args and args.startswith("prod_"):
+        try:
+            product_id = int(args.replace("prod_", "", 1))
+        except ValueError:
+            product_id = 0
+        if product_id:
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+            from database.models import ProductStatus
+            from services.dynamic_service import DynamicService
+
+            product = await DynamicService.get_product(session, product_id)
+            if product and product.status == ProductStatus.ACTIVE:
+                price_display = await CurrencyService.format_dual(product.price_usd, db_user, session)
+                await message.answer(
+                    f"🛍 <b>{escape(product.name_ar)}</b>\n\n"
+                    f"{escape(product.description or 'خدمة رقمية جاهزة للطلب')}\n\n"
+                    f"💰 <b>السعر:</b> {price_display}\n\n"
+                    "اضغط شراء للانتقال لخطوات الطلب داخل البوت:",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="🛒 شراء الآن", callback_data=f"prod:{product.id}")],
+                            [InlineKeyboardButton(text="🟢 🛍 المتجر", callback_data="store:home")],
+                        ]
+                    ),
+                )
+                return
+
     if args and args.startswith("buy_"):
         raw_payload = args.replace("buy_", "", 1)
         if "__" in raw_payload:
@@ -101,16 +149,26 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
 
             if service and country and country.is_active:
                 prices = await provider_manager.get_cheapest_price(service, country, session)
-                if prices:
-                    cheapest_provider = min(prices, key=prices.get)
-                    cost_usd = prices[cheapest_provider]
-                    sell_price = await PricingService.calculate_sell_price(
-                        session, service_code, country_code, cheapest_provider, cost_usd
+                from services.country_localization_service import display_flag, display_name
+
+                if not prices:
+                    await message.answer(
+                        I18nService.t(
+                            "no_numbers_available",
+                            db_user.language_code,
+                            country=f"{display_flag(country)} {display_name(country)}",
+                            service=service.name_ar,
+                        )
                     )
+                    return
+                cheapest_provider = min(prices, key=prices.get)
+                cost_usd = prices[cheapest_provider]
+                sell_price = await PricingService.calculate_sell_price(
+                    session, service_code, country_code, cheapest_provider, cost_usd
+                )
                 quote = await PriceLockService.create(
                     service_code, country_code, cheapest_provider.value, cost_usd, sell_price
                 )
-                from services.country_localization_service import display_flag, display_name
 
                 price_display = await CurrencyService.format_dual(sell_price, db_user, session)
                 await message.answer(

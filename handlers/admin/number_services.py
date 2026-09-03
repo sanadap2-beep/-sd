@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from services.dynamic_service import DynamicService
 from services.feature_service import FeatureService
 from services.availability_board_service import FEATURE_KEY as AVAIL_FEATURE, AvailabilityBoardService
+from services.number_catalog_service import normalize_country_code
 from states.states import AdminNumberServiceStates
 from keyboards.admin import (
     admin_number_services_kb,
@@ -236,18 +237,20 @@ async def _avail_status_text() -> str:
     service_code = await AvailabilityBoardService.service_code()
     top_n = await AvailabilityBoardService.top_n()
     refresh = await AvailabilityBoardService.refresh_seconds()
+    watched = await AvailabilityBoardService.watched_country_codes_text()
     channel = f"<code>{chat_id}</code>" if chat_id else "⚪ لم تُضبط"
     status = "🟢 مفعّلة" if enabled else "⚪ معطّلة (من مركز الإضافات)"
     return (
         "📡 <b>التوفر المتقطع — قناة الأرقام الحية</b>\n\n"
-        "تُنشر في القناة المحددة لوحة كل دقيقة بأعلى الدول الجاهزة "
-        "للطلب فوراً من المزود مع السعر، والضغط على أي دولة ينقل "
-        "المستخدم للبوت مباشرة لطلب رقم.\n\n"
+        "تراقب الدول النادرة/المطلوبة وتقارن حالة المخزون الحالية بالصورة "
+        "السابقة، ثم تنشر فقط الدول التي عادت للمخزون للتو بدلاً من تكرار "
+        "أرخص الدول الثابتة. الضغط على أي دولة ينقل المستخدم للبوت مباشرة.\n\n"
         f"الحالة: {status}\n"
         f"القناة: {channel}\n"
         f"الخدمة: <code>{service_code}</code>\n"
         f"عدد الدول: <b>{top_n}</b>\n"
-        f"الحدّث: كل <b>{refresh}</b> ثانية"
+        f"التحديث: كل <b>{refresh}</b> ثانية\n"
+        f"الدول المراقبة: <code>{watched}</code>"
     )
 
 
@@ -315,6 +318,41 @@ async def nsvc_avail_topn_received(message: Message, state: FSMContext, session)
     await message.answer("✅ تم تحديث عدد الدول.", reply_markup=admin_nsvc_avail_kb())
 
 
+@router.callback_query(F.data == "admin:nsvc_avail_watchlist")
+async def nsvc_avail_watchlist_start(callback: CallbackQuery, state: FSMContext):
+    current = await AvailabilityBoardService.watched_country_codes_text(limit=80)
+    await callback.message.edit_text(
+        "🌍 <b>الدول النادرة المراقبة</b>\n\n"
+        "أرسل أكواد الدول مفصولة بفواصل، حسب أكواد الدول داخل قاعدة البيانات.\n"
+        "مثال: <code>ae,sa,us,gb,qa,kw,bh,om</code>\n\n"
+        "عند رجوع إحدى هذه الدول للمخزون ستظهر في قناة التوفر فوراً.\n\n"
+        f"الحالي:\n<code>{current}</code>",
+        reply_markup=admin_nsvc_avail_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_availability_watchlist)
+    await callback.answer()
+
+
+@router.message(AdminNumberServiceStates.waiting_availability_watchlist)
+async def nsvc_avail_watchlist_received(message: Message, state: FSMContext, session):
+    raw = (message.text or "").strip().replace("\n", ",").replace(";", ",")
+    codes = []
+    seen = set()
+    for part in raw.split(","):
+        code = normalize_country_code(part)
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        codes.append(code)
+    if not codes:
+        await message.answer("⚠️ أرسل كود دولة واحداً على الأقل، مثل: ae,sa,us")
+        return
+    await FeatureService.set_option(session, AVAIL_FEATURE, "watched_country_codes", ",".join(codes))
+    AvailabilityBoardService._last_available_by_service.clear()
+    await state.clear()
+    await message.answer("✅ تم تحديث قائمة الدول النادرة ومُسحت حالة المقارنة القديمة.", reply_markup=admin_nsvc_avail_kb())
+
+
 @router.callback_query(F.data == "admin:nsvc_avail_services")
 async def nsvc_avail_services(callback: CallbackQuery, session):
     services = await DynamicService.get_all_number_services(session)
@@ -334,6 +372,7 @@ async def nsvc_avail_services(callback: CallbackQuery, session):
 async def nsvc_avail_service_selected(callback: CallbackQuery, session, state: FSMContext):
     code = callback.data.rsplit(":", 1)[1]
     await FeatureService.set_option(session, AVAIL_FEATURE, "service_code", code)
+    AvailabilityBoardService._last_available_by_service.clear()
     await callback.answer("✅ تم اختيار الخدمة.")
     await nsvc_avail_home(callback)
 

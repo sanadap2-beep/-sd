@@ -56,6 +56,7 @@ from handlers import (
     points as user_points,
     extras as user_extras,
     store as user_store,
+    inline_search,
     fallback,
 )
 from handlers.deposit_methods import router as deposit_methods_router
@@ -203,6 +204,7 @@ def register_routers():
     dp.include_router(user_points.router)
     dp.include_router(user_extras.router)
     dp.include_router(user_store.router)
+    dp.include_router(inline_search.router)
     dp.include_router(games_router)
 
     # ── هاندلرز الأدمن ──

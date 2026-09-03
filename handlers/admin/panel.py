@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from keyboards.admin import admin_main_kb, admin_maintenance_kb
+from keyboards.admin import ADMIN_TABS, admin_main_kb, admin_maintenance_kb, admin_tab_kb
 from services.settings_service import SettingsService
 from states.states import AdminMaintenanceStates
 from filters.admin_filter import IsAdmin
@@ -20,7 +20,8 @@ router.callback_query.filter(IsAdmin())
 @router.message(Command("admin"))
 async def admin_entry(message: Message):
     await message.answer(
-        "🛠 <b>لوحة تحكم الأدمن</b>",
+        "🛠 <b>لوحة تحكم الأدمن</b>\n\n"
+        "اختر أحد التبويبات الأربعة للوصول السريع بدون ازدحام.",
         reply_markup=admin_main_kb(),
     )
 
@@ -28,9 +29,26 @@ async def admin_entry(message: Message):
 @router.callback_query(F.data == "admin:main")
 async def admin_main_callback(callback: CallbackQuery):
     await callback.message.edit_text(
-        "🛠 <b>لوحة تحكم الأدمن</b>",
+        "🛠 <b>لوحة تحكم الأدمن</b>\n\n"
+        "اختر تبويباً رئيسياً لإدارة القسم المطلوب بدل قائمة طويلة مزدحمة.",
         reply_markup=admin_main_kb(),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:tab:"))
+async def admin_tab_callback(callback: CallbackQuery):
+    tab = (callback.data or "").rsplit(":", 1)[-1]
+    if tab not in ADMIN_TABS:
+        await callback.answer("تبويب غير معروف.", show_alert=True)
+        return
+    title, items = ADMIN_TABS[tab]
+    bullets = "\n".join(f"• {label}" for label, _data in items)
+    await callback.message.edit_text(
+        f"{title}\n\n{bullets}\n\nاختر من الأزرار بالأسفل:",
+        reply_markup=admin_tab_kb(tab),
+    )
+    await callback.answer()
 
 
 # ══════════════ آخر التحديثات والإضافات ══════════════

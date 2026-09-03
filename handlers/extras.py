@@ -60,19 +60,9 @@ async def _enabled(key: str) -> bool:
 # ══════════════ القائمة الجامعة ══════════════
 
 
-@router.callback_query(F.data == "extras:home")
-async def extras_home(callback: CallbackQuery, db_user: User | None = None):
-    """Collect optional features and former main-menu shortcuts in one page.
-
-    كل عنصر يمر بتحكم الأدمن المركزي «🧩 التحكم بخدمات الأخرى»
-    (ExtrasSectionService): يطفأ العنصر من هناك فيختفي من هنا فوراً،
-    والميزات الاختيارية تخضع لـ «مركز الإضافات» أيضاً.
-    """
-    language = _lang(db_user)
+def _extras_labels(language: str) -> dict[str, str]:
     t = lambda key: I18nService.t(key, language)  # noqa: E731
-    from services.extras_section_service import ExtrasSectionService
-
-    labels = {
+    return {
         "withdraw": t("menu_withdraw"),
         "search": t("menu_search"),
         "favorites": t("menu_favorites"),
@@ -101,43 +91,91 @@ async def extras_home(callback: CallbackQuery, db_user: User | None = None):
         "points_currency": t("menu_points"),
     }
 
-    entries: list[tuple[str, str]] = []
-    for entry in await ExtrasSectionService.list_entries():
-        if not await ExtrasSectionService.is_visible(entry.key):
-            continue
-        entries.append((labels.get(entry.key, entry.label), entry.action))
 
-    # Admin-created shortcuts are still available, but no longer make the
-    # first screen grow without limit.  Avoid duplicates for actions already
-    # represented above or already covered by the store hub.
-    covered_actions = {action for _, action in entries} | {"store:home"}
-    for button in await MainButtonService.list_buttons(include_inactive=False):
-        if button.action in covered_actions:
-            continue
-        if button.action.startswith("store:section:") or button.action.startswith("cat:"):
-            continue
-        label = button.label
-        if button.is_url:
-            entries.append((label, button.action))
-        else:
-            entries.append((label, button.action))
-        covered_actions.add(button.action)
-
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=label,
-                url=action if action.startswith(("http://", "https://")) else None,
-                callback_data=None if action.startswith(("http://", "https://")) else action,
-            )
-        ]
-        for label, action in entries
+def _button_row(label: str, action: str) -> list[InlineKeyboardButton]:
+    return [
+        InlineKeyboardButton(
+            text=label,
+            url=action if action.startswith(("http://", "https://")) else None,
+            callback_data=None if action.startswith(("http://", "https://")) else action,
+        )
     ]
-    # Keep the historical alias so older clients and inner pages remain valid.
+
+
+@router.callback_query(F.data == "extras:home")
+async def extras_home(callback: CallbackQuery, db_user: User | None = None):
+    """Show the compact Extras hub as three high-level sections."""
+    language = _lang(db_user)
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
+    from services.extras_section_service import EXTRAS_SECTIONS, ExtrasSectionService
+
+    visible_by_section: dict[str, int] = {}
+    for section_key in EXTRAS_SECTIONS:
+        visible_by_section[section_key] = len(
+            await ExtrasSectionService.visible_entries(section=section_key)
+        )
+
+    rows = []
+    for section_key, titles in EXTRAS_SECTIONS.items():
+        title = titles[0] if language == "ar" else titles[1]
+        count = visible_by_section.get(section_key, 0)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{title} ({count})",
+                    callback_data=f"extras:section:{section_key}",
+                )
+            ]
+        )
+
     rows.append([InlineKeyboardButton(text=t("back_to_main"), callback_data="menu:main")])
 
     await callback.message.edit_text(
-        f"{t('menu_extras')}\n\n{('اختر الخدمة أو الميزة التي تريدها:' if language == 'ar' else 'Choose a service or feature:')}",
+        f"{t('menu_extras')}\n\n"
+        f"{('اختر قسماً رئيسياً ثم ستظهر لك خدماته المختصرة:' if language == 'ar' else 'Choose a main section, then pick the service you need:')}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("extras:section:"))
+async def extras_section(callback: CallbackQuery, db_user: User | None = None):
+    """Open one Extras section and render only its child actions."""
+    language = _lang(db_user)
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
+    from services.extras_section_service import EXTRAS_SECTIONS, TOOLS, ExtrasSectionService
+
+    section_key = (callback.data or "").rsplit(":", 1)[-1]
+    if section_key not in EXTRAS_SECTIONS:
+        await callback.answer(I18nService.t("not_available", language), show_alert=True)
+        return
+
+    labels = _extras_labels(language)
+    entries: list[tuple[str, str]] = []
+    for entry in await ExtrasSectionService.visible_entries(section=section_key):
+        entries.append((labels.get(entry.key, entry.label), entry.action))
+
+    # Admin-created shortcuts live under Advanced tools to keep the first
+    # Extras screen fixed at three sections.
+    if section_key == TOOLS:
+        covered_actions = {action for _, action in entries} | {"store:home"}
+        for button in await MainButtonService.list_buttons(include_inactive=False):
+            if button.action in covered_actions:
+                continue
+            if button.action.startswith("store:section:") or button.action.startswith("cat:"):
+                continue
+            entries.append((button.label, button.action))
+            covered_actions.add(button.action)
+
+    rows = [_button_row(label, action) for label, action in entries]
+    if not rows:
+        rows.append([InlineKeyboardButton(text=("لا توجد عناصر مفعلة" if language == "ar" else "No enabled items"), callback_data="noop")])
+    rows.append([InlineKeyboardButton(text=("⬅️ رجوع للأقسام" if language == "ar" else "⬅️ Back to sections"), callback_data="extras:home")])
+    rows.append([InlineKeyboardButton(text=t("back_to_main"), callback_data="menu:main")])
+
+    title = EXTRAS_SECTIONS[section_key][0] if language == "ar" else EXTRAS_SECTIONS[section_key][1]
+    await callback.message.edit_text(
+        f"{title}\n\n{('اختر الخدمة المطلوبة:' if language == 'ar' else 'Choose a service:')}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
     await callback.answer()

@@ -11,58 +11,101 @@ from config import settings
 # ══════════════ اللوحة الرئيسية ══════════════
 
 
+ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+    "finance": (
+        "📊 المالية والطلبات",
+        [
+            ("📦 إدارة الطلبات", "admin:orders"),
+            ("📞 طلبات الأرقام", "admin:number_orders"),
+            ("💳 طلبات الشحن", "admin:deposits"),
+            ("💸 طلبات السحب", "admin:withdrawals"),
+            ("📒 جرد الحسابات", "admin:ledger"),
+            ("📊 إحصائيات البوت", "admin:stats"),
+        ],
+    ),
+    "catalog": (
+        "📦 الكتالوج والمنتجات",
+        [
+            ("📂 إدارة الأقسام", "admin:categories"),
+            ("📦 إدارة المنتجات", "admin:products_menu"),
+            ("📥 خدمات مسحوبة", "admin:pulled_services"),
+            ("🔌 مزودو المتجر", "admin:api_providers"),
+            ("📞 إدارة خدمات الأرقام", "admin:number_services"),
+            ("🌍 إدارة الدول", "admin:countries"),
+            ("🌐 مزودو الأرقام", "admin:providers"),
+            ("💵 تعديل الأسعار", "admin:pricing"),
+            ("⭐ إدارة باقات النجوم", "admin:stars"),
+            ("📦 المخزون الرقمي", "admin:inventory"),
+        ],
+    ),
+    "users": (
+        "👥 المستخدمون والتسويق",
+        [
+            ("👥 إدارة المستخدمين", "admin:users"),
+            ("💼 إدارة الوكلاء", "admin:agents"),
+            ("🎟 إدارة الكوبونات", "admin:coupons"),
+            ("📢 إدارة الإعلانات", "admin:ads"),
+            ("📢 إذاعة جماعية", "admin:broadcast"),
+            ("📌 الاشتراك الإجباري", "admin:channels"),
+            ("📈 طلبات السوق", "admin:market_requests"),
+            ("🎁 بطاقات الهدايا", "admin:gift_codes"),
+            ("🔥 إدارة العروض", "admin:promotions"),
+            ("🔥 قسم العروض", "admin:special_offers"),
+            ("🔔 إدارة الإشعارات", "admin:notifications"),
+            ("🎁 برنامج الولاء", "admin:loyalty"),
+        ],
+    ),
+    "system": (
+        "⚙️ إعدادات النظام والعمليات",
+        [
+            ("⚙️ الإعدادات العامة", "admin:settings"),
+            ("🧩 مركز الإضافات", "admin:features"),
+            ("🩺 صحة النظام", "admin:health"),
+            ("🔧 وضع الصيانة", "admin:maintenance"),
+            ("🎛 مركز القيادة", "admin:cockpit"),
+            ("🛠 مركز العمليات", "admin:ops"),
+            ("🎛 أزرار الواجهة", "admin:main_buttons"),
+            ("🛍 التحكم بالمتجر", "admin:store_control"),
+            ("🧩 التحكم بخدمات الأخرى", "admin:extras_control"),
+            ("👨‍💼 إدارة الأدمنية", "admin:multi_admin"),
+            ("📜 سجل الإدارة", "admin:audit"),
+            ("🎫 تذاكر الدعم", "admin:tickets"),
+            ("📡 مباشر البوت", "admin:live_feed"),
+            ("📊 جودة مزودي الأرقام", "admin:number_provider_quality"),
+            ("🎯 مركز المهام", "admin:tasks_center"),
+        ],
+    ),
+}
+
+
 def admin_main_kb() -> InlineKeyboardMarkup:
+    """Compact admin home: four tabs instead of a 40-button wall."""
     b = InlineKeyboardBuilder()
     b.button(text="🆕 آخر التحديثات والإضافات", callback_data="admin:changelog")
     b.button(text="📘 شرح البوت", callback_data="admin:guide")
-    b.button(text="📊 إحصائيات البوت", callback_data="admin:stats")
-    b.button(text="📒 جرد الحسابات", callback_data="admin:ledger")
-    b.button(text="📡 مباشر البوت", callback_data="admin:live_feed")
-    b.button(text="📦 إدارة الطلبات", callback_data="admin:orders")
-    b.button(text="📞 طلبات الأرقام", callback_data="admin:number_orders")
-    b.button(text="💳 طلبات الشحن", callback_data="admin:deposits")
-    b.button(text="💸 طلبات السحب", callback_data="admin:withdrawals")
-    b.button(text="📢 إدارة الإعلانات", callback_data="admin:ads")
-    b.button(text="🔥 قسم العروض", callback_data="admin:special_offers")
-    b.button(text="🎁 بطاقات الهدايا", callback_data="admin:gift_codes")
-    b.button(text="📈 طلبات السوق", callback_data="admin:market_requests")
-    b.button(text="📂 إدارة الأقسام", callback_data="admin:categories")
-    b.button(text="🎛 أزرار الواجهة", callback_data="admin:main_buttons")
-    b.button(text="🛍 التحكم بالمتجر", callback_data="admin:store_control")
-    b.button(text="🧩 التحكم بخدمات الأخرى", callback_data="admin:extras_control")
-    b.button(text="📦 إدارة المنتجات", callback_data="admin:products_menu")
-    b.button(text="📞 إدارة خدمات الأرقام", callback_data="admin:number_services")
-    b.button(text="🌍 إدارة الدول", callback_data="admin:countries")
-    b.button(text="🔌 مزودو المتجر", callback_data="admin:api_providers")
-    b.button(text="📥 خدمات مسحوبة", callback_data="admin:pulled_services")
-    b.button(text="🌐 مزودو الأرقام", callback_data="admin:providers")
-    b.button(text="📊 جودة مزودي الأرقام", callback_data="admin:number_provider_quality")
-    b.button(text="💵 تعديل الأسعار", callback_data="admin:pricing")
-    b.button(text="⭐ إدارة باقات النجوم", callback_data="admin:stars")
-    b.button(text="🎟 إدارة الكوبونات", callback_data="admin:coupons")
-    b.button(text="👥 إدارة المستخدمين", callback_data="admin:users")
-    b.button(text="👨‍💼 إدارة الأدمنية", callback_data="admin:multi_admin")
-    b.button(text="📌 الاشتراك الإجباري", callback_data="admin:channels")
-    b.button(text="📢 إذاعة جماعية", callback_data="admin:broadcast")
-    b.button(text="🔧 وضع الصيانة", callback_data="admin:maintenance")
-    b.button(text="⚙️ الإعدادات العامة", callback_data="admin:settings")
+    for key, (title, _items) in ADMIN_TABS.items():
+        b.button(text=title, callback_data=f"admin:tab:{key}")
     if settings.ADMIN_WEBAPP_URL:
         b.button(
             text="🌐 لوحة الويب",
             web_app=WebAppInfo(url=settings.ADMIN_WEBAPP_URL),
         )
-    b.button(text="📜 سجل الإدارة", callback_data="admin:audit")
-    b.button(text="🎫 تذاكر الدعم", callback_data="admin:tickets")
-    b.button(text="🩺 صحة النظام", callback_data="admin:health")
-    b.button(text="🔔 إدارة الإشعارات", callback_data="admin:notifications")
-    b.button(text="🎁 برنامج الولاء", callback_data="admin:loyalty")
-    b.button(text="💼 إدارة الوكلاء", callback_data="admin:agents")
-    b.button(text="📦 المخزون الرقمي", callback_data="admin:inventory")
-    b.button(text="🔥 إدارة العروض", callback_data="admin:promotions")
-    b.button(text="🧩 مركز الإضافات", callback_data="admin:features")
-    b.button(text="🎛 مركز القيادة", callback_data="admin:cockpit")
-    b.button(text="🛠 مركز العمليات", callback_data="admin:ops")
+    # اختصارات مراقبة لا تعيد ازدحام اللوحة، لكنها تحفظ الوصول السريع
+    # لأكثر شاشتين يحتاجهما الأدمن يومياً.
+    b.button(text="📒 جرد الحسابات", callback_data="admin:ledger")
+    b.button(text="📥 خدمات مسحوبة", callback_data="admin:pulled_services")
     b.adjust(2)
+    return b.as_markup()
+
+
+def admin_tab_kb(tab: str) -> InlineKeyboardMarkup:
+    """Keyboard for one of the four admin tabs."""
+    b = InlineKeyboardBuilder()
+    _title, items = ADMIN_TABS.get(tab, ADMIN_TABS["finance"])
+    for label, callback_data in items:
+        b.button(text=label, callback_data=callback_data)
+    b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
+    b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup()
 
 
@@ -535,8 +578,9 @@ def admin_number_services_kb(services) -> InlineKeyboardMarkup:
 def admin_nsvc_avail_kb() -> InlineKeyboardMarkup:
     """أزرار ضبط قناة التوفر المتقطع."""
     b = InlineKeyboardBuilder()
-    b.button(text=" ضبط قناة التوفر", callback_data="admin:nsvc_avail_channel")
+    b.button(text="📡 ضبط قناة التوفر", callback_data="admin:nsvc_avail_channel")
     b.button(text="🔢 عدد الدول المعروضة", callback_data="admin:nsvc_avail_topn")
+    b.button(text="🌍 الدول النادرة المراقبة", callback_data="admin:nsvc_avail_watchlist")
     b.button(text="📱 اختيار الخدمة", callback_data="admin:nsvc_avail_services")
     b.button(text="🚀 نشر اللوحة الآن (اختبار)", callback_data="admin:nsvc_avail_post")
     b.button(text="🧩 مركز الإضافات (تفعيل/إيقاف + النص)", callback_data="admin:features")

@@ -15,7 +15,9 @@ class Settings(BaseSettings):
 
     # ── البوت الأساسي ──
     BOT_TOKEN: str
-    BOT_USERNAME: str
+    # Optional: deep links now resolve the live username via bot.get_me().
+    # This remains as a sanitized fallback for offline/local contexts.
+    BOT_USERNAME: str = ""
     ADMIN_IDS: str
 
     # ── قنوات الإشعارات ──

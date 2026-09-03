@@ -25,6 +25,7 @@ def build_main_menu(
     dynamic_buttons: list[MainMenuButton] | None = None,
     show_agent: bool = False,
     agent_percent: str = "10",
+    completed_orders_count: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Build the compact top-level menu.
 
@@ -40,21 +41,25 @@ def build_main_menu(
     balance_text = balance_display if balance_display is not None else f"${balance_usd}"
     b = InlineKeyboardBuilder()
 
-    # Keep only the essential actions in the first screen.
+    # Keep only the essential actions in the first screen.  Language and
+    # currency are available from «حسابي» to avoid crowding the home menu.
     b.button(text=t("menu_full_store"), callback_data="store:home")
+    if completed_orders_count is not None:
+        b.button(
+            text=t("menu_completed_orders", count=completed_orders_count),
+            callback_data="info:stats",
+        )
     b.button(text=t("menu_account_with_balance", balance=balance_text), callback_data="menu:account")
     b.button(text=t("menu_deposit"), callback_data="menu:deposit")
-    b.button(text=t("menu_support"), callback_data="menu:support")
-    b.button(text=t("menu_referral"), callback_data="menu:referral")
-    b.button(text=t("menu_language"), callback_data="menu:language")
-    b.button(text=t("menu_currency"), callback_data="menu:currency")
-    b.button(text=t("menu_bot_info"), callback_data="info:home")
     b.button(text=t("menu_transfer"), callback_data="menu:transfer")
+    b.button(text=t("menu_referral"), callback_data="menu:referral")
     b.button(text=t("menu_extras"), callback_data="extras:home")
+    b.button(text=t("menu_terms"), callback_data="info:terms")
+    b.button(text=t("menu_support"), callback_data="menu:support")
     if show_agent:
         b.button(text=t("menu_agent", percent=agent_percent), callback_data="agent:home")
 
-    b.adjust(2, 2, 2, 2, 2)
+    b.adjust(2)
     return b.as_markup()
 
 

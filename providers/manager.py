@@ -118,15 +118,18 @@ class ProviderManager:
         service: NumberService,
         country: Country,
         session=None,
+        use_cache: bool = True,
     ) -> dict[ProviderName, Decimal]:
         """
         يجلب أسعار كل المزودين المتاحين لخدمة/دولة معينة.
         يرجع dict مع المزود كمفتاح والسعر بالدولار كقيمة.
+        ``use_cache=False`` يستعمل لقناة التوفر المتقطع حتى تقارن مخزوناً حياً.
         """
         cache_key = f"number-price:{service.code}:{country.code}"
-        cached = await PriceCacheService.get(cache_key)
-        if cached is not None:
-            return cached
+        if use_cache:
+            cached = await PriceCacheService.get(cache_key)
+            if cached is not None:
+                return cached
 
         # ── 1) ترشيح المزودين ──
         # فحوصات قاعدة البيانات تبقى تسلسلية: جلسة SQLAlchemy غير آمنة
@@ -142,7 +145,8 @@ class ProviderManager:
             candidates.append((provider_name, instance, country_code, service_code))
 
         if not candidates:
-            await PriceCacheService.set(cache_key, {}, ttl=20)
+            if use_cache:
+                await PriceCacheService.set(cache_key, {}, ttl=20)
             return {}
 
         # ── 2) جولات الشبكة تتوازى ──
@@ -164,8 +168,9 @@ class ProviderManager:
             if price is not None
         }
 
-        ttl = await PriceCacheService.ttl_seconds()
-        await PriceCacheService.set(cache_key, result, ttl=ttl)
+        if use_cache:
+            ttl = await PriceCacheService.ttl_seconds()
+            await PriceCacheService.set(cache_key, result, ttl=ttl)
         return result
 
     async def _rank_providers_for_purchase(
