@@ -19,6 +19,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType
+from services.agent_service import AgentService
 from services.dynamic_service import DynamicService
 from services.player_id_service import PlayerIdError, PlayerIdService
 from services.balance_service import BalanceService, InsufficientBalanceError
@@ -160,6 +161,8 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
     from services.smm_catalog import button_label
 
     title = button_label(sub_cat.name_ar, sub_cat.emoji)
+    # شرح القسم الفرعي (إن ضبطه الأدمن)
+    sub_desc = f"\n<i>{sub_cat.description}</i>\n" if sub_cat.description else ""
     products = await DynamicService.get_active_products(session, sub_cat.id)
 
     inner_sections: list[tuple[object, int]] = []
@@ -176,11 +179,11 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
             ]
 
     if inner_sections:
-        text = f"<b>{title}</b>\n\nاختر نوع الخدمة المطلوبة:"
+        text = f"<b>{title}</b>{sub_desc}\nاختر نوع الخدمة المطلوبة:"
         markup = sections_kb(sub_cat.category_id, inner_sections)
     elif products:
         back_sub_id = sub_cat.parent_sub_category_id
-        text = f"<b>{title}{I18nService.t('ux_games_282_17', language)}"
+        text = f"<b>{title}</b>{sub_desc}{I18nService.t('ux_games_282_17', language)}"
         markup = products_kb(
             sub_cat.id,
             products,
@@ -188,7 +191,7 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
             back_sub_id=back_sub_id,
         )
     else:
-        text = f"<b>{title}{I18nService.t('ux_games_276_16', language)}"
+        text = f"<b>{title}</b>{sub_desc}{I18nService.t('ux_games_276_16', language)}"
         markup = back_to_main_kb(language)
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
@@ -204,13 +207,15 @@ async def category_selected(callback: CallbackQuery, session):
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
     await callback.answer()
+    # شرح القسم (إن ضبطه الأدمن) يظهر للزبون أعلى الشاشة
+    desc_line = f"\n\n<i>{category.description}</i>\n" if category.description else "\n"
     # المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)؛ الأقسام الداخلية تظهر
     # عند فتح التطبيق نفسه عبر subcat:.
     sub_cats = await DynamicService.get_active_root_sub_categories(session, category_id)
     if not sub_cats:
-        await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{I18nService.t('ux_games_246_13', _auto_lang(locals()))}", reply_markup=back_to_main_kb())
+        await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{desc_line}{I18nService.t('ux_games_246_13', _auto_lang(locals()))}", reply_markup=back_to_main_kb())
         return
-    await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{I18nService.t('ux_games_252_14', _auto_lang(locals()))}", reply_markup=sub_categories_kb(category_id, sub_cats))
+    await callback.message.edit_text(f"{category.emoji} <b>{category.name_ar}{desc_line}{I18nService.t('ux_games_252_14', _auto_lang(locals()))}", reply_markup=sub_categories_kb(category_id, sub_cats))
 
 @router.callback_query(F.data.startswith('subcat:'))
 async def sub_category_selected(callback: CallbackQuery, session, db_user=None):
@@ -257,21 +262,23 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     price_display = await _dual_price(product.price_usd, db_user, session)
     price_label = I18nService.t('price', language)
     confirm_q = I18nService.t('confirm_purchase_q', language)
+    # شرح/وصف الخدمة (إن ضبطه الأدمن)
+    desc_line = f"\n<i>{product.description}</i>" if product.description else ""
     if product.requires_player_id:
-        await callback.message.edit_text(f'🎮 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
+        await callback.message.edit_text(f'🎮 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
         await state.update_data(product_id=product_id)
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         if product.requires_quantity:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id)
             await state.set_state(SMMOrderStates.waiting_link)
         else:
-            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
+            await callback.message.edit_text(f'📈 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
             await state.update_data(product_id=product_id, quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:
-        await callback.message.edit_text(f'📦 <b>{product.name_ar}</b>\n💰 {price_label}: <b>{price_display}</b>\n\n{confirm_q}', reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        await callback.message.edit_text(f'📦 <b>{product.name_ar}</b>{desc_line}\n💰 {price_label}: <b>{price_display}</b>\n\n{confirm_q}', reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(GamesOrderStates.waiting_player_id)
 async def player_id_received(message: Message, state: FSMContext, session, db_user: User):
@@ -380,6 +387,37 @@ async def product_confirm_with_coupon(callback: CallbackQuery, session, db_user:
     coupon_code = parts[2]
     await _execute_purchase(callback, session, db_user, bot, state, product_id, coupon_code=coupon_code)
 
+def _is_digital_subscription_provider(provider) -> bool:
+    """هل مزود اشتراكات رقمية (تسليم لحظي)؟ ggsoma/partner_v1."""
+    raw = getattr(provider, "custom_config", None)
+    if not raw:
+        return False
+    try:
+        cfg = json.loads(raw)
+    except Exception:
+        return False
+    return isinstance(cfg, dict) and cfg.get("engine") in {"ggsoma", "partner_v1"}
+
+
+async def _provider_balance_usd(protocol, provider) -> Decimal | None:
+    """رصيد المزود بالدولار، أو None إن لم يُعرف (الجهل لا يمنع البيع)."""
+    from protocols.base import ProtocolError
+
+    try:
+        balance = await protocol.get_balance()
+        return Decimal(str(balance.amount)) * Decimal(str(getattr(provider, "rate_to_usd", None) or 1))
+    except ProtocolError:
+        pass
+    except Exception:
+        logger.warning("تعذر جلب رصيد المزود %s", getattr(provider, "id", "?"))
+    if provider is not None and getattr(provider, "balance", None) is not None:
+        try:
+            return Decimal(str(provider.balance)) * Decimal(str(getattr(provider, "rate_to_usd", None) or 1))
+        except Exception:
+            return None
+    return None
+
+
 async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot, state: FSMContext, product_id: int, coupon_code: str | None):
     product = await DynamicService.get_product(session, product_id)
     if not product or product.status != ProductStatus.ACTIVE:
@@ -427,6 +465,7 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
     elif discount > 0:
         promotion = None
     final_price = total_price - discount
+    final_price = await AgentService.apply_discount(session, db_user.id, final_price)
     large_confirm = await SettingsService.get_decimal('large_order_confirm_usd', Decimal('20'))
     if final_price >= large_confirm:
         language = _glang(db_user)
@@ -475,6 +514,7 @@ async def product_final_confirm(callback: CallbackQuery, session, db_user: User,
     elif discount > 0:
         promotion = None
     final_price = total_price - discount
+    final_price = await AgentService.apply_discount(session, db_user.id, final_price)
     await _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion)
 
 async def _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion):
@@ -538,6 +578,58 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         if provider and provider.is_active:
             try:
                 protocol = ProtocolFactory.create_from_provider(provider)
+                # الاشتراكات الرقمية (ggsoma/partner_v1): قبل إرسال الطلب للمزود
+                # نفحص رصيدَه. إذا كان غير كافٍ لا نرسل — يُشعر المشتري أن
+                # الكود سيصل خلال دقائق، وتُخطر قناة الإدارة بقبول/رفض.
+                if _is_digital_subscription_provider(provider):
+                    balance_usd = await _provider_balance_usd(protocol, provider)
+                    if balance_usd is not None and balance_usd < final_price:
+                        order = UnifiedOrder(
+                            user_id=db_user.id, product_id=product.id,
+                            api_provider_id=provider.id,
+                            promotion_id=promotion.id if promotion else None,
+                            target=target, quantity=quantity,
+                            price_usd=final_price, cost_price_usd=product.cost_price_usd,
+                            status=UnifiedOrderStatus.PENDING,
+                            status_message='بانتظار تنفيذ الإدارة (رصيد المزود غير كافٍ)',
+                        )
+                        session.add(order)
+                        await session.commit()
+                        await session.refresh(order)
+                        if promotion:
+                            await PromotionService.mark_used(session, promotion.id)
+                        await DynamicService.increment_product_sold(session, product.id, quantity)
+                        await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
+                        await LoyaltyService.award_purchase_points(session, db_user.id, 'unified_orders', order.id, final_price)
+                        await callback.message.answer(
+                            f"✅ <b>تم شراء {escape(product.name_ar)}</b>\n\n"
+                            f"🆔 رقم الطلب: #{order.id}\n"
+                            f"💰 المبلغ: {final_price}$\n\n"
+                            "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
+                            "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله."
+                        )
+                        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+                        await notifier.notify_admin(
+                            "🚨 <b>رصيد المزود غير كافٍ — اشتراك رقمي</b>\n\n"
+                            f"🔌 المزود: <b>{provider.name}</b>\n"
+                            f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
+                            f"📦 المنتج: {escape(product.name_ar)}\n"
+                            f"🆔 الطلب: <b>#{order.id}</b>\n"
+                            f"🎯 الهدف: {escape(str(target)) if target else '—'}\n"
+                            f"💰 المبلغ: {final_price}$\n\n"
+                            "✅ «أرسل البيانات يدوياً» بعد شحن رصيد المزود وجلب "
+                            "الحساب — يُشعر المستخدم فوراً.\n"
+                            "❌ «إلغاء + استرجاع» إن لم تتمكن.",
+                            reply_markup=InlineKeyboardMarkup(
+                                inline_keyboard=[
+                                    [InlineKeyboardButton(text="✅ أرسل البيانات يدوياً", callback_data=f"admin:sub_send:{order.id}")],
+                                    [InlineKeyboardButton(text="❌ إلغاء + استرجاع", callback_data=f"admin:order_refund_ask:{order.id}")],
+                                ]
+                            ),
+                        )
+                        await state.clear()
+                        return
                 result = await protocol.place_order(service_id=product.provider_service_id, target=target, quantity=quantity)
                 external_order_id = result.external_order_id
                 # مزود لحظي (اشتراكات رقمية ggsoma…): سلّم فوراً في نفس الاستجابة.
@@ -604,8 +696,35 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         if delivery_html:
             result_text += f'\n\n🎁 <b>تم التسليم فوراً — بياناتك:</b>{delivery_html}'
     else:
+        if fulfillment == ProductFulfillmentType.MANUAL.value:
+            result_text += (
+                '\n\n🕐 <b>هذا منتج يدوي</b> — ستُنفذ الإدارة طلبك '
+                'خارج البوت وستصلك رسالة فور اكتمال التنفيذ أو الاسترجاع.'
+            )
         result_text += '\nستصلك إشعارات بتحديث حالة طلبك.'
     await callback.message.answer(result_text)
-    await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {product.name_ar}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {target or '—'}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
+    if fulfillment == ProductFulfillmentType.MANUAL.value:
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        await notifier.notify_admin(
+            "🖐 <b>طلب يدوي جديد — بانتظار تنفيذك</b>\n\n"
+            f"🆔 الطلب: <b>#{order.id}</b>\n"
+            f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
+            f"📦 المنتج: {escape(product.name_ar)}\n"
+            f"🎯 الهدف: {escape(str(target)) if target else '—'}\n"
+            f"📊 الكمية: {quantity}\n"
+            f"💰 المبلغ: {final_price}$\n\n"
+            "✅ نفّذت الطلب؟ «نفذته» لإشعار المستخدم.\n"
+            "❌ لا يمكنك تنفيذه؟ «ألغِه» لاسترجاع رصيد المستخدم.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ نفّذته — أُشعر المستخدم", callback_data=f"admin:order_complete:{order.id}")],
+                    [InlineKeyboardButton(text="❌ أَلْغِه — استرجاع", callback_data=f"admin:order_refund_ask:{order.id}")],
+                    [InlineKeyboardButton(text="👁 تفاصيل الطلب", callback_data=f"admin:order_view:{order.id}")],
+                ]
+            ),
+        )
+    else:
+        await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {product.name_ar}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {target or '—'}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
     await notifier.notify_successful_unified_order(username=db_user.username, full_name=db_user.full_name, product_name=product.name_ar, price_usd=str(final_price))
     await state.clear()

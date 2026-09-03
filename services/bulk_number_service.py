@@ -134,12 +134,20 @@ class BulkNumberService:
         country: Country,
         quantity: int,
         timeout_minutes: int = 5,
+        discount_percent: Decimal | None = None,
     ) -> dict:
         """
         ينفذ الدفعة. يرجع ملخصاً بالناجح والفاشل والمبالغ.
+
+        ``discount_percent``: خصم إضافي على الإجمالي (مثل خصم الوكيل)
+        يُطبق بعد خصم الجملة وقبل الخصم من الرصيد.
         """
         estimate = await BulkNumberService.quote(session, service, country, quantity)
         total = estimate["total_usd"]
+        if discount_percent is not None and discount_percent > 0:
+            total = (
+                total * (Decimal("100") - Decimal(str(discount_percent))) / Decimal("100")
+            ).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
         unit_price = estimate["unit_price_usd"]
         net_unit_price = (total / Decimal(quantity)).quantize(
             Decimal("0.0001"), rounding=ROUND_DOWN

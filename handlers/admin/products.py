@@ -502,6 +502,13 @@ async def prod_view(callback: CallbackQuery, session):
 
     sub_cat = product.sub_category
 
+    # الهامش الفعّال (منتج ← قسم فرعي ← قسم ← عالمي)
+    from services.margin_service import MarginService
+
+    effective_margin, margin_source = await MarginService.resolve_product_margin(
+        session, product
+    )
+
     await callback.message.edit_text(
         f"📦 <b>{product.name_ar}</b>\n"
         f"🆔 ID: <code>{product.id}</code> | ربط زر: <code>prod:{product.id}</code>\n\n"
@@ -509,6 +516,7 @@ async def prod_view(callback: CallbackQuery, session):
         f"💰 سعر البيع: {product.price_usd}${' / 1000' if product.requires_quantity else ''}\n"
         f"💵 سعر التكلفة: {product.cost_price_usd}$\n"
         f"📈 الربح: {product.price_usd - product.cost_price_usd}$\n"
+        f"💵 هامش الربح: <b>{effective_margin}%</b> (من: {margin_source})\n"
         f"🔌 المزود: {provider_name}\n"
         f"🔢 آيدي الخدمة: {product.provider_service_id or '—'}\n"
         f"⏱️ الوقت التقريبي: {product.estimated_time or '—'}\n"
@@ -636,6 +644,18 @@ async def prod_edit_svc_id_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminProductStates.waiting_edit_value)
 
 
+@router.callback_query(F.data.startswith("admin:prod_edit_desc:"))
+async def prod_edit_desc_start(callback: CallbackQuery, state: FSMContext):
+    prod_id = int(callback.data.split(":")[2])
+    await state.update_data(edit_prod_id=prod_id, edit_field="desc")
+    await callback.message.edit_text(
+        "📝 أرسل شرح/وصف الخدمة (يظهر للزبون في شاشة الشراء):\n"
+        "أرسل <b>مسح</b> لإزالة الوصف:",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminProductStates.waiting_edit_value)
+
+
 # ══════════════ معالج التعديل الموحد ══════════════
 
 
@@ -659,6 +679,14 @@ async def prod_edit_received(message: Message, state: FSMContext, session):
         await DynamicService.update_product(session, prod_id, name_ar=value)
     elif field == "svc_id":
         await DynamicService.update_product(session, prod_id, provider_service_id=value)
+    elif field == "desc":
+        if value in ("مسح", "-", "", "0"):
+            value = None
+        else:
+            if len(value) > 500:
+                await message.answer("⚠️ الوصف طويل جداً (الحد الأقصى 500 حرف).")
+                return
+        await DynamicService.update_product(session, prod_id, description=value)
 
     await message.answer("✅ تم التحديث.")
     await state.clear()

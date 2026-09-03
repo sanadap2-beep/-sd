@@ -26,6 +26,7 @@ from protocols.generic_json import (
 )
 from protocols.partner_v1 import PartnerV1Protocol, is_partner_v1_config
 from protocols.ggsoma_v1 import GgsomaPartnerProtocol, is_ggsoma_v1_config
+from protocols.hyper_store import HyperStoreProtocol, is_hyper_store_config
 from protocols.smm_v2 import SmmV2Protocol
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,13 @@ class ProtocolFactory:
 
         if is_ggsoma_v1_config(custom_config):
             return GgsomaPartnerProtocol(
+                api_url=api_url,
+                api_key=api_key,
+                custom_config=custom_config,
+            )
+
+        if is_hyper_store_config(custom_config):
+            return HyperStoreProtocol(
                 api_url=api_url,
                 api_key=api_key,
                 custom_config=custom_config,

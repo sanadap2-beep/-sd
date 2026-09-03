@@ -4,10 +4,12 @@
 الرصيد بأمان عند فشل مزود خارجي.
 """
 
+import json
 from datetime import datetime
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +19,7 @@ from database.models import (
     TransactionType,
 )
 from filters.admin_filter import IsAdmin
+from states.states import AdminSubManualStates
 from keyboards.admin import (
     admin_order_detail_kb,
     admin_order_refund_confirm_kb,
@@ -261,3 +264,68 @@ async def order_refund(callback: CallbackQuery, session, bot):
     )
     await callback.answer("✅ تم استرجاع الرصيد.")
     await _render_order_detail(callback, session, order)
+
+@router.callback_query(F.data.startswith("admin:sub_send:"))
+async def sub_send_start(callback: CallbackQuery, session, state: FSMContext):
+    """بدء التسليم اليدوي لاشتراك رقمي بعد نفاد رصيد المزود."""
+    order_id = int(callback.data.split(":")[2])
+    order = await _get_order(session, order_id)
+    if order is None:
+        await callback.answer("⚠️ الطلب غير موجود.", show_alert=True)
+        return
+    if order.status not in (UnifiedOrderStatus.PENDING, UnifiedOrderStatus.PROCESSING):
+        await callback.answer(
+            "⚠️ لا يمكن التسليم بهذا الطلب بحالته الحالية.",
+            show_alert=True,
+        )
+        return
+    await state.update_data(order_id=order_id)
+    await state.set_state(AdminSubManualStates.waiting_data)
+    await callback.answer()
+    user = order.user
+    user_line = (
+        f"{user.telegram_id} (@{user.username or '-'})" if user else "—"
+    )
+    await callback.message.edit_text(
+        "📤 <b>تسليم اشتراك رقمي يدوياً</b>\n\n"
+        f"🆔 الطلب: <b>#{order.id}</b>\n"
+        f"👤 المستخدم: {user_line}\n\n"
+        "أرسل بيانات الحساب/الكود/الرابط في رسالة نصية واحدة.\n"
+        "أرسل <code>-</code> للإلغاء."
+    )
+
+
+@router.message(AdminSubManualStates.waiting_data)
+async def sub_send_data(message: Message, session, bot, state: FSMContext):
+    data = await state.get_data()
+    order_id = int(data.get("order_id", 0))
+    await state.clear()
+    raw = (message.text or message.caption or "").strip()
+    if raw in {"", "-", "إلغاء"}:
+        await message.answer("تم إلغاء التسليم اليدوي.")
+        return
+    order = await _get_order(session, order_id)
+    if order is None:
+        await message.answer("⚠️ الطلب غير موجود.")
+        return
+    if order.status not in (UnifiedOrderStatus.PENDING, UnifiedOrderStatus.PROCESSING):
+        await message.answer("⚠️ الطلب بحالة لا تسمح بالتسليم.")
+        return
+    from services.digital_delivery import format_delivery_html
+
+    order.status = UnifiedOrderStatus.COMPLETED
+    order.status_message = "تم التسليم يدوياً من الإدارة (اشتراك رقمي)"
+    order.completed_at = datetime.utcnow()
+    order.result_data = json.dumps({"content": raw}, ensure_ascii=False)
+    await session.commit()
+
+    if order.user:
+        delivery_html = format_delivery_html({"content": raw})
+        await NotificationService(bot).notify_user(
+            order.user.telegram_id,
+            f"🎁 <b>وصلك اشتراكك!</b>\n\n"
+            f"🆔 الطلب: #{order.id}\n"
+            f"📦 {order.product.name_ar if order.product else 'خدمة'}\n\n"
+            f"{delivery_html or '<code>' + raw + '</code>'}"
+        )
+    await message.answer("✅ تم التسليم وإشعار المستخدم.")

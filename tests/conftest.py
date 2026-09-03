@@ -26,4 +26,17 @@ async def fresh_database():
     if database_path.exists():
         database_path.unlink()
     await init_db()
+    # إعادة تعيين الكاشات الذاكرة حتى لا تسرّب قيم اختبار لاختبار تالٍ
+    # (كل قاعدة بيانات جديدة = إعدادات/ميزات جديدة).
+    try:
+        from services.settings_service import SettingsService
+        from services.feature_service import FeatureService
+
+        SettingsService._cache = {}
+        SettingsService._loaded = False
+        FeatureService._cache = {}
+        FeatureService._config_cache = {}
+        FeatureService._loaded = False
+    except Exception:
+        pass
     yield

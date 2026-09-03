@@ -273,6 +273,60 @@ class User(Base):
     referrer: Mapped["User"] = relationship(remote_side=[id], backref="referrals")
 
 
+class AgentCode(Base):
+    """
+    كود وكالة يصدره الأدمن لشخص محدد.
+
+    الكود يُستعمل مرة واحدة: يدخله المستخدم في البوت فيصبح
+    وكلاً بنسبة الخصم المثبتة على الكود.
+    """
+
+    __tablename__ = "agent_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("10"))
+    status: Mapped[str] = mapped_column(String(16), default="unused", index=True)  # unused/used/voided
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    creator: Mapped["User"] = relationship(foreign_keys=[created_by])
+    redeemer: Mapped["User | None"] = relationship(foreign_keys=[user_id])
+
+
+class AgentProfile(Base):
+    """
+    وكيل فعّال (أو سُبقت وكالته) لدى البوت.
+
+    - percent: نسبة الخصم الحالية على جميع المنتجات والخدمات
+      (قابلة للرفع/الخفض من «إدارة الوكلاء»).
+    - السحب: إذا بقي إيداع الوكيل الأسبوعي أقل من الحد
+      (min_weekly_deposit_usd) تُسحب وكالته مع إشعار الإدارة.
+    """
+
+    __tablename__ = "agent_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    code_id: Mapped[int | None] = mapped_column(ForeignKey("agent_codes.id"), nullable=True)
+    granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+
+    percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("10"))
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)  # active/revoked
+
+    activated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # آخر أسبوع فُحص فيه الإيداع (لمنع سحب متكرر لنفس الأسبوع)
+    last_checked_week: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+
+    user: Mapped["User"] = relationship(foreign_keys=[user_id])
+    code: Mapped["AgentCode | None"] = relationship()
+    granter: Mapped["User | None"] = relationship(foreign_keys=[granted_by])
+
+
 class LoyaltyEvent(Base):
     """سجل نقاط الولاء مع مفتاح يمنع احتساب الحدث مرتين."""
 
@@ -730,8 +784,13 @@ class Category(Base):
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📦")
     type: Mapped[CategoryType] = mapped_column(SAEnum(CategoryType))
+    # شرح القسم الذي يظهر للزبون عند فتحه (يُضبط من لوحة الأدمن).
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # هامش ربح القسم (نسخة): يُطبق على كل منتجات القسم ما لم يُضبط
+    # هامش أخص على القسم الفرعي أو المنتج. null = يرث الهامش العالمي.
+    profit_margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     sub_categories: Mapped[list["SubCategory"]] = relationship(
@@ -765,6 +824,9 @@ class SubCategory(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # هامش ربح القسم الفرعي (نسخة): أولوية أعلى من هامش القسم الرئيسي.
+    # null = يرث (قسمه الرئيسي ثم العالمي).
+    profit_margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

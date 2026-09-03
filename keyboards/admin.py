@@ -13,6 +13,7 @@ from config import settings
 
 def admin_main_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    b.button(text="🆕 آخر التحديثات والإضافات", callback_data="admin:changelog")
     b.button(text="📘 شرح البوت", callback_data="admin:guide")
     b.button(text="📊 إحصائيات البوت", callback_data="admin:stats")
     b.button(text="📒 جرد الحسابات", callback_data="admin:ledger")
@@ -27,6 +28,8 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     b.button(text="📈 طلبات السوق", callback_data="admin:market_requests")
     b.button(text="📂 إدارة الأقسام", callback_data="admin:categories")
     b.button(text="🎛 أزرار الواجهة", callback_data="admin:main_buttons")
+    b.button(text="🛍 التحكم بالمتجر", callback_data="admin:store_control")
+    b.button(text="🧩 التحكم بخدمات الأخرى", callback_data="admin:extras_control")
     b.button(text="📦 إدارة المنتجات", callback_data="admin:products_menu")
     b.button(text="📞 إدارة خدمات الأرقام", callback_data="admin:number_services")
     b.button(text="🌍 إدارة الدول", callback_data="admin:countries")
@@ -53,6 +56,7 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     b.button(text="🩺 صحة النظام", callback_data="admin:health")
     b.button(text="🔔 إدارة الإشعارات", callback_data="admin:notifications")
     b.button(text="🎁 برنامج الولاء", callback_data="admin:loyalty")
+    b.button(text="💼 إدارة الوكلاء", callback_data="admin:agents")
     b.button(text="📦 المخزون الرقمي", callback_data="admin:inventory")
     b.button(text="🔥 إدارة العروض", callback_data="admin:promotions")
     b.button(text="🧩 مركز الإضافات", callback_data="admin:features")
@@ -385,7 +389,9 @@ def admin_product_detail_kb(product, sub_category_id: int) -> InlineKeyboardMark
     b.button(text="➕ أضفه كزر رئيسي", callback_data=f"mb:add_prod:{product.id}")
     b.button(text="🧪 فحص جاهزية المنتج", callback_data=f"admin:prod_ready:{product.id}")
     b.button(text="💰 تعديل السعر", callback_data=f"admin:prod_edit_price:{product.id}")
-    b.button(text="📝 تعديل الاسم", callback_data=f"admin:prod_edit_name:{product.id}")
+    b.button(text="💵 هامش ربح المنتج (%)", callback_data=f"admin:prod_margin:{product.id}")
+    b.button(text="📝 شرح/وصف الخدمة", callback_data=f"admin:prod_edit_desc:{product.id}")
+    b.button(text="✏️ تعديل الاسم", callback_data=f"admin:prod_edit_name:{product.id}")
     b.button(text="🔌 تعديل آيدي المزود", callback_data=f"admin:prod_edit_svc_id:{product.id}")
     b.button(text="🗑 حذف", callback_data=f"admin:prod_delete:{product.id}")
     b.button(text="🔙 رجوع", callback_data=f"admin:prods:{sub_category_id}")
@@ -520,7 +526,34 @@ def admin_number_services_kb(services) -> InlineKeyboardMarkup:
             callback_data=f"admin:nsvc_view:{svc.id}",
         )
     b.button(text="➕ إضافة خدمة أرقام", callback_data="admin:nsvc_add")
+    b.button(text="📡 قناة التوفر المتقطع", callback_data="admin:nsvc_avail")
     b.button(text="🔙 رجوع", callback_data="admin:main")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_avail_kb() -> InlineKeyboardMarkup:
+    """أزرار ضبط قناة التوفر المتقطع."""
+    b = InlineKeyboardBuilder()
+    b.button(text=" ضبط قناة التوفر", callback_data="admin:nsvc_avail_channel")
+    b.button(text="🔢 عدد الدول المعروضة", callback_data="admin:nsvc_avail_topn")
+    b.button(text="📱 اختيار الخدمة", callback_data="admin:nsvc_avail_services")
+    b.button(text="🚀 نشر اللوحة الآن (اختبار)", callback_data="admin:nsvc_avail_post")
+    b.button(text="🧩 مركز الإضافات (تفعيل/إيقاف + النص)", callback_data="admin:features")
+    b.button(text="🔙 رجوع", callback_data="admin:number_services")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_avail_services_kb(services) -> InlineKeyboardMarkup:
+    """اختيار خدمة الأرقام التي ستُبنى لها اللوحة."""
+    b = InlineKeyboardBuilder()
+    for svc in services:
+        b.button(
+            text=f"{svc.emoji} {svc.name_ar}",
+            callback_data=f"admin:nsvc_avail_svc:{svc.code}",
+        )
+    b.button(text="🔙 رجوع", callback_data="admin:nsvc_avail")
     b.adjust(1)
     return b.as_markup()
 

@@ -110,11 +110,19 @@ async def special_target(message: Message, state: FSMContext, session, db_user):
         await state.clear()
         await message.answer("العرض لم يعد متاحاً.")
         return
-    price = await CurrencyService.format_dual(offer.price_usd, db_user, session)
+    # خصم الوكيل يظهر للمستخدم قبل التأكيد
+    from services.agent_service import AgentService
+
+    pay_price = await AgentService.apply_discount(session, db_user.id, offer.price_usd)
+    price = await CurrencyService.format_dual(pay_price, db_user, session)
+    agent_note = (
+        f"💼 (شامل خصم وكيلك)\n" if pay_price != offer.price_usd else ""
+    )
     await state.update_data(target=target)
     await message.answer(
         f"✅ <b>تأكيد شراء العرض</b>\n\n"
         f"📦 {offer.name}\n"
+        f"{agent_note}"
         f"💰 السعر: {price}\n"
         f"🎯 المطلوب: <code>{target}</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -129,8 +137,19 @@ async def special_confirm(callback: CallbackQuery, state: FSMContext, session, d
     data = await state.get_data()
     offer_id = int(data.get("offer_id"))
     target = data.get("target", "")
+    # خصم الوكيل على سعر العرض (إن كان وكلاً)
+    from services.agent_service import AgentService
+
+    offer = await session.get(SpecialOffer, offer_id)
+    pay_price = (
+        await AgentService.apply_discount(session, db_user.id, offer.price_usd)
+        if offer is not None
+        else None
+    )
     try:
-        order = await SpecialOfferService.purchase(session, offer_id, db_user.id, target, bot)
+        order = await SpecialOfferService.purchase(
+            session, offer_id, db_user.id, target, bot, price_override=pay_price
+        )
     except SpecialOfferError as exc:
         await callback.answer(str(exc), show_alert=True)
         await state.clear()

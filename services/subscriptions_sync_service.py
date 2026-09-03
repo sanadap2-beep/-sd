@@ -325,7 +325,13 @@ class SubscriptionsSyncService:
             return None
 
         if product is None:
-            name = (svc.name or "").strip()[:128] or "اشتراك رقمي"
+            # الاسم بالعربية دائماً (تعريب تلقائي إن كان اسم المزود إنجليزياً)
+            from services.service_localization_service import display_service_name
+
+            name = (
+                display_service_name(svc.name, svc.category, svc.service_type)[:128]
+                or "اشتراك رقمي"
+            )
             product = Product(
                 sub_category_id=section.id,
                 api_provider_id=provider.id,

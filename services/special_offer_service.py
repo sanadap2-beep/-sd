@@ -145,15 +145,19 @@ class SpecialOfferService:
         return offer
 
     @staticmethod
-    async def purchase(session, offer_id: int, user_id: int, target: str, bot: Bot) -> SpecialOfferOrder:
+    async def purchase(
+        session, offer_id: int, user_id: int, target: str, bot: Bot, price_override: Decimal | None = None
+    ) -> SpecialOfferOrder:
         offer = await session.get(SpecialOffer, offer_id)
         if offer is None or offer.status != "active" or (offer.ends_at and offer.ends_at <= datetime.utcnow()):
             raise SpecialOfferError("العرض لم يعد متاحاً.")
+        # السعر الفعلي المُخصوم (قد يكون أقل من سعر العرض عند وجود خصم وكيل)
+        pay_price = price_override if price_override is not None else offer.price_usd
         try:
             await BalanceService.deduct_balance(
                 session,
                 user_id,
-                offer.price_usd,
+                pay_price,
                 TransactionType.PURCHASE,
                 description=f"شراء عرض خاص: {offer.name}",
                 related_table="special_offers",
@@ -161,13 +165,13 @@ class SpecialOfferService:
                 is_purchase=True,
             )
         except InsufficientBalanceError as exc:
-            raise SpecialOfferError(f"رصيدك غير كافٍ. المطلوب {offer.price_usd}$.") from exc
+            raise SpecialOfferError(f"رصيدك غير كافٍ. المطلوب {pay_price}$.") from exc
 
         order = SpecialOfferOrder(
             offer_id=offer.id,
             user_id=user_id,
             target=target[:500],
-            price_usd=offer.price_usd,
+            price_usd=pay_price,
             status="pending",
             status_message="بانتظار التنفيذ",
         )

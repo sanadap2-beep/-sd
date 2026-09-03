@@ -266,6 +266,12 @@ class AdminPartnerPickStates(StatesGroup):
     waiting_margin = State()
 
 
+class AdminSubManualStates(StatesGroup):
+    """التسليم اليدوي لاشتراك رقمي بعد نفاد رصيد المزود."""
+
+    waiting_data = State()
+
+
 class AdminApiProviderStates(StatesGroup):
     waiting_protocol_type = State()
     waiting_name = State()
@@ -320,6 +326,8 @@ class AdminNumberServiceStates(StatesGroup):
     waiting_smshub_code = State()
     waiting_edit_field = State()
     waiting_edit_value = State()
+    waiting_availability_channel = State()
+    waiting_availability_topn = State()
 
 
 class AdminMaintenanceStates(StatesGroup):
@@ -363,6 +371,17 @@ class AdminBulkDiscountStates(StatesGroup):
 
 
 class AdminMainButtonStates(StatesGroup):
+    waiting_label = State()
+    waiting_action = State()
+    choosing_target_type = State()
+    choosing_category = State()
+    choosing_subcategory = State()
+    choosing_product = State()
+
+
+class AdminStoreSectionStates(StatesGroup):
+    """إضافة قسم/زر جديد داخل المتجر من «🛍 التحكم بالمتجر»."""
+
     waiting_label = State()
     waiting_action = State()
     choosing_target_type = State()
@@ -473,3 +492,23 @@ class AdminRefundStates(StatesGroup):
     waiting_number_refund = State()
     waiting_unified_refund = State()
     waiting_sentinel_config = State()
+
+
+class AgentStates(StatesGroup):
+    """برنامج الوكلاء: انتظار كود الوكيل."""
+
+    waiting_code = State()
+
+
+class AdminAgentStates(StatesGroup):
+    """إدارة الوكلاء: انتظار نسبة خصم كود جديد."""
+
+    waiting_code_percent = State()
+
+
+class AdminMarginStates(StatesGroup):
+    """ضبط هوامش الربح: قسم / قسم فرعي / منتج."""
+
+    waiting_category_margin = State()
+    waiting_sub_margin = State()
+    waiting_product_margin = State()

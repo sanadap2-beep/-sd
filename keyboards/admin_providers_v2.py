@@ -438,6 +438,14 @@ CUSTOM_PROVIDER_CONFIG_PRESETS = {
         "balance_optional": False,
         "suggested_api_url": "https://ggsoma.store/api/partner/v1",
     },
+    "hyper_store": {
+        "engine": "hyper_store",
+        "auth": "header",
+        "auth_header": "api-token",
+        "request_format": "json",
+        "balance_optional": False,
+        "suggested_api_url": "https://api.hyper4store.com",
+    },
     "store_rest": {
         "auth": "bearer",
         "request_format": "json",
@@ -522,6 +530,10 @@ def custom_provider_presets_kb() -> InlineKeyboardMarkup:
     b.button(
         text="✨ ggsoma — اشتراكات رقمية (رابط/كوبون/حساب)",
         callback_data="admin:aprov_custom_preset:ggsoma",
+    )
+    b.button(
+        text="🏬 متجر خارجي (Hyper Store — روابط/حسابات/ألعاب)",
+        callback_data="admin:aprov_custom_preset:hyper_store",
     )
     b.button(text="🧙 معالج ربط بدون JSON", callback_data="admin:aprov_custom_wizard")
     b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest")

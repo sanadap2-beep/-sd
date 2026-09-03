@@ -72,22 +72,26 @@ async def _fetch_cost(manager, service, country) -> tuple[object, Decimal] | Non
     return provider, cost
 
 
-async def build_board(session, service, manager=None) -> list[BoardEntry]:
+async def build_board(session, service, manager=None, use_cache: bool = True) -> list[BoardEntry]:
     """
     بناء لوحة الأسعار لخدمة الأرقام:
     - جلب أسعار التكلفة الحية.
     - تطبيق نسبة ربح الأدمن.
     - الترتيب من الأرخص إلى الأغلى.
+
+    ``use_cache=False`` يجبر الجلب المباشر (تستخدمه قناة التوفر الحية
+    حتى تعكس كل تحديث حتى لو دخل كاش آخر للتو).
     """
     from providers.manager import provider_manager as default_manager
 
     manager = manager or default_manager
 
     # 1. فحص الكاش المؤقت
-    async with _CACHE_LOCK:
-        cached = _BOARD_CACHE.get(service.code)
-        if cached and cached[0] > monotonic():
-            return list(cached[1])
+    if use_cache:
+        async with _CACHE_LOCK:
+            cached = _BOARD_CACHE.get(service.code)
+            if cached and cached[0] > monotonic():
+                return list(cached[1])
 
     # 2. جلب الدول المفعلة
     countries = await get_active_countries(session)
@@ -107,6 +111,8 @@ async def build_board(session, service, manager=None) -> list[BoardEntry]:
     await asyncio.gather(*(_worker(c) for c in countries))
 
     # 4. حساب أسعار البيع بتطبيق هامش ربح الأدمن
+    from services.country_localization_service import display_flag, display_name
+
     entries: list[BoardEntry] = []
     for country in countries:
         fetched = costs.get(country.code)
@@ -128,8 +134,8 @@ async def build_board(session, service, manager=None) -> list[BoardEntry]:
         entries.append(
             BoardEntry(
                 code=country.code,
-                name_ar=country.name_ar,
-                flag=country.flag or "🌍",
+                name_ar=display_name(country),
+                flag=display_flag(country),
                 cost_usd=cost,
                 sell_usd=sell,
             )

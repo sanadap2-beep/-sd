@@ -29,13 +29,43 @@ def store_home_kb(
     categories=None,
     webapp_url: str | None = None,
     language: str = "ar",
+    entries=None,
 ) -> InlineKeyboardMarkup:
-    """Show every product entry point under one store button."""
+    """Page one of the store, built from admin-controlled entries.
+
+    ``entries`` is the admin-controlled list (StoreSectionService). When it
+    is provided it fully owns what appears on the page — including a
+    single «الأرقام» hub button that opens every number service
+    (واتساب/تيليجرام/أي قسم جديد يُنشأ من لوحة الأدمن).
+
+    Without entries it falls back to the legacy layout (all number services
+    + categories + fixed smart sections) so existing callers keep working.
+    """
     b = InlineKeyboardBuilder()
 
+    if entries is not None:
+        for entry in entries:
+            if entry.action == "num_hub":
+                b.button(
+                    text=entry.label or I18nService.t("menu_numbers", language),
+                    callback_data="num_hub",
+                )
+            elif entry.action == "webapp":
+                if webapp_url:
+                    b.button(
+                        text=entry.label or I18nService.t("store_webapp", language),
+                        web_app=WebAppInfo(url=webapp_url),
+                    )
+            elif entry.is_url:
+                b.button(text=entry.label, url=entry.action)
+            else:
+                b.button(text=entry.label, callback_data=entry.action)
+        b.button(text=I18nService.t("store_back", language), callback_data="back_to_main")
+        b.adjust(2)
+        return b.as_markup()
+
+    # ── التخطيط القديم (توافق مع الاستدعاءات السابقة) ──
     for service in number_services or []:
-        # NumberService currently stores one admin-facing name (Arabic). Keep
-        # the well-known seeded services readable for English users too.
         service_name = service.name_ar
         if I18nService.normalize_language(language) == "en":
             service_name = {

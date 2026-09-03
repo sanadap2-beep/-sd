@@ -62,50 +62,50 @@ async def _enabled(key: str) -> bool:
 
 @router.callback_query(F.data == "extras:home")
 async def extras_home(callback: CallbackQuery, db_user: User | None = None):
-    """Collect optional features and former main-menu shortcuts in one page."""
+    """Collect optional features and former main-menu shortcuts in one page.
+
+    كل عنصر يمر بتحكم الأدمن المركزي «🧩 التحكم بخدمات الأخرى»
+    (ExtrasSectionService): يطفأ العنصر من هناك فيختفي من هنا فوراً،
+    والميزات الاختيارية تخضع لـ «مركز الإضافات» أيضاً.
+    """
     language = _lang(db_user)
     t = lambda key: I18nService.t(key, language)  # noqa: E731
+    from services.extras_section_service import ExtrasSectionService
 
-    # These actions used to be rendered directly on the main menu.  Keep their
-    # callbacks unchanged; only their location in the UI changes.
-    entries: list[tuple[str, str]] = [
-        (t("menu_withdraw"), "withdraw:home"),
-        (t("menu_search"), "menu:search"),
-        (t("menu_favorites"), "menu:favorites"),
-        (t("menu_cart"), "menu:cart"),
-        (t("menu_loyalty"), "menu:loyalty"),
-        (t("menu_promotions"), "menu:promotions"),
-        (t("menu_product_request"), "menu:product_request"),
-        (t("menu_gift"), "menu:gift"),
-        (t("menu_assistant"), "menu:assistant"),
-        (t("menu_special_offers"), "special:home"),
-        (t("menu_my_ads"), "ads:home"),
-        (t("menu_notifications"), "notif:home"),
-        (t("menu_status"), "menu:status"),
-        (t("menu_challenges"), "menu:challenges"),
-        (f"📦 {t('menu_numbers')}", "num_packages"),
-    ]
+    labels = {
+        "withdraw": t("menu_withdraw"),
+        "search": t("menu_search"),
+        "favorites": t("menu_favorites"),
+        "cart": t("menu_cart"),
+        "loyalty": t("menu_loyalty"),
+        "promotions": t("menu_promotions"),
+        "request": t("menu_product_request"),
+        "gift": t("menu_gift"),
+        "assistant": t("menu_assistant"),
+        "offers": t("menu_special_offers"),
+        "ads": t("menu_my_ads"),
+        "notif": t("menu_notifications"),
+        "status": t("menu_status"),
+        "challenges": t("menu_challenges"),
+        "num_packages": f"📦 {t('menu_numbers')}",
+        "number_exchange": t("extras_number_exchange"),
+        "number_portability": t("extras_number_portability"),
+        "vip_number_certificates": t("extras_vip_certificates"),
+        "pooled_rooms": t("extras_pooled_rooms"),
+        "revenue_sharing_tokens": t("extras_revenue_share"),
+        "task_to_credit": t("extras_task_to_credit"),
+        "game_price_tracker": t("extras_game_prices"),
+        "ai_agent_layer": t("extras_ai_agent"),
+        "peer_marketplace": t("menu_marketplace"),
+        "tasks_system": t("menu_tasks"),
+        "points_currency": t("menu_points"),
+    }
 
-    optional_entries = [
-        ("number_exchange", t("extras_number_exchange"), "extras:exchange"),
-        ("number_portability", t("extras_number_portability"), "extras:portability"),
-        ("vip_number_certificates", t("extras_vip_certificates"), "extras:vip"),
-        ("pooled_rooms", t("extras_pooled_rooms"), "extras:rooms"),
-        ("revenue_sharing_tokens", t("extras_revenue_share"), "extras:revshare"),
-        ("task_to_credit", t("extras_task_to_credit"), "extras:task2credit"),
-        ("game_price_tracker", t("extras_game_prices"), "extras:gameprices"),
-        ("ai_agent_layer", t("extras_ai_agent"), "extras:ai"),
-    ]
-    for feature_key, label, action in optional_entries:
-        if await _enabled(feature_key):
-            entries.append((label, action))
-
-    if await _enabled("peer_marketplace"):
-        entries.append((t("menu_marketplace"), "market:home"))
-    if await _enabled("tasks_system"):
-        entries.append((t("menu_tasks"), "tasks:home"))
-    if await _enabled("points_currency"):
-        entries.append((t("menu_points"), "points:home"))
+    entries: list[tuple[str, str]] = []
+    for entry in await ExtrasSectionService.list_entries():
+        if not await ExtrasSectionService.is_visible(entry.key):
+            continue
+        entries.append((labels.get(entry.key, entry.label), entry.action))
 
     # Admin-created shortcuts are still available, but no longer make the
     # first screen grow without limit.  Avoid duplicates for actions already

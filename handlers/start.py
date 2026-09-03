@@ -27,9 +27,15 @@ router = Router(name="start")
 
 async def _build_menu(session, db_user):
     """بناء القائمة الرئيسية بلغة وعملة المستخدم."""
+    from services.feature_service import FeatureService
+
     language = db_user.language_code
     balance_display = await CurrencyService.format_user_amount(
         db_user.balance, db_user, session
+    )
+    show_agent = await FeatureService.enabled("agent_program")
+    agent_percent = str(
+        await FeatureService.config("agent_program", "default_percent", 10)
     )
     return build_main_menu(
         number_services=[],
@@ -37,6 +43,8 @@ async def _build_menu(session, db_user):
         balance_usd=f"{db_user.balance:.2f}",
         language=language,
         balance_display=balance_display,
+        show_agent=show_agent,
+        agent_percent=agent_percent,
     )
 
 
@@ -99,20 +107,22 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
                     sell_price = await PricingService.calculate_sell_price(
                         session, service_code, country_code, cheapest_provider, cost_usd
                     )
-                    quote = await PriceLockService.create(
-                        service_code, country_code, cheapest_provider.value, cost_usd, sell_price
-                    )
-                    price_display = await CurrencyService.format_dual(sell_price, db_user, session)
-                    await message.answer(
-                        f"⚡ <b>طلب رقم سريع من القناة العامة:</b>\n\n"
-                        f"🌍 <b>الدولة:</b> {country.flag} {country.name_ar}\n"
-                        f"{service.emoji} <b>الخدمة:</b> {service.name_ar}\n"
-                        f"💰 <b>السعر:</b> <b>{price_display}</b>\n\n"
-                        "🛡 <b>الضمان:</b> استرجاع تلقائي في حال لم يصل الكود.\n\n"
-                        "اضغط على الزر أدناه لإتمام الشراء فوراً:",
-                        reply_markup=confirm_purchase_kb(service_code, country_code, quote.token),
-                    )
-                    return
+                quote = await PriceLockService.create(
+                    service_code, country_code, cheapest_provider.value, cost_usd, sell_price
+                )
+                from services.country_localization_service import display_flag, display_name
+
+                price_display = await CurrencyService.format_dual(sell_price, db_user, session)
+                await message.answer(
+                    f"⚡ <b>طلب رقم سريع من القناة العامة:</b>\n\n"
+                    f"🌍 <b>الدولة:</b> {display_flag(country)} {display_name(country)}\n"
+                    f"{service.emoji} <b>الخدمة:</b> {service.name_ar}\n"
+                    f"💰 <b>السعر:</b> <b>{price_display}</b>\n\n"
+                    "🛡 <b>الضمان:</b> استرجاع تلقائي في حال لم يصل الكود.\n\n"
+                    "اضغط على الزر أدناه لإتمام الشراء فوراً:",
+                    reply_markup=confirm_purchase_kb(service_code, country_code, quote.token),
+                )
+                return
 
     # 4. رسالة الترحيب الافتراضية
     default_name = "friend" if db_user.language_code == "en" else "عزيزي"

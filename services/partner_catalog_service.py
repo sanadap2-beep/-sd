@@ -23,6 +23,7 @@ from protocols.base import ProtocolService
 from protocols.factory import ProtocolFactory
 from protocols.partner_v1 import PARTNER_TYPES, PartnerV1Protocol, partner_type_meta
 from services.pulled_services_service import PulledServicesService
+from services.service_localization_service import display_service_name
 
 SERVICES_PER_PAGE = 8
 SUBS_PER_PAGE = 8
@@ -215,6 +216,10 @@ class PartnerCatalogService:
         existing = await PartnerCatalogService._existing_product(
             session, provider.id, proto.external_id, sub_category_id
         )
+        # الاسم بالعربية: ما أرسله الأدمن إن أرسل، وإلا تعريب اسم المزود
+        default_name = display_service_name(
+            proto.name, proto.category, proto.service_type
+        )
         if existing is not None:
             PartnerCatalogService._apply_product_fields(
                 existing,
@@ -223,6 +228,7 @@ class PartnerCatalogService:
                 sell_price,
                 name_ar,
                 margin_percent,
+                default_name=default_name,
             )
             await session.flush()
             return existing
@@ -231,10 +237,11 @@ class PartnerCatalogService:
             stored,
             sub_category_id,
             sell_price,
-            name_ar=name_ar or proto.name,
+            name_ar=name_ar or default_name or proto.name,
         )
         PartnerCatalogService._apply_product_fields(
-            product, proto, stored, sell_price, name_ar, margin_percent
+            product, proto, stored, sell_price, name_ar, margin_percent,
+            default_name=default_name,
         )
         await session.flush()
         return product
@@ -310,8 +317,9 @@ class PartnerCatalogService:
         sell_price: Decimal,
         name_ar: str | None,
         margin_percent: Decimal | None,
+        default_name: str | None = None,
     ) -> None:
-        product.name_ar = (name_ar or proto.name or product.name_ar)[:128]
+        product.name_ar = (name_ar or default_name or proto.name or product.name_ar)[:128]
         product.price_usd = sell_price
         product.cost_price_usd = Decimal(str(proto.rate or 0))
         product.provider_service_ref_id = stored.id

@@ -27,6 +27,7 @@ from handlers import (
     start,
     support,
     account,
+    agent,
     cart,
     referral,
     referral_guard,
@@ -94,6 +95,10 @@ from handlers.admin import (
     stars as admin_stars,
     bot_guide as admin_bot_guide,
     main_buttons as admin_main_buttons,
+    store_control as admin_store_control,
+    extras_control as admin_extras_control,
+    agents as admin_agents,
+    margins as admin_margins,
     withdrawals as admin_withdrawals,
     notifications as admin_notifications,
     sponsored_ads as admin_sponsored_ads,
@@ -180,6 +185,7 @@ def register_routers():
     dp.include_router(sponsored_ads.router)
     dp.include_router(special_offers.router)
     dp.include_router(numbers.router)
+    dp.include_router(agent.router)
     dp.include_router(loyalty.router)
     dp.include_router(promotions.router)
     dp.include_router(product_requests.router)
@@ -237,6 +243,10 @@ def register_routers():
     dp.include_router(admin_stars.router)
     dp.include_router(admin_bot_guide.router)
     dp.include_router(admin_main_buttons.router)
+    dp.include_router(admin_store_control.router)
+    dp.include_router(admin_extras_control.router)
+    dp.include_router(admin_agents.router)
+    dp.include_router(admin_margins.router)
     dp.include_router(admin_withdrawals.router)
     dp.include_router(admin_notifications.router)
     dp.include_router(admin_sponsored_ads.router)
@@ -377,6 +387,37 @@ async def bid_cleanup_cycle():
         await ProviderBiddingService.cleanup_expired(session)
 
 
+async def agent_weekly_cycle(bot):
+    """فحص أسبوعي لبرنامج الوكلاء: سحب من أقل إيداعاته الأسبوعية من الحد."""
+    from database.engine import async_session_maker
+    from services.agent_service import AgentService
+
+    if not await FeatureService.enabled("agent_program"):
+        return
+    try:
+        async with async_session_maker() as session:
+            await AgentService.check_weekly_deposits(session, bot)
+    except Exception:
+        logger.exception("فشل فحص الوكلاء الأسبوعي")
+
+
+async def availability_board_cycle(bot):
+    """التوفر المتقطع: يعيد نشر لوحة الدول الجاهزة فوراً في القناة الحية.
+
+    القائمة تُحذف وتُنشأ من جديد كل دورة بأحدث بيانات المزود،
+    فيرى المستخدم ما هو متوفر الآن فعلاً (دول تتوفر فجأة تظهر
+    فوراً وتختفي الدول التي نفدت).
+    """
+    if not await FeatureService.enabled("numbers_availability_board"):
+        return
+    from services.availability_board_service import AvailabilityBoardService
+
+    try:
+        await AvailabilityBoardService.post_board(bot)
+    except Exception:
+        logger.exception("فشل نشر لوحة التوفر المتقطع")
+
+
 async def prune_feature_events():
     """يحذف أحداث القياس القديمة حسب المدة التي حددها الأدمن."""
     days = await FeatureService.config_int("feature_usage_analytics", "retention_days", 90)
@@ -508,6 +549,32 @@ async def start_scheduler() -> AsyncIOScheduler:
         minutes=30,
     )
 
+    # التوفر المتقطع: كل دورة (افتراضياً دقيقة) تُحذف اللوحة وتُنشأ بأحدث
+    # الدول الجاهزة فوراً من المزود.
+    scheduler.add_job(
+        availability_board_cycle,
+        "interval",
+        seconds=max(
+            30,
+            await FeatureService.config_int(
+                "numbers_availability_board", "refresh_seconds", 60
+            ),
+        ),
+        args=[bot],
+    )
+
+    # برنامج الوكلاء: فحص دوري (افتراضياً كل 6 ساعات) لسحب وكالات
+    # الوكلاء الذين أقل إيداعهم الأسبوعي من الحد.
+    scheduler.add_job(
+        agent_weekly_cycle,
+        "interval",
+        hours=max(
+            1,
+            await FeatureService.config_int("agent_program", "check_interval_hours", 6),
+        ),
+        args=[bot],
+    )
+
     scheduler.add_job(
         sentinel_cycle,
         "interval",
@@ -538,6 +605,17 @@ async def main():
     await init_db()
     await FeatureService.sync_registry()
     await FeatureService.reload()
+    # ترميم أسماء الدول الأجنبية (من المزود) إلى العربية + العلم الصحيح.
+    # لا يلمس أكواد الربط مع المزودين إطلاقاً.
+    try:
+        from services.country_localization_service import heal_countries
+
+        async with async_session_maker() as session:
+            healed = await heal_countries(session)
+            if healed:
+                logger.info("🌍 عُرّبت %s دولة أجنبية.", healed)
+    except Exception:
+        logger.exception("فشل ترميم أسماء الدول")
     async with async_session_maker() as session:
         await TaskService.seed_defaults(session)
 
