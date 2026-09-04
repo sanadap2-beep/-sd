@@ -231,6 +231,14 @@ async def nsvc_delete(callback: CallbackQuery, session):
 # ══════════════ قناة التوفر المتقطع (الأرقام الحية) ══════════════
 
 
+def _repost_cadence_text(cycles: int, refresh_seconds: int) -> str:
+    """:وصف معدّل إعادة النشر بالعربية («كل دورة» أو «كل N دورات»)."""
+    minutes = round(cycles * refresh_seconds / 60, 1)
+    if cycles == 1:
+        return f"رسالة جديدة <b>كل دورة</b> (≈{minutes} دقيقة) — حذف القديمة ثم نشر الجديدة"
+    return f"رسالة جديدة كل <b>{cycles}</b> دورات (≈{minutes} دقيقة)"
+
+
 async def _avail_status_text() -> str:
     enabled = await AvailabilityBoardService.enabled()
     chat_id = await AvailabilityBoardService.channel_chat_id()
@@ -250,8 +258,9 @@ async def _avail_status_text() -> str:
     link_state = f"<code>@{username}</code>" if username else "⚠️ غير محدد (الروابط ستفشل)"
     return (
         "📡 <b>التوفر المتقطع — قناة الأرقام الحية</b>\n\n"
-        "تُحدَّث اللوحة في كل دورة (تعديل نفس الرسالة) بترتيب دوّار للدول "
-        "المتوفرة، مع وسم 🔥 للدول النادرة لحظة رجوعها للمخزون و💎 للنادرة "
+        "تُحذف الرسالة القديمة وتُنشر لوحة جديدة بأحدث الدول المتوفرة كل "
+        "دورة (إشعار فعلي للمشتركين + بقاؤها رأس القناة)، بترتيب دوّار "
+        "للدول المتوفرة، مع وسم 🔥 للدول النادرة لحظة رجوعها للمخزون و💎 للنادرة "
         "المتاحة. كل زر رابط شراء مباشر لدولة مفعّلة فعلاً.\n\n"
         f"الحالة: {status}\n"
         f"القناة: {channel}\n"
@@ -261,8 +270,7 @@ async def _avail_status_text() -> str:
         f"التحديث: كل <b>{refresh}</b> ثانية\n"
         f"الترتيب الدوّار: <b>{'مفعّل' if rotate else 'معطّل'}</b>\n"
         f"🔔 إعادة النشر التلقائي: <b>{'مفعّل' if auto_repost else 'معطّل'}</b>"
-        f" — رسالة جديدة كل <b>{repost_every}</b> دورة"
-        f" (≈{round(repost_every * refresh / 60, 1)} دقيقة)\\n"
+        f" — {_repost_cadence_text(repost_every, refresh)}\\n"
         f"🔥 إشعار فوري عند رجوع دولة نادرة: <b>{'مفعّل' if restock_push else 'معطّل'}</b>\\n"
         f"الدول المراقبة: <code>{watched}</code>"
     )
@@ -459,10 +467,12 @@ async def nsvc_avail_repost_every_start(callback: CallbackQuery, state: FSMConte
     refresh = await AvailabilityBoardService.refresh_seconds()
     await callback.message.edit_text(
         "⏱ <b>كل كم دورة تُعاد اللوحة كرسالة جديدة؟</b>\\n\\n"
-        f"الحالي: <b>{current}</b> دورة ≈ {round(current * refresh / 60, 1)} دقيقة\\n"
+        f"الحالي: <b>{current}</b> — {_repost_cadence_text(current, refresh)}\\n"
         f"(دورة التحديث = {refresh} ثانية)\\n\\n"
-        "أرسل رقماً بين 1 و240.\\n"
-        "رقم أصغر = إشعارات أكثر للقناة · رقم أكبر = أهدأ.",
+        "أرسل رقماً بين 1 و240:\\n"
+        "<b>1</b> = كل دورة (إشعار كل دقيقة — الأفضل لقناة حيّة)\\n"
+        "رقم أكبر = أهدأ وأقل إشعارات.\\n\\n"
+        "في كل الأحوال اللوحة تُحدَّث بأحدث الدول المتوفرة في كل دورة.",
         reply_markup=await _avail_kb(),
     )
     await state.set_state(AdminNumberServiceStates.waiting_availability_repost_every)
