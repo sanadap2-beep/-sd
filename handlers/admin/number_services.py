@@ -348,10 +348,14 @@ async def nsvc_server_view(callback: CallbackQuery, session):
         return
     status = "🟢 مفعّل" if server.is_active else "⚪ معطّل"
     await callback.answer()
+    margin_display = (
+        f"{server.margin_percent}% (خاص بالسيرفر)" if server.margin_percent is not None else "غير مضبوط — يستخدم هامش الخدمة/الدولة"
+    )
     await callback.message.edit_text(
         f"{server.emoji} <b>{server.name_ar}</b>\n\n"
         f"الحالة: {status}\n"
         f"🔌 المزود: <b>{server.provider}</b>\n"
+        f"💰 نسبة الربح: <b>{margin_display}</b>\n"
         f"🔢 الترتيب: {server.sort_order}\n\n"
         "المستخدم يرى هذا السيرفر قبل اختيار الدولة.",
         reply_markup=admin_nsvc_server_detail_kb(server.number_service_id, server),
@@ -401,6 +405,20 @@ async def nsvc_server_edit_provider(callback: CallbackQuery, state: FSMContext, 
     )
 
 
+@router.callback_query(F.data.startswith("admin:nsvc_server_edit_margin:"))
+async def nsvc_server_edit_margin(callback: CallbackQuery, state: FSMContext):
+    server_id = int(callback.data.split(":")[2])
+    await state.update_data(edit_server_id=server_id, edit_server_field="margin")
+    await callback.message.edit_text(
+        "💰 أرسل نسبة الربح لهذا السيرفر (%).\n"
+        "• 30 = ربح 30% على سعر التكلفة\n"
+        "• أو «-» للمسح واستخدام هامش الخدمة/الدولة الحالي.",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_server_edit_value)
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("admin:nsvc_server_delete:"))
 async def nsvc_server_delete(callback: CallbackQuery, session):
     server_id = int(callback.data.split(":")[2])
@@ -424,6 +442,20 @@ async def nsvc_server_edit_value_received(message: Message, state: FSMContext, s
         await NumberServerService.update(session, server_id, name_ar=value)
     elif field == "emoji":
         await NumberServerService.update(session, server_id, emoji="🖥" if value == "-" else value)
+    elif field == "margin":
+        from decimal import Decimal, InvalidOperation
+
+        margin = None
+        if value not in ("", "-"):
+            try:
+                margin = Decimal(value)
+            except InvalidOperation:
+                await message.answer("⚠️ أرسل رقماً صحيحاً (مثل 30 أو 12.5) أو - لمسح الهامش.")
+                return
+            if margin < 0:
+                await message.answer("⚠️ نسبة الربح لا يمكن أن تكون سالبة.")
+                return
+        await NumberServerService.update(session, server_id, margin_percent=margin)
     await message.answer("✅ تم التحديث.")
     await state.clear()
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 
 from sqlalchemy import select
 
@@ -92,6 +92,7 @@ class BulkNumberService:
         country: Country,
         quantity: int,
         strict_provider=None,
+        margin_percent=None,
     ) -> dict:
         """يعرض التكلفة قبل التنفيذ حتى يوافق المستخدم على رقم واضح.
 
@@ -116,10 +117,15 @@ class BulkNumberService:
 
         cheapest = min(prices, key=prices.get)
         cost_usd = prices[cheapest]
-        margin_type, margin_value = await PricingService.get_margin(
-            session, service.code, country.code, cheapest
-        )
-        unit_price = PricingService.apply_margin(cost_usd, margin_type, margin_value)
+        if margin_percent is not None:
+            unit_price = (cost_usd * (Decimal("100") + margin_percent) / Decimal("100")).quantize(
+                Decimal("0.0001"), rounding=ROUND_UP
+            )
+        else:
+            margin_type, margin_value = await PricingService.get_margin(
+                session, service.code, country.code, cheapest
+            )
+            unit_price = PricingService.apply_margin(cost_usd, margin_type, margin_value)
 
         gross = (unit_price * Decimal(quantity)).quantize(Decimal("0.0001"))
         percent = await BulkNumberService.discount_percent(quantity)
@@ -145,6 +151,7 @@ class BulkNumberService:
         timeout_minutes: int = 5,
         discount_percent: Decimal | None = None,
         strict_provider=None,
+        margin_percent=None,
     ) -> dict:
         """
         ينفذ الدفعة. يرجع ملخصاً بالناجح والفاشل والمبالغ.
@@ -152,12 +159,23 @@ class BulkNumberService:
         ``discount_percent``: خصم إضافي على الإجمالي (مثل خصم الوكيل)
         يُطبق بعد خصم الجملة وقبل الخصم من الرصيد.
         ``strict_provider``: عند اختيار «سيرفر» محدد لا يشتري من غيره.
+        ``margin_percent``: نسبة ربح السيرفر (تتجاوز هامش الخدمة).
         """
-        if strict_provider is None:
-            estimate = await BulkNumberService.quote(session, service, country, quantity)
+        if margin_percent is None:
+            if strict_provider is None:
+                estimate = await BulkNumberService.quote(session, service, country, quantity)
+            else:
+                estimate = await BulkNumberService.quote(
+                    session, service, country, quantity, strict_provider=strict_provider
+                )
+        elif strict_provider is None:
+            estimate = await BulkNumberService.quote(
+                session, service, country, quantity, margin_percent=margin_percent
+            )
         else:
             estimate = await BulkNumberService.quote(
-                session, service, country, quantity, strict_provider=strict_provider
+                session, service, country, quantity,
+                strict_provider=strict_provider, margin_percent=margin_percent,
             )
         total = estimate["total_usd"]
         if discount_percent is not None and discount_percent > 0:

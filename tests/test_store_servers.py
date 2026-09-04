@@ -3,9 +3,23 @@
 from decimal import Decimal
 
 from database.engine import async_session_maker
-from database.models import ApiProvider, ApiProtocolType, ApiProviderType
+from database.models import (
+    ApiProvider,
+    ApiProtocolType,
+    ApiProviderType,
+    Category,
+    CategoryType,
+    NumberService,
+    NumberServer,
+    Product,
+    ProductFulfillmentType,
+    ProductStatus,
+    SubCategory,
+)
 from services.store_server_service import StoreServerService
-from keyboards.admin import admin_store_servers_kb, admin_ssvc_scope_kb
+from services.product_service import ProductService
+from services.number_server_service import NumberServerService
+from keyboards.admin import admin_store_servers_kb, admin_ssvc_scope_kb, admin_nsvc_server_detail_kb
 
 
 async def _seed_provider(session, name="مزود الاختبار") -> ApiProvider:
@@ -126,3 +140,103 @@ async def test_admin_kb_opens_three_scopes():
     assert "admin:ssvc_scope:global" in callbacks
     # خدمة الأرقام لها نظام مخصص — لا تُعرض هنا كي لا يظهر سيرفر ميت.
     assert "admin:ssvc_scope:number_service" not in callbacks
+
+
+async def test_number_server_margin_persists_and_shows_in_admin():
+    async with async_session_maker() as session:
+        svc = NumberService(
+            code="wa_margin", name_ar="واتساب", emoji="💬", fivesim_code="wa", is_active=True
+        )
+        session.add(svc)
+        await session.commit()
+        await session.refresh(svc)
+        server = await NumberServerService.create(
+            session,
+            number_service_id=svc.id,
+            name_ar="سيرفر 5sim سريع",
+            provider="fivesim",
+            margin_percent=Decimal("35"),
+        )
+        loaded = await NumberServerService.get(session, server.id)
+        kb = admin_nsvc_server_detail_kb(svc.id, loaded)
+        callbacks = [b.callback_data for row in kb.inline_keyboard for b in row]
+
+    assert loaded.margin_percent == Decimal("35")
+    assert f"admin:nsvc_server_edit_margin:{server.id}" in callbacks
+
+
+async def _seed_section_with_products(session):
+    """قسم رئيسي + قسم فرعي + قسم داخلي، مع منتجات في المستويين."""
+    category = Category(name_ar="رشق", emoji="📈", type=CategoryType.SMM)
+    session.add(category)
+    await session.commit()
+    await session.refresh(category)
+
+    app = SubCategory(category_id=category.id, name_ar="انستقرام", emoji="📸")
+    session.add(app)
+    await session.commit()
+    await session.refresh(app)
+
+    inner = SubCategory(
+        category_id=category.id, parent_sub_category_id=app.id,
+        name_ar="متابعين", emoji="👥",
+    )
+    session.add(inner)
+    await session.commit()
+    await session.refresh(inner)
+
+    prod1 = Product(
+        sub_category_id=inner.id, name_ar="متابعين 1000", price_usd=Decimal("2"),
+        cost_price_usd=Decimal("1"), status=ProductStatus.ACTIVE,
+        fulfillment_type=ProductFulfillmentType.API,
+    )
+    prod2 = Product(
+        sub_category_id=app.id, name_ar="باقة", price_usd=Decimal("5"),
+        cost_price_usd=Decimal("1"), status=ProductStatus.ACTIVE,
+        fulfillment_type=ProductFulfillmentType.API,
+    )
+    session.add_all([prod1, prod2])
+    await session.commit()
+    return category, app, inner
+
+
+async def test_delete_products_for_category_keeps_subcategories():
+    async with async_session_maker() as session:
+        category, app, inner = await _seed_section_with_products(session)
+
+        deleted, errors = await ProductService.delete_products_for_category(session, category.id)
+
+        remaining_category = await session.get(Category, category.id)
+        remaining_app = await session.get(SubCategory, app.id)
+        remaining_inner = await session.get(SubCategory, inner.id)
+        from sqlalchemy import select as _s
+
+        products = list(
+            (await session.execute(_s(Product).where(Product.sub_category_id.in_([app.id, inner.id])))).scalars().all()
+        )
+
+    assert deleted == 2
+    assert errors == 0
+    assert remaining_category is not None
+    assert remaining_app is not None
+    assert remaining_inner is not None
+    assert products == []
+
+
+async def test_delete_products_for_subcategory_keeps_subcategory():
+    async with async_session_maker() as session:
+        category, app, inner = await _seed_section_with_products(session)
+
+        deleted, errors = await ProductService.delete_products_for_subcategory(session, app.id)
+
+        remaining_app = await session.get(SubCategory, app.id)
+        from sqlalchemy import select as _s
+
+        products = list(
+            (await session.execute(_s(Product).where(Product.sub_category_id.in_([app.id, inner.id])))).scalars().all()
+        )
+
+    assert deleted == 2
+    assert errors == 0
+    assert remaining_app is not None
+    assert products == []

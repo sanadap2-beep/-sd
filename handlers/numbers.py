@@ -9,7 +9,7 @@
 import json
 import logging
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
@@ -394,9 +394,14 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
     cheapest_provider = min(prices, key=prices.get)
     cost_usd = prices[cheapest_provider]
 
-    sell_price = await PricingService.calculate_sell_price(
-        session, service_code, country_code, cheapest_provider, cost_usd
-    )
+    if server is not None and server.margin_percent is not None:
+        sell_price = (
+            cost_usd * (Decimal("100") + server.margin_percent) / Decimal("100")
+        ).quantize(Decimal("0.0001"), rounding=ROUND_UP)
+    else:
+        sell_price = await PricingService.calculate_sell_price(
+            session, service_code, country_code, cheapest_provider, cost_usd
+        )
 
     quote = await PriceLockService.create(
         service_code,
@@ -530,12 +535,13 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
             else None
         )
 
+    margin = server.margin_percent if server is not None else None
     try:
         if strict_provider is None:
-            quote = await BulkNumberService.quote(session, service, country, quantity)
+            quote = await BulkNumberService.quote(session, service, country, quantity, margin_percent=margin)
         else:
             quote = await BulkNumberService.quote(
-                session, service, country, quantity, strict_provider=strict_provider
+                session, service, country, quantity, strict_provider=strict_provider, margin_percent=margin
             )
     except BulkError as exc:
         await callback_or_message.answer(f"⚠️ {exc}")
@@ -685,12 +691,13 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
             else None
         )
 
+    margin = server.margin_percent if server is not None else None
     try:
         if strict_provider is None:
-            quote = await BulkNumberService.quote(session, service, country, quantity)
+            quote = await BulkNumberService.quote(session, service, country, quantity, margin_percent=margin)
         else:
             quote = await BulkNumberService.quote(
-                session, service, country, quantity, strict_provider=strict_provider
+                session, service, country, quantity, strict_provider=strict_provider, margin_percent=margin
             )
     except BulkError as exc:
         await callback.answer(str(exc), show_alert=True)
@@ -731,6 +738,7 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
             timeout_minutes=await _get_order_timeout(),
             discount_percent=agent_pct if agent_pct > 0 else None,
             strict_provider=strict_provider,
+            margin_percent=server.margin_percent if server is not None else None,
         )
     except BulkError as exc:
         await callback.message.answer(f"⚠️ {exc}")
@@ -842,9 +850,14 @@ async def confirm_buy(
 
     cheapest_provider = min(prices, key=prices.get)
     cost_usd = prices[cheapest_provider]
-    sell_price = await PricingService.calculate_sell_price(
-        session, service_code, country_code, cheapest_provider, cost_usd
-    )
+    if server is not None and server.margin_percent is not None:
+        sell_price = (
+            cost_usd * (Decimal("100") + server.margin_percent) / Decimal("100")
+        ).quantize(Decimal("0.0001"), rounding=ROUND_UP)
+    else:
+        sell_price = await PricingService.calculate_sell_price(
+            session, service_code, country_code, cheapest_provider, cost_usd
+        )
 
     quote = await PriceLockService.get(quote_token, service_code, country_code)
     preferred_provider = None

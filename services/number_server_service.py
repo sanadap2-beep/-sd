@@ -58,6 +58,7 @@ class NumberServerService:
         provider: str,
         emoji: str = "🖥",
         description: str | None = None,
+        margin_percent=None,
         sort_order: int = 0,
     ) -> NumberServer:
         server = NumberServer(
@@ -66,6 +67,7 @@ class NumberServerService:
             provider=provider,
             emoji=emoji or "🖥",
             description=description,
+            margin_percent=margin_percent,
             is_active=True,
             sort_order=sort_order,
         )

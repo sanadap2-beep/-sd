@@ -671,6 +671,7 @@ def admin_nsvc_server_detail_kb(service_id: int, server) -> InlineKeyboardMarkup
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_server_edit_name:{server.id}")
     b.button(text="🎨 تعديل الإيموجي", callback_data=f"admin:nsvc_server_edit_emoji:{server.id}")
     b.button(text="🔁 تغيير المزود", callback_data=f"admin:nsvc_server_edit_provider:{server.id}")
+    b.button(text="💰 نسبة الربح", callback_data=f"admin:nsvc_server_edit_margin:{server.id}", style="primary")
     b.button(text="🗑 حذف السيرفر", callback_data=f"admin:nsvc_server_delete:{server.id}", style="danger")
     b.button(text="🔙 السيرفرات", callback_data=f"admin:nsvc_servers:{service_id}")
     b.adjust(1)

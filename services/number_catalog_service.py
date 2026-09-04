@@ -209,17 +209,25 @@ async def build_board(session, service, manager=None, use_cache: bool = True, se
         if fetched is None:
             continue
         provider, cost = fetched
-        try:
-            sell = await PricingService.calculate_sell_price(
-                session,
-                service.code,
-                country.code,
-                provider,
-                cost,
+        server_margin = None
+        if server is not None:
+            server_margin = getattr(server, "margin_percent", None)
+        if server_margin is not None:
+            sell = (cost * (Decimal("100") + Decimal(str(server_margin))) / Decimal("100")).quantize(
+                Decimal("0.0001"), rounding=ROUND_UP
             )
-        except Exception:
-            # هامش افتراضي 50% في حال عدم تعيين نسبة خاصة
-            sell = (cost * Decimal("1.50")).quantize(Decimal("0.0001"), rounding=ROUND_UP)
+        else:
+            try:
+                sell = await PricingService.calculate_sell_price(
+                    session,
+                    service.code,
+                    country.code,
+                    provider,
+                    cost,
+                )
+            except Exception:
+                # هامش افتراضي 50% في حال عدم تعيين نسبة خاصة
+                sell = (cost * Decimal("1.50")).quantize(Decimal("0.0001"), rounding=ROUND_UP)
 
         entries.append(
             BoardEntry(

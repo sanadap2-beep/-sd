@@ -519,6 +519,8 @@ class NumberServer(Base):
     name_ar: Mapped[str] = mapped_column(String(96))
     emoji: Mapped[str] = mapped_column(String(8), default="🖥")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # نسبة ربح السيرفر (تتجاوز هامش الخدمة/الدولة/المزود العام عند ضبطها).
+    margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
