@@ -59,15 +59,15 @@ async def test_build_rows_returns_deeplinks(monkeypatch):
     monkeypatch.setattr(ncs, "build_board", fake_build_board)
     AvailabilityBoardService.reset_state()
 
-    # top_n الافتراضي 10 → نأخذ أول 10
+    # top_n الافتراضي 12 → نأخذ أول 12
     text, rows = await AvailabilityBoardService.build_rows()
     assert text is not None
-    assert len(rows) == 10
+    assert len(rows) == 12
     # الرابط العميق يفتح البوت بطلب شراء مباشر: buy_<service>__<country>
     label, url = rows[0]
     assert url.endswith("buy_whatsapp__cc0")
     assert "t.me/" in url
-    assert label.startswith("🌍 دولة 0 — ")
+    assert "🌍 دولة 0 — " in label
     assert label.endswith("$")
     # الترتيب من الأرخص: أول دولة هي الأرخص
     assert rows[0][1].endswith("cc0")
@@ -147,6 +147,7 @@ async def test_post_board_publishes_and_replaces(monkeypatch):
         def __init__(self):
             self.sent = []
             self.deleted = []
+            self.edited = []
             self._next = 100
 
         async def send_message(self, chat_id, text, reply_markup=None):
@@ -157,6 +158,9 @@ async def test_post_board_publishes_and_replaces(monkeypatch):
 
         async def delete_message(self, chat_id, message_id):
             self.deleted.append((chat_id, message_id))
+
+        async def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
+            self.edited.append(((chat_id, message_id), reply_markup, text))
 
     bot = FakeBot()
     result = await AvailabilityBoardService.post_board(bot)
@@ -170,12 +174,16 @@ async def test_post_board_publishes_and_replaces(monkeypatch):
     first_btn = markup.inline_keyboard[0][0]
     assert first_btn.url and first_btn.callback_data is None
 
-    # دورة ثانية: تظهر دولة مراقبة جديدة (cc5) فتستبدل الرسالة السابقة.
+    # دورة ثانية: تظهر دولة جديدة (cc5) فتُعدَّل نفس الرسالة بدل إزعاج المشتركين.
     result2 = await AvailabilityBoardService.post_board(bot)
-    assert "نُشرت" in result2
-    assert len(bot.sent) == 2
-    assert bot.deleted == [(-1001, msg_id)]
-    assert len(bot.sent[1][2].inline_keyboard) == 2  # الدولة الجديدة + دخول البوت
+    assert "حُدِّثت" in result2
+    assert len(bot.sent) == 1
+    assert bot.deleted == []
+    assert bot.edited and bot.edited[0][0] == (-1001, msg_id)
+    # الدولة الجديدة 🔥 في المقدمة، وكل الدول الست معروضة + زر دخول البوت.
+    edited_markup = bot.edited[0][1]
+    assert len(edited_markup.inline_keyboard) == 6
+    assert edited_markup.inline_keyboard[0][0].text.startswith("🔥")
 
 
 async def test_build_rows_prefers_newly_restocked_watched_country(monkeypatch):
@@ -204,11 +212,16 @@ async def test_build_rows_prefers_newly_restocked_watched_country(monkeypatch):
     monkeypatch.setattr(ncs, "build_board", fake_build_board)
     AvailabilityBoardService.reset_state()
 
-    # أول دورة: لا snapshot سابق ولا دول مراقبة متاحة بعد، فلا ننشر قائمة رخيصة ثابتة.
-    assert await AvailabilityBoardService.build_rows() is None
-    _text, rows = await AvailabilityBoardService.build_rows()
-    assert len(rows) == 1
-    assert rows[0][0].startswith("🇦🇪 الإمارات")
+    # أول دورة: تُنشر الدول المتاحة (اللوحة حيّة دائماً) بلا وسم 🔥 كاذب.
+    _text, first_rows = await AvailabilityBoardService.build_rows()
+    assert len(first_rows) == 2
+    assert not any(label.startswith("🔥") for label, _ in first_rows)
+
+    # الدورة الثانية: الإمارات ظهرت بعد أن كانت غائبة → 🔥 في المقدمة.
+    _text2, rows = await AvailabilityBoardService.build_rows()
+    assert len(rows) == 3
+    assert rows[0][0].startswith("🔥 🇦🇪 الإمارات")
+    assert "عادت الآن" in rows[0][0]
     assert rows[0][1].endswith("buy_whatsapp__ae")
 
 
@@ -269,3 +282,207 @@ def test_deeplink_parses_back_to_service_and_country():
     service_code, country_code = raw.split("__", 1)
     assert service_code == "whatsapp"
     assert country_code == "tr"
+
+
+# ══════════════ التطويرات الجديدة على «التوفر المتقطع» ══════════════
+
+
+async def _configure(**options):
+    await FeatureService.reload()
+    async with async_session_maker() as session:
+        await _seed_service(session)
+        for key, value in options.items():
+            await FeatureService.set_option(session, "numbers_availability_board", key, value)
+
+
+async def test_board_is_live_every_cycle_even_without_restock(monkeypatch):
+    """اللوحة لم تعد تتجمّد: كل دورة تُرجع محتوى قابلاً للنشر."""
+    import services.number_catalog_service as ncs
+
+    await _configure(top_n=6, watched_country_codes="ae", rotate_stable=True)
+
+    entries = [
+        BoardEntry(f"st{i}", f"ثابتة {i}", "🌍", Decimal("0.1"), Decimal(str(0.2 + i)))
+        for i in range(4)
+    ]
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return entries
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    for _ in range(3):
+        built = await AvailabilityBoardService.build_rows()
+        assert built is not None
+        _text, rows = built
+        assert len(rows) == 4
+
+
+async def test_stable_countries_rotate_between_cycles(monkeypatch):
+    """ترتيب الدول الثابتة يتغيّر كل دورة فتبدو القناة حيّة."""
+    import services.number_catalog_service as ncs
+
+    await _configure(top_n=10, watched_country_codes="ae", rotate_stable=True)
+
+    entries = [
+        BoardEntry(f"st{i}", f"ثابتة {i}", "🌍", Decimal("0.1"), Decimal(str(0.2 + i)))
+        for i in range(5)
+    ]
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return entries
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    _t1, rows1 = await AvailabilityBoardService.build_rows()
+    _t2, rows2 = await AvailabilityBoardService.build_rows()
+    assert [u for _, u in rows1] != [u for _, u in rows2]      # الترتيب تغيّر
+    assert sorted(u for _, u in rows1) == sorted(u for _, u in rows2)  # نفس الدول
+
+
+async def test_rotation_can_be_disabled(monkeypatch):
+    import services.number_catalog_service as ncs
+
+    await _configure(top_n=10, watched_country_codes="ae", rotate_stable=False)
+    entries = [
+        BoardEntry(f"st{i}", f"ثابتة {i}", "🌍", Decimal("0.1"), Decimal(str(0.2 + i)))
+        for i in range(5)
+    ]
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return entries
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    _t1, rows1 = await AvailabilityBoardService.build_rows()
+    _t2, rows2 = await AvailabilityBoardService.build_rows()
+    assert [u for _, u in rows1] == [u for _, u in rows2]
+
+
+async def test_restock_badge_survives_restart(monkeypatch):
+    """الحالة محفوظة في قاعدة البيانات: إعادة التشغيل لا تفقد تاريخ التوفر."""
+    import services.number_catalog_service as ncs
+
+    await _configure(top_n=10, watched_country_codes="ae")
+
+    stable = [BoardEntry("ke", "كينيا", "🇰🇪", Decimal("0.1"), Decimal("0.2"))]
+    with_ae = [*stable, BoardEntry("ae", "الإمارات", "🇦🇪", Decimal("3"), Decimal("4.5"), True)]
+    calls = {"n": 0}
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        calls["n"] += 1
+        return stable if calls["n"] == 1 else with_ae
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    await AvailabilityBoardService.build_rows()  # يحفظ الصورة الأولى (بدون ae)
+
+    # محاكاة إعادة تشغيل البوت: تُمسح كل الحالة في الذاكرة فقط.
+    AvailabilityBoardService.reset_state()
+
+    _text, rows = await AvailabilityBoardService.build_rows()
+    hot = [label for label, _ in rows if label.startswith("🔥")]
+    assert any("الإمارات" in label for label in hot), rows
+
+
+async def test_inactive_country_never_gets_a_button(monkeypatch):
+    """لا زر لدولة معطّلة — هذا ما كان يسبب «لا يوجد رقم» بعد الضغط."""
+    import services.number_catalog_service as ncs
+    from sqlalchemy import select
+
+    await _configure(top_n=10, watched_country_codes="ae")
+
+    async with async_session_maker() as session:
+        result = await session.execute(select(Country).where(Country.code == "zz_dead"))
+        dead = result.scalar_one_or_none()
+        if dead is None:
+            dead = Country(code="zz_dead", name_ar="دولة ميتة", flag="🏴", is_active=False)
+            session.add(dead)
+        dead.is_active = False
+        await session.commit()
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return [
+            BoardEntry("zz_dead", "دولة ميتة", "🏴", Decimal("0.1"), Decimal("0.2")),
+            BoardEntry("ae", "الإمارات", "🇦🇪", Decimal("3"), Decimal("4.5"), True),
+        ]
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    _text, rows = await AvailabilityBoardService.build_rows()
+    assert all("zz_dead" not in url for _, url in rows)
+    assert any(url.endswith("buy_whatsapp__ae") for _, url in rows)
+
+
+async def test_all_links_use_live_username_including_enter_button(monkeypatch):
+    """زر «دخول البوت» كان يستعمل قيمة البيئة الخاطئة → «اسم المستخدم غير موجود»."""
+    import services.bot_identity as bot_identity
+    import services.number_catalog_service as ncs
+
+    await _configure(channel_chat_id="-1002", top_n=5, watched_country_codes="ae")
+    async with async_session_maker() as session:
+        await FeatureService.set_enabled(session, "numbers_availability_board", True)
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return [BoardEntry("ae", "الإمارات", "🇦🇪", Decimal("3"), Decimal("4.5"), True)]
+
+    class Me:
+        username = "RealLive_bot"
+
+    class Bot:
+        def __init__(self):
+            self.sent = []
+
+        async def get_me(self):
+            return Me()
+
+        async def send_message(self, chat_id, text, reply_markup=None):
+            self.sent.append((chat_id, text, reply_markup))
+            return type("M", (), {"message_id": 7})()
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    monkeypatch.setattr(bot_identity, "settings", type("S", (), {"BOT_USERNAME": "@Wrong"})())
+    bot_identity.reset_bot_username_cache()
+    AvailabilityBoardService.reset_state()
+
+    bot = Bot()
+    assert "نُشرت" in await AvailabilityBoardService.post_board(bot)
+    markup = bot.sent[0][2]
+    urls = [btn.url for row in markup.inline_keyboard for btn in row]
+    assert urls, markup
+    assert all("RealLive_bot" in url for url in urls), urls
+    assert urls[-1] == "https://t.me/RealLive_bot"
+
+
+async def test_board_not_published_without_username(monkeypatch):
+    import services.bot_identity as bot_identity
+    import services.number_catalog_service as ncs
+
+    await _configure(channel_chat_id="-1003", watched_country_codes="ae")
+    async with async_session_maker() as session:
+        await FeatureService.set_enabled(session, "numbers_availability_board", True)
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return [BoardEntry("ae", "الإمارات", "🇦🇪", Decimal("3"), Decimal("4.5"), True)]
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    monkeypatch.setattr(bot_identity, "settings", type("S", (), {"BOT_USERNAME": ""})())
+    bot_identity.reset_bot_username_cache()
+    AvailabilityBoardService.reset_state()
+
+    class Bot:
+        def __init__(self):
+            self.sent = []
+
+        async def send_message(self, *a, **k):
+            self.sent.append(1)
+
+    bot = Bot()
+    result = await AvailabilityBoardService.post_board(bot)
+    assert "يوزرنيم" in result
+    assert bot.sent == []

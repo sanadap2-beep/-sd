@@ -79,6 +79,36 @@ async def _main_header(session, db_user) -> str:
     )
 
 
+async def _alternatives_kb(session, service, missing_code: str):
+    """بدائل متاحة الآن عندما تنفد الدولة القادمة من قناة التوفر."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from services.number_catalog_service import build_board, format_price
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    try:
+        entries = await build_board(session, service, use_cache=True)
+    except Exception:  # noqa: BLE001
+        entries = []
+    for entry in entries:
+        if str(entry.code).lower() == str(missing_code).lower():
+            continue
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🟢 {entry.flag} {entry.name_ar} — {format_price(entry.sell_usd)}$",
+                    callback_data=f"num_country:{service.code}:{entry.code}",
+                )
+            ]
+        )
+        if len(buttons) >= 5:
+            break
+    buttons.append(
+        [InlineKeyboardButton(text="🔄 كل الدول المتاحة", callback_data=f"num_svc:{service.code}")]
+    )
+    buttons.append([InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject, session, db_user, state: FSMContext):
     # 1. التحقق من الاشتراك الإجباري بالقنوات
@@ -152,13 +182,16 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
                 from services.country_localization_service import display_flag, display_name
 
                 if not prices:
+                    # التوفر المتقطع: الرقم قد ينفد بين نشر اللوحة وضغط الزر.
+                    # بدل رسالة مسدودة نعرض بدائل متاحة الآن فوراً.
                     await message.answer(
                         I18nService.t(
                             "no_numbers_available",
                             db_user.language_code,
                             country=f"{display_flag(country)} {display_name(country)}",
                             service=service.name_ar,
-                        )
+                        ),
+                        reply_markup=await _alternatives_kb(session, service, country.code),
                     )
                     return
                 cheapest_provider = min(prices, key=prices.get)

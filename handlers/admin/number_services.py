@@ -238,18 +238,25 @@ async def _avail_status_text() -> str:
     top_n = await AvailabilityBoardService.top_n()
     refresh = await AvailabilityBoardService.refresh_seconds()
     watched = await AvailabilityBoardService.watched_country_codes_text()
+    rotate = await AvailabilityBoardService.rotate_stable()
     channel = f"<code>{chat_id}</code>" if chat_id else "⚪ لم تُضبط"
     status = "🟢 مفعّلة" if enabled else "⚪ معطّلة (من مركز الإضافات)"
+    from services.bot_identity import resolve_bot_username
+
+    username = await resolve_bot_username(None)
+    link_state = f"<code>@{username}</code>" if username else "⚠️ غير محدد (الروابط ستفشل)"
     return (
         "📡 <b>التوفر المتقطع — قناة الأرقام الحية</b>\n\n"
-        "تراقب الدول النادرة/المطلوبة وتقارن حالة المخزون الحالية بالصورة "
-        "السابقة، ثم تنشر فقط الدول التي عادت للمخزون للتو بدلاً من تكرار "
-        "أرخص الدول الثابتة. الضغط على أي دولة ينقل المستخدم للبوت مباشرة.\n\n"
+        "تُحدَّث اللوحة في كل دورة (تعديل نفس الرسالة) بترتيب دوّار للدول "
+        "المتوفرة، مع وسم 🔥 للدول النادرة لحظة رجوعها للمخزون و💎 للنادرة "
+        "المتاحة. كل زر رابط شراء مباشر لدولة مفعّلة فعلاً.\n\n"
         f"الحالة: {status}\n"
         f"القناة: {channel}\n"
+        f"يوزرنيم الروابط: {link_state}\n"
         f"الخدمة: <code>{service_code}</code>\n"
         f"عدد الدول: <b>{top_n}</b>\n"
         f"التحديث: كل <b>{refresh}</b> ثانية\n"
+        f"الترتيب الدوّار: <b>{'مفعّل' if rotate else 'معطّل'}</b>\n"
         f"الدول المراقبة: <code>{watched}</code>"
     )
 
@@ -257,7 +264,9 @@ async def _avail_status_text() -> str:
 @router.callback_query(F.data == "admin:nsvc_avail")
 async def nsvc_avail_home(callback: CallbackQuery):
     text = await _avail_status_text()
-    await callback.message.edit_text(text, reply_markup=admin_nsvc_avail_kb())
+    await callback.message.edit_text(
+        text, reply_markup=admin_nsvc_avail_kb(await AvailabilityBoardService.rotate_stable())
+    )
     await callback.answer()
 
 
@@ -348,7 +357,7 @@ async def nsvc_avail_watchlist_received(message: Message, state: FSMContext, ses
         await message.answer("⚠️ أرسل كود دولة واحداً على الأقل، مثل: ae,sa,us")
         return
     await FeatureService.set_option(session, AVAIL_FEATURE, "watched_country_codes", ",".join(codes))
-    AvailabilityBoardService._last_available_by_service.clear()
+    AvailabilityBoardService.reset_state()
     await state.clear()
     await message.answer("✅ تم تحديث قائمة الدول النادرة ومُسحت حالة المقارنة القديمة.", reply_markup=admin_nsvc_avail_kb())
 
@@ -372,7 +381,7 @@ async def nsvc_avail_services(callback: CallbackQuery, session):
 async def nsvc_avail_service_selected(callback: CallbackQuery, session, state: FSMContext):
     code = callback.data.rsplit(":", 1)[1]
     await FeatureService.set_option(session, AVAIL_FEATURE, "service_code", code)
-    AvailabilityBoardService._last_available_by_service.clear()
+    AvailabilityBoardService.reset_state()
     await callback.answer("✅ تم اختيار الخدمة.")
     await nsvc_avail_home(callback)
 
@@ -386,3 +395,32 @@ async def nsvc_avail_post(callback: CallbackQuery, session, bot):
         f"{text}\n\n<b>نتيجة الاختبار:</b>\n{result}",
         reply_markup=admin_nsvc_avail_kb(),
     )
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_rotate")
+async def nsvc_avail_rotate(callback: CallbackQuery, session):
+    """تبديل الترتيب الدوّار للدول الثابتة."""
+    current = await AvailabilityBoardService.rotate_stable()
+    await FeatureService.set_option(session, AVAIL_FEATURE, "rotate_stable", not current)
+    await callback.answer("✅ تم التبديل.")
+    await nsvc_avail_home(callback)
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_repost")
+async def nsvc_avail_repost(callback: CallbackQuery, bot):
+    """إعادة نشر اللوحة كرسالة جديدة (ترفعها لأعلى القناة)."""
+    await callback.answer("⏳ جاري إعادة النشر...")
+    result = await AvailabilityBoardService.repost_now(bot)
+    text = await _avail_status_text()
+    await callback.message.edit_text(
+        f"{text}\n\n<b>نتيجة إعادة النشر:</b>\n{result}",
+        reply_markup=admin_nsvc_avail_kb(await AvailabilityBoardService.rotate_stable()),
+    )
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_reset")
+async def nsvc_avail_reset(callback: CallbackQuery):
+    """مسح صورة التوفر المحفوظة (يعيد بناء تاريخ Restock من الصفر)."""
+    AvailabilityBoardService.reset_state()
+    await callback.answer("✅ مُسحت حالة المقارنة.")
+    await nsvc_avail_home(callback)
