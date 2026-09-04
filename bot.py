@@ -630,6 +630,20 @@ async def main():
                 logger.info("🌍 عُرّبت %s دولة أجنبية.", healed)
     except Exception:
         logger.exception("فشل ترميم أسماء الدول")
+
+    # ترقيم سيرفرات الأرقام: المستخدم يجب ألا يرى اسم المزود (5sim/HeroSMS...)
+    # بل «سيرفر 1، سيرفر 2...». القواعد القديمة حفظت أسماء المزودين، فنعيد
+    # ترقيمها مرة واحدة عند الإقلاع.
+    try:
+        from services.number_server_service import NumberServerService
+
+        async with async_session_maker() as session:
+            renamed = await NumberServerService.renumber_all(session)
+            if renamed:
+                logger.info("🖥 أُعيد ترقيم سيرفرات %s خدمة أرقام.", renamed)
+    except Exception:
+        logger.exception("فشل ترقيم سيرفرات الأرقام")
+
     async with async_session_maker() as session:
         await TaskService.seed_defaults(session)
 
@@ -646,6 +660,23 @@ async def main():
                 logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
     except Exception:
         logger.exception("فشل البناء التلقائي لأقسام الرشق عند الإقلاع")
+
+    # ── تنظيف منتجات «سيرفر» الوهمية تلقائياً ──
+    # أسطر كتالوج المزود («متابعين انستجرام سيرفر 1» بسعر 0$) ليست خدمات
+    # حقيقية؛ تُحذف من كل تطبيقات الرشق وأقسامها وتُستبدل بخدمات مسعّرة.
+    try:
+        from services.junk_products_service import JunkProductsService
+
+        async with async_session_maker() as session:
+            junk_report = await JunkProductsService.clean(session)
+            if junk_report.changed:
+                logger.info(
+                    "🧹 تنظيف منتجات «سيرفر» الوهمية: حُذف %s ونُشر %s بديلاً.",
+                    junk_report.deleted,
+                    junk_report.replaced,
+                )
+    except Exception:
+        logger.exception("فشل تنظيف منتجات «سيرفر» الوهمية عند الإقلاع")
 
     # ── مزامنة الاشتراكات الرقمية (ggsoma) تلقائياً ──
     # يسحب كتالوج المزود وينشر منتجاته في قسم الاشتراكات بسعر التكلفة +

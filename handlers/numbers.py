@@ -41,7 +41,10 @@ from providers.countries import (
     get_country_by_code,
     get_number_service_by_code,
 )
-from services.number_server_service import NumberServerService, server_label
+from services.number_server_service import (
+    NumberServerService,
+    public_server_label,
+)
 from services.pricing_service import PricingService
 from services.currency_service import CurrencyService
 from services.i18n_service import I18nService
@@ -149,16 +152,27 @@ SERVER_SELECTION_FEATURE = "number_server_selection"
 def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineKeyboardMarkup:
     # ملاحظة: هذه الدالة متزامنة عمداً (لا تحتاج await) — كانت async سابقاً
     # فمرّرت كـ coroutine إلى reply_markup وتسبب ذلك في ValidationError.
+    #
+    # 🔒 الأسماء المعروضة محايدة ومرقّمة (سيرفر 1، سيرفر 2 ...) ولا تكشف
+    # المزود إطلاقاً، والترقيم من ترتيب القائمة نفسها. 🟢 تعني أن الأدمن
+    # علّم هذا السيرفر كـ«شغّال».
     b = InlineKeyboardBuilder()
-    for server in servers:
+    for index, server in enumerate(servers, start=1):
         b.button(
-            text=f"{server.emoji} {server.name_ar}",
+            text=public_server_label(index, bool(getattr(server, "is_working", False))),
             callback_data=f"num_server_pick:{service_code}:{server.id}",
             style="primary",
         )
     b.button(text="🔙 رجوع", callback_data="num_hub")
     b.adjust(1)
     return b.as_markup()
+
+
+SERVERS_HINT = (
+    "🖥 <b>اختر السيرفر</b> أولاً:\n"
+    "الأسعار والتوفر تختلف بين سيرفر وآخر.\n"
+    "🟢 = السيرفر يعمل الآن."
+)
 
 
 @router.callback_query(F.data.startswith("num_server:"))
@@ -178,9 +192,7 @@ async def numbers_server_list(callback: CallbackQuery, session):
         return
     await callback.answer()
     await callback.message.edit_text(
-        f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n"
-        "🖥 <b>اختر السيرفر (المزود)</b> أولاً:\n"
-        "كل سيرفر مربوط بمزود مستقل، والأسعار تختلف بينهم.",
+        f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n" + SERVERS_HINT,
         reply_markup=_servers_kb(service_code, servers),
     )
 
@@ -202,9 +214,7 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
         if active:
             await callback.answer()
             await callback.message.edit_text(
-                f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n"
-                "🖥 <b>اختر السيرفر (المزود)</b> أولاً:\n"
-                "كل سيرفر مربوط بمزود مستقل، والأسعار تختلف بينهم.",
+                f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n" + SERVERS_HINT,
                 reply_markup=_servers_kb(service_code, active),
             )
             return
@@ -262,8 +272,9 @@ async def number_server_picked(callback: CallbackQuery, session, db_user=None):
         entries = []
 
     if not entries:
+        server_title = await NumberServerService.public_label(session, server)
         await callback.message.edit_text(
-            f"{server.emoji} <b>سيرفر {server.name_ar}</b> · {service.emoji} {service.name_ar}\n\n"
+            f"<b>{server_title}</b> · {service.emoji} {service.name_ar}\n\n"
             "❌ لا توجد أرقام متوفرة حالياً على هذا السيرفر.\n"
             "جرّب سيرفراً آخر أو عد لاحقاً.",
             reply_markup=InlineKeyboardMarkup(
@@ -274,8 +285,9 @@ async def number_server_picked(callback: CallbackQuery, session, db_user=None):
         )
         return
 
+    server_title = await NumberServerService.public_label(session, server)
     text = (
-        f"{server.emoji} <b>سيرفر {server.name_ar}</b> · {service.emoji} {service.name_ar}\n\n"
+        f"<b>{server_title}</b> · {service.emoji} {service.name_ar}\n\n"
         "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
         "اختر الدولة المطلوبة:"
     )
@@ -286,7 +298,7 @@ async def number_server_picked(callback: CallbackQuery, session, db_user=None):
             entries,
             page=0,
             server_id=server.id,
-            server_label=f"{server.emoji} {server.name_ar}",
+            server_label=server_title,
         ),
     )
 
@@ -333,9 +345,11 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
         "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
         "اختر الدولة المطلوبة:"
     )
+    server_title = None
     if server is not None:
+        server_title = await NumberServerService.public_label(session, server)
         text = (
-            f"{server.emoji} <b>سيرفر {server.name_ar}</b> · {service.emoji} {service.name_ar}\n\n"
+            f"<b>{server_title}</b> · {service.emoji} {service.name_ar}\n\n"
             "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
             "اختر الدولة المطلوبة:"
         )
@@ -346,7 +360,7 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
             entries,
             page=page,
             server_id=server.id if server else None,
-            server_label=f"{server.emoji} {server.name_ar}" if server else None,
+            server_label=server_title,
         ),
     )
 
@@ -418,7 +432,10 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
     price_display = await CurrencyService.format_dual(sell_price, db_user, session)
     server_line = ""
     if server is not None:
-        server_line = f"{server.emoji} <b>السيرفر:</b> {server.name_ar}\n"
+        server_line = (
+            f"🖥 <b>السيرفر:</b> "
+            f"{await NumberServerService.public_name(session, server)}\n"
+        )
     await callback.message.edit_text(
         f"🌍 <b>الدولة:</b> {display_flag(country)} {display_name(country)}\n"
         f"{service.emoji} <b>الخدمة:</b> {service.name_ar}\n"
@@ -568,7 +585,10 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
 
     server_line = ""
     if server is not None:
-        server_line = f"{server.emoji} السيرفر: <b>{server.name_ar}</b>\n"
+        server_line = (
+            "🖥 السيرفر: "
+            f"<b>{await NumberServerService.public_name(session, server)}</b>\n"
+        )
     text = (
         "📦 <b>تأكيد شراء دفعة أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
@@ -612,7 +632,10 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
     if server_id is not None:
         server = await NumberServerService.get(session, server_id)
         if server and server.is_active:
-            server_line = f"{server.emoji} السيرفر: <b>{server.name_ar}</b>\n"
+            server_line = (
+                "🖥 السيرفر: "
+                f"<b>{await NumberServerService.public_name(session, server)}</b>\n"
+            )
 
     await callback.message.edit_text(
         f"📦 <b>شراء أرقام بالجملة</b>\n\n"

@@ -300,6 +300,40 @@ class SmmAdminService:
             return 0
         return deleted
 
+    # ───────── منتجات «سيرفر» الوهمية (اسم فيه سيرفر + سعر شبه صفر) ─────────
+
+    @classmethod
+    async def junk_count(
+        cls, session, sub_id: int, *, include_children: bool = True
+    ) -> int:
+        """عدد منتجات «سيرفر N» الوهمية في القسم (وأقسامه الداخلية)."""
+        from services.junk_products_service import JunkProductsService
+
+        return await JunkProductsService.count_in_tree(
+            session, sub_id, include_children=include_children
+        )
+
+    @classmethod
+    async def junk_count_all(cls, session) -> int:
+        """عدد منتجات «سيرفر» الوهمية في قسم الرشق كله (كل التطبيقات)."""
+        from services.junk_products_service import JunkProductsService
+
+        return await JunkProductsService.count_all_smm(session)
+
+    @classmethod
+    async def clean_junk(
+        cls, session, sub_id: int | None = None, *, replace: bool = True
+    ):
+        """يحذف منتجات «سيرفر» الوهمية ويستبدلها ببدائل مسعّرة.
+
+        ``sub_id = None`` ينظّف قسم الرشق كله.
+        """
+        from services.junk_products_service import JunkProductsService
+
+        if sub_id is None:
+            return await JunkProductsService.clean(session, None, replace=replace)
+        return await JunkProductsService.clean_tree(session, sub_id, replace=replace)
+
     @staticmethod
     def provider_info(product: Product) -> dict:
         """معلومات المنتج عند المزود: الاسم، آيدي الخدمة، سعر المزود، الربح."""

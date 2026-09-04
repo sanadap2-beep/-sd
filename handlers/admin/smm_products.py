@@ -30,6 +30,7 @@ from database.models import AuditAction, Product, ProductStatus
 from filters.admin_filter import IsAdmin
 from keyboards.admin import admin_back_kb
 from keyboards.admin_smm_products import (
+    confirm_clean_junk_kb,
     confirm_delete_product_kb,
     confirm_delete_unpriced_kb,
     confirm_purge_section_kb,
@@ -40,6 +41,7 @@ from keyboards.admin_smm_products import (
     smm_sections_kb,
 )
 from services.audit_service import AuditService
+from services.junk_products_service import JUNK_PRICE_THRESHOLD
 from services.margin_service import MarginService
 from services.smm_admin_service import SmmAdminService
 from states.states import AdminSmmProductsStates
@@ -123,6 +125,13 @@ async def _apps_screen(session, category, only_with_products: bool) -> tuple[str
         f"📦 إجمالي المنتجات: <b>{total}</b> "
         f"(🟢 {active} مفعّل | ⚪ {max(0, total - active)} معطّل)\n\n"
     )
+    junk = await SmmAdminService.junk_count_all(session)
+    if junk:
+        text += (
+            f"🧹 منتجات «سيرفر» وهمية بلا سعر: <b>{junk}</b>\n"
+            "اضغط زر التنظيف ليُحذفوا من كل التطبيقات والأقسام "
+            "ويُستبدلوا بخدمات لها سعر صحيح.\n\n"
+        )
     if not rows:
         text += (
             "⚠️ لا توجد منتجات في هذا القسم بعد.\n"
@@ -136,6 +145,7 @@ async def _apps_screen(session, category, only_with_products: bool) -> tuple[str
         rows,
         only_with_products=only_with_products,
         has_hidden=has_hidden,
+        junk=junk,
     )
 
 
@@ -148,6 +158,7 @@ async def _sections_screen(session, app_id: int) -> tuple[str, object] | None:
     margin_text = await SmmAdminService.effective_margin_text(session, app)
 
     unpriced = await SmmAdminService.unpriced_count(session, app_id)
+    junk = await SmmAdminService.junk_count(session, app_id)
     text = (
         f"📱 <b>{escape(stats.label)}</b> — أقسام التطبيق\n\n"
         f"🗂 عدد الأقسام الفرعية: <b>{len(sections)}</b>\n"
@@ -157,6 +168,8 @@ async def _sections_screen(session, app_id: int) -> tuple[str, object] | None:
     )
     if unpriced:
         text += f"⚠️ منتجات بلا سعر: <b>{unpriced}</b> (خدمات «سيرفر» غير مسعّرة)\n"
+    if junk:
+        text += f"🧹 منتجات «سيرفر» وهمية: <b>{junk}</b> (تُحذف وتُستبدل بزر واحد)\n"
     text += "\n"
     if not sections and not stats.direct_total:
         text += "⚠️ لا توجد أقسام فرعية ولا منتجات داخل هذا التطبيق."
@@ -169,6 +182,7 @@ async def _sections_screen(session, app_id: int) -> tuple[str, object] | None:
         sections,
         direct_products=stats.direct_total,
         unpriced=unpriced,
+        junk=junk,
     )
 
 
@@ -197,8 +211,11 @@ async def _products_screen(session, sub_id: int, page: int) -> tuple[str, object
     unpriced = await SmmAdminService.unpriced_count(
         session, sub_id, include_children=False
     )
+    junk = await SmmAdminService.junk_count(session, sub_id, include_children=False)
     if unpriced:
         text += f"⚠️ منتجات بلا سعر: <b>{unpriced}</b> (خدمات «سيرفر» غير مسعّرة)\n"
+    if junk:
+        text += f"🧹 منتجات «سيرفر» وهمية: <b>{junk}</b> (تُحذف وتُستبدل بزر واحد)\n"
     if pages > 1:
         text += f"📄 الصفحة <b>{page + 1}</b> من <b>{pages}</b>\n"
     text += "\n"
@@ -251,6 +268,7 @@ async def _products_screen(session, sub_id: int, page: int) -> tuple[str, object
         parent_id=sub.parent_sub_category_id,
         category_id=sub.category_id,
         unpriced=unpriced,
+        junk=junk,
     )
 
 
@@ -586,6 +604,147 @@ async def smm_delete_unpriced_go(callback: CallbackQuery, session, db_user=None)
     )
     if screen:
         await _safe_edit(callback.message, screen[0], screen[1])
+
+
+# ══════════════ منتجات «سيرفر» الوهمية: حذف + استبدال ══════════════
+
+
+def _junk_target(raw: str) -> int | None:
+    """``"all"`` = كل قسم الرشق، وإلا رقم القسم."""
+    return None if raw == "all" else int(raw)
+
+
+async def _junk_screen_after(callback, session, sub_id: int | None):
+    """يعيد عرض الشاشة المناسبة بعد التنظيف."""
+    if sub_id is None:
+        categories = await SmmAdminService.smm_categories(session)
+        if categories:
+            text, kb = await _apps_screen(session, categories[0], True)
+            await _safe_edit(callback.message, text, kb)
+        return
+    stats = await SmmAdminService.node_stats(session, sub_id)
+    if stats is None:
+        return
+    is_app = stats.sub.parent_sub_category_id is None
+    screen = (
+        await _sections_screen(session, sub_id)
+        if is_app
+        else await _products_screen(session, sub_id, 0)
+    )
+    if screen:
+        await _safe_edit(callback.message, screen[0], screen[1])
+
+
+@router.callback_query(F.data == "smmp:junk_all")
+async def smm_clean_junk_all_ask(callback: CallbackQuery, session):
+    """تأكيد تنظيف شامل: كل تطبيقات الرشق وكل أقسامها الفرعية."""
+    count = await SmmAdminService.junk_count_all(session)
+    if not count:
+        await callback.answer("✅ لا توجد منتجات «سيرفر» وهمية.", show_alert=True)
+        return
+    await callback.answer()
+    await _safe_edit(
+        callback.message,
+        "🧹 <b>تنظيف منتجات «سيرفر» الوهمية — كل قسم الرشق</b>\n\n"
+        f"سيُحذف <b>{count}</b> منتجاً اسمه فيه كلمة «سيرفر» وسعره "
+        f"<b>{_fmt(JUNK_PRICE_THRESHOLD)}$</b> أو أقل.\n"
+        "هذه أسطر كتالوج المزود («متابعين انستجرام سيرفر 1»…) لا تُنفَّذ "
+        "فعلياً وبيعها بسعر صفر خسارة.\n\n"
+        "✅ بعد الحذف تُنشر مكانها خدمات لها <b>سعر صحيح</b> من نفس المزود "
+        "ونفس القسم (الأرخص أولاً) بسعر = التكلفة + هامش القسم.\n\n"
+        "⚠️ الحذف نهائي — ولا يمسّ أي منتج سليم أو يدوي.",
+        confirm_clean_junk_kb(None),
+    )
+
+
+@router.callback_query(F.data.startswith("smmp:junk:"))
+async def smm_clean_junk_ask(callback: CallbackQuery, session):
+    """تأكيد التنظيف لتطبيق أو قسم فرعي واحد."""
+    sub_id = int(callback.data.split(":")[2])
+    stats = await SmmAdminService.node_stats(session, sub_id)
+    if stats is None:
+        await callback.answer("⚠️ القسم غير موجود.", show_alert=True)
+        return
+    is_app = stats.sub.parent_sub_category_id is None
+    count = await SmmAdminService.junk_count(session, sub_id)
+    if not count:
+        await callback.answer("✅ لا توجد منتجات «سيرفر» وهمية هنا.", show_alert=True)
+        return
+    await callback.answer()
+    await _safe_edit(
+        callback.message,
+        f"🧹 <b>تنظيف منتجات «سيرفر» — {escape(stats.label)}</b>\n\n"
+        f"سيُحذف <b>{count}</b> منتجاً اسمه فيه «سيرفر» وسعره "
+        f"<b>{_fmt(JUNK_PRICE_THRESHOLD)}$</b> أو أقل.\n\n"
+        "✅ وتُنشر مكانها خدمات لها سعر صحيح من نفس القسم "
+        "(الأرخص أولاً) بسعر = التكلفة + هامش القسم.\n\n"
+        "⚠️ الحذف نهائي — ولا يمسّ أي منتج سليم.",
+        confirm_clean_junk_kb(sub_id, is_app=is_app),
+    )
+
+
+async def _run_junk_cleanup(callback, session, db_user, *, replace: bool):
+    sub_id = _junk_target(callback.data.split(":")[2])
+    await callback.answer("🧹 جارٍ التنظيف...")
+
+    report = await SmmAdminService.clean_junk(session, sub_id, replace=replace)
+
+    if db_user is not None:
+        await AuditService.log(
+            admin_id=db_user.id,
+            action=AuditAction.DELETE,
+            entity_type="subcategory" if sub_id else "category",
+            entity_id=sub_id or 0,
+            entity_name="قسم الرشق" if sub_id is None else str(sub_id),
+            new_value={
+                "deleted_junk": report.deleted,
+                "replaced": report.replaced,
+                "sections": report.sections,
+            },
+            description=(
+                f"حذف {report.deleted} منتج «سيرفر» وهمي واستبدالها بـ "
+                f"{report.replaced} منتج مسعّر"
+            ),
+            session=session,
+        )
+
+    lines = [
+        "🧹 <b>تم تنظيف منتجات «سيرفر» الوهمية</b>\n",
+        f"🗑 محذوفة: <b>{report.deleted}</b>",
+        f"🗂 أقسام متأثرة: <b>{report.sections}</b>",
+    ]
+    if replace:
+        lines.append(f"✅ بدائل مسعّرة نُشرت: <b>{report.replaced}</b>")
+        if report.no_replacement:
+            lines.append(
+                f"⚠️ أقسام بلا بديل متاح: <b>{report.no_replacement}</b> — "
+                "اسحب خدمات جديدة من المزود ثم أعد المحاولة."
+            )
+    if report.deleted_names:
+        sample = "\n".join(f"• {escape(name[:44])}" for name in report.deleted_names[:5])
+        lines.append(f"\n<b>عيّنة من المحذوف:</b>\n{sample}")
+    if report.replaced_names:
+        sample = "\n".join(f"• {escape(name[:44])}" for name in report.replaced_names[:5])
+        lines.append(f"\n<b>عيّنة من البدائل:</b>\n{sample}")
+    if report.errors:
+        lines.append(f"\n⚠️ أخطاء جزئية: <b>{report.errors}</b>")
+    if not report.deleted:
+        lines = ["✅ <b>لا توجد منتجات «سيرفر» وهمية.</b>"]
+
+    await _safe_edit(callback.message, "\n".join(lines), admin_back_kb())
+    await _junk_screen_after(callback, session, sub_id)
+
+
+@router.callback_query(F.data.startswith("smmp:junk_del:"))
+async def smm_clean_junk_go(callback: CallbackQuery, session, db_user=None):
+    """حذف المنتجات الوهمية + نشر بدائل مسعّرة."""
+    await _run_junk_cleanup(callback, session, db_user, replace=True)
+
+
+@router.callback_query(F.data.startswith("smmp:junk_del_only:"))
+async def smm_clean_junk_only(callback: CallbackQuery, session, db_user=None):
+    """حذف المنتجات الوهمية بلا استبدال."""
+    await _run_junk_cleanup(callback, session, db_user, replace=False)
 
 
 # ══════════════ نسبة الربح لكل منتجات القسم ══════════════

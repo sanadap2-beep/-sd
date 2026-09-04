@@ -54,9 +54,21 @@ def smm_apps_kb(
     *,
     only_with_products: bool,
     has_hidden: bool,
+    junk: int = 0,
 ) -> InlineKeyboardMarkup:
-    """قائمة التطبيقات مع عدد منتجات كل تطبيق."""
+    """قائمة التطبيقات مع عدد منتجات كل تطبيق.
+
+    ``junk``: عدد منتجات «سيرفر N» الوهمية في قسم الرشق كله — عند وجودها
+    يظهر زر تنظيف شامل يحذفها من كل التطبيقات والأقسام الفرعية دفعة واحدة
+    ويستبدلها بخدمات لها سعر صحيح.
+    """
     b = InlineKeyboardBuilder()
+    if junk:
+        b.button(
+            text=f"🧹 حذف منتجات «سيرفر» بلا سعر واستبدالها ({junk})",
+            callback_data="smmp:junk_all",
+            style="danger",
+        )
     for stats in rows:
         b.button(
             text=f"{_short(stats.label, 26)} · {stats.total} منتج ({stats.active} ✅)",
@@ -88,6 +100,7 @@ def smm_sections_kb(
     *,
     direct_products: int,
     unpriced: int = 0,
+    junk: int = 0,
 ) -> InlineKeyboardMarkup:
     """أقسام التطبيق الفرعية + منتجات التطبيق المباشرة + أدوات جماعية."""
     b = InlineKeyboardBuilder()
@@ -108,6 +121,12 @@ def smm_sections_kb(
     )
     b.button(text="🟢 تفعيل كل منتجات التطبيق", callback_data=f"smmp:on:{app_id}", style="success")
     b.button(text="⚪ تعطيل كل منتجات التطبيق", callback_data=f"smmp:off:{app_id}", style="success")
+    if junk:
+        b.button(
+            text=f"🧹 حذف منتجات «سيرفر» واستبدالها ({junk})",
+            callback_data=f"smmp:junk:{app_id}",
+            style="danger",
+        )
     if unpriced:
         b.button(
             text=f"🧼 حذف المنتجات بلا سعر ({unpriced})",
@@ -132,6 +151,7 @@ def smm_products_kb(
     parent_id: int | None,
     category_id: int,
     unpriced: int = 0,
+    junk: int = 0,
 ) -> InlineKeyboardMarkup:
     """لكل منتج صفّان من الأزرار: (تعطيل/تفعيل) + (حذف)."""
     b = InlineKeyboardBuilder()
@@ -163,6 +183,12 @@ def smm_products_kb(
     )
     b.button(text="🟢 تفعيل كل منتجات القسم", callback_data=f"smmp:on:{sub_id}", style="success")
     b.button(text="⚪ تعطيل كل منتجات القسم", callback_data=f"smmp:off:{sub_id}", style="success")
+    if junk:
+        b.button(
+            text=f"🧹 حذف منتجات «سيرفر» واستبدالها ({junk})",
+            callback_data=f"smmp:junk:{sub_id}",
+            style="danger",
+        )
     if unpriced:
         b.button(
             text=f"🧼 حذف المنتجات بلا سعر ({unpriced})",
@@ -175,7 +201,12 @@ def smm_products_kb(
         style="danger",
     )
     b.button(text="🔄 تحديث", callback_data=f"smmp:sec:{sub_id}:{page}", style="success")
-    layout.extend([1, 2] + ([1] if unpriced else []) + [1, 1])
+    layout.extend(
+        [1, 2]
+        + ([1] if junk else [])
+        + ([1] if unpriced else [])
+        + [1, 1]
+    )
 
     if parent_id:
         b.button(text="🔙 أقسام التطبيق", callback_data=f"smmp:app:{parent_id}")
@@ -226,6 +257,36 @@ def confirm_delete_unpriced_kb(sub_id: int, *, is_app: bool) -> InlineKeyboardMa
         callback_data=(f"smmp:app:{sub_id}" if is_app else f"smmp:sec:{sub_id}:0"),
         style="success",
     )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def confirm_clean_junk_kb(
+    sub_id: int | None, *, is_app: bool = False
+) -> InlineKeyboardMarkup:
+    """تأكيد حذف منتجات «سيرفر» الوهمية واستبدالها.
+
+    ``sub_id = None`` = التنظيف الشامل لكل قسم الرشق.
+    """
+    b = InlineKeyboardBuilder()
+    target = "all" if sub_id is None else str(sub_id)
+    b.button(
+        text="🧹 نعم، احذفها واستبدلها",
+        callback_data=f"smmp:junk_del:{target}",
+        style="danger",
+    )
+    b.button(
+        text="🗑 احذفها فقط بلا استبدال",
+        callback_data=f"smmp:junk_del_only:{target}",
+        style="danger",
+    )
+    if sub_id is None:
+        back = "smmp:home"
+    elif is_app:
+        back = f"smmp:app:{sub_id}"
+    else:
+        back = f"smmp:sec:{sub_id}:0"
+    b.button(text="↩️ تراجع", callback_data=back, style="success")
     b.adjust(1)
     return b.as_markup()
 
