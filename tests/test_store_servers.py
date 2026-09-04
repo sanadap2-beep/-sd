@@ -140,8 +140,82 @@ async def test_admin_kb_opens_three_scopes():
     assert "admin:ssvc_scope:category" in callbacks
     assert "admin:ssvc_scope:subcategory" in callbacks
     assert "admin:ssvc_scope:global" in callbacks
-    # خدمة الأرقام لها نظام مخصص — لا تُعرض هنا كي لا يظهر سيرفر ميت.
-    assert "admin:ssvc_scope:number_service" not in callbacks
+    # نطاق «خدمة أرقام» معروض عمداً (إضافة لنظام سيرفرات الأرقام المخصص)
+    # والمعالج يدعمه بالكامل — انظر docstring الخاص بـ admin_ssvc_scope_kb.
+    assert "admin:ssvc_scope:number_service" in callbacks
+
+
+def _fake_servers(count: int):
+    """سيرفرات وهمية لاختبار ترقيم صفحات القائمة بدون قاعدة بيانات."""
+    return [
+        type(
+            "S",
+            (),
+            {
+                "id": i + 1,
+                "is_active": True,
+                "provider_kind": "api",
+                "emoji": "🖥",
+                "name_ar": f"سيرفر {i + 1}",
+            },
+        )()
+        for i in range(count)
+    ]
+
+
+def test_store_servers_kb_paginates_to_stay_under_telegram_limits():
+    """قائمة السيرفرات يجب أن تُرقّم صفحات — وإلا فاقت حد الأزرار وفشلت
+    الرسالة بخطأ «Bad Request: reply markup is too long»."""
+    from keyboards.admin import STORE_SERVERS_PER_PAGE, admin_store_servers_kb
+
+    servers = _fake_servers(STORE_SERVERS_PER_PAGE * 3 + 5)  # 95 سيرفر
+
+    kb_first = admin_store_servers_kb(servers, page=0)
+    buttons_first = [b for row in kb_first.inline_keyboard for b in row]
+    server_buttons = [b for b in buttons_first if b.callback_data.startswith("admin:ssvc_server:")]
+    assert len(server_buttons) == STORE_SERVERS_PER_PAGE
+    callbacks = [b.callback_data for b in buttons_first]
+    assert "admin:store_servers:p:1" in callbacks  # التالي
+    assert "admin:store_servers:p:0" not in callbacks  # لا «سابق» في أول صفحة
+
+    kb_last = admin_store_servers_kb(servers, page=3)
+    buttons_last = [b for row in kb_last.inline_keyboard for b in row]
+    server_buttons_last = [b for b in buttons_last if b.callback_data.startswith("admin:ssvc_server:")]
+    assert len(server_buttons_last) == 5  # بقية السيرفرات في الصفحة الأخيرة
+    callbacks_last = [b.callback_data for b in buttons_last]
+    assert "admin:store_servers:p:2" in callbacks_last  # السابق
+    assert "admin:ssvc_add" in callbacks_last  # زر الإضافة باقٍ في كل الصفحات
+
+
+def test_store_servers_kb_clips_very_long_labels():
+    """الأسماء الطويلة جداً تُقص حتى لا يتضخم الـ reply markup فوق حد تيليجرام."""
+    from keyboards.admin import admin_store_servers_kb
+
+    servers = _fake_servers(1)
+    servers[0].name_ar = "س" * 300
+
+    kb = admin_store_servers_kb(servers, page=0)
+    label = next(
+        b.text
+        for row in kb.inline_keyboard
+        for b in row
+        if b.callback_data.startswith("admin:ssvc_server:")
+    )
+    assert len(label) <= 50
+    assert label.endswith("…")
+
+
+def test_ssvc_target_kb_clips_long_labels():
+    from keyboards.admin import admin_ssvc_target_kb
+
+    targets = [
+        type("T", (), {"id": 1, "emoji": "🔥", "name_ar": "قسم " + "ط" * 200})(),
+    ]
+    kb = admin_ssvc_target_kb("subcategory", targets, page=0)
+    label = kb.inline_keyboard[0][0].text
+    assert len(label) <= 50
+    assert label.endswith("…")
+    assert kb.inline_keyboard[0][0].callback_data == "admin:ssvc_target:subcategory:1"
 
 
 async def test_number_server_margin_persists_and_shows_in_admin():

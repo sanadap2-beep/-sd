@@ -146,7 +146,9 @@ async def numbers_hub(callback: CallbackQuery, session, db_user=None):
 SERVER_SELECTION_FEATURE = "number_server_selection"
 
 
-async def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineKeyboardMarkup:
+def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineKeyboardMarkup:
+    # ملاحظة: هذه الدالة متزامنة عمداً (لا تحتاج await) — كانت async سابقاً
+    # فمرّرت كـ coroutine إلى reply_markup وتسبب ذلك في ValidationError.
     b = InlineKeyboardBuilder()
     for server in servers:
         b.button(
@@ -159,10 +161,10 @@ async def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineK
     return b.as_markup()
 
 
-@router.callback_query(F.data == "num_server:")
+@router.callback_query(F.data.startswith("num_server:"))
 async def numbers_server_list(callback: CallbackQuery, session):
     parts = callback.data.split(":")
-    if len(parts) < 2:
+    if len(parts) < 2 or not parts[1]:
         await callback.answer("بيانات غير صالحة", show_alert=True)
         return
     service_code = parts[1]

@@ -51,7 +51,15 @@ def _provider_text(server: StoreServer) -> str:
 
 
 @router.callback_query(F.data == "admin:store_servers")
+@router.callback_query(F.data.startswith("admin:store_servers:p:"))
 async def store_servers_list(callback: CallbackQuery, session):
+    # admin:store_servers أو admin:store_servers:p:{page}
+    page = 0
+    if callback.data.startswith("admin:store_servers:p:"):
+        try:
+            page = int(callback.data.rsplit(":", 1)[1])
+        except (IndexError, ValueError):
+            page = 0
     servers = await StoreServerService.list_all(session)
     counts = await StoreServerService.counts_by_scope(session)
     lines = ["🖥 <b>السيرفرات العامة (كل الأقسام)</b>", ""]
@@ -66,7 +74,7 @@ async def store_servers_list(callback: CallbackQuery, session):
     await callback.answer()
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=admin_store_servers_kb(servers),
+        reply_markup=admin_store_servers_kb(servers, counts, page=page),
     )
 
 
