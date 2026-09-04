@@ -389,7 +389,7 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
         if server is None or not server.is_active:
             await callback.answer("⚠️ السيرفر غير متاح.", show_alert=True)
             return
-        only_provider = ProviderName(server.provider) if await NumberServerService.validate_provider(server.provider) else None
+        only_provider = ProviderName(server.provider) if NumberServerService.validate_provider(server.provider) else None
 
     await callback.answer("⏳ جاري تأكيد السعر والمخزون...")
 
@@ -550,7 +550,7 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
             return
         strict_provider = (
             ProviderName(server.provider)
-            if await NumberServerService.validate_provider(server.provider)
+            if NumberServerService.validate_provider(server.provider)
             else None
         )
 
@@ -712,7 +712,7 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
             return
         strict_provider = (
             ProviderName(server.provider)
-            if await NumberServerService.validate_provider(server.provider)
+            if NumberServerService.validate_provider(server.provider)
             else None
         )
 
@@ -839,7 +839,7 @@ async def confirm_buy(
             return
         server_provider = (
             ProviderName(server.provider)
-            if await NumberServerService.validate_provider(server.provider)
+            if NumberServerService.validate_provider(server.provider)
             else None
         )
         strict_provider = server_provider
