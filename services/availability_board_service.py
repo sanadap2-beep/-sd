@@ -6,7 +6,7 @@
 1. **اللوحة «ما بتتحدث»**: كانت تنشر فقط عند وجود Restock حقيقي، وترجع
    ``no_new_restock`` في كل دورة أخرى. النتيجة: منشور واحد يجمّد في القناة
    لساعات. الآن اللوحة تُحدَّث في كل دورة (تعديل نفس الرسالة عبر
-   ``edit_message_text`` بدل حذف/إعادة نشر)، ويُعاد ترتيب الدول الثابتة
+   ``edit_message_text`` بدل حذف/إعادة نشر)، ويُعاد ترتيب الدول المتوفرة
    بشكل دوّار (rotation) فتبدو القناة حيّة، بينما يبقى التمييز الحقيقي
    محفوظاً لدول الـ Restock.
 
@@ -32,6 +32,15 @@
 5. **ضغط دولة ثم «لا يوجد رقم»**: قبل النشر يُتحقَّق من أن الدولة موجودة
    ومفعّلة في قاعدة البيانات (``is_active``)، فلا يظهر زر لدولة معطّلة.
    والدول التي نفدت للتو تُعرَض تلقائياً كـ «نفدت» بدل رابط شراء ميت.
+
+6. **نفس الدول بنفس الترتيب كل دورة («الميزة وهمية»)**: كان التدوير
+   يُطبَّق على «الثابتة» فقط، بينما الدول النادرة (المراقبة) كانت مثبّتة
+   دائماً في أول القائمة بالترتيب نفسه (أولوية الأدمن). القائمة المراقبة
+   افتراضياً تغطي 14 دولة كبرى، فكلها كانت تملأ أول ``top_n`` خانة
+   فلا يتغير شيء يُذكر في كل دورة. الآن المجموعة كلها (النادرة ثم
+   الثابتة) تُدوَّر ككتلة واحدة كل دورة: الترتيب يتبدل دائماً، وعند
+   ازدحام الدول المتوفرة تتبدل دول النافذة نفسها كل دورة، ويبقى وسم
+   🔥 مخصصاً للعودة الحقيقية للمخزون فقط.
 """
 
 from __future__ import annotations
@@ -120,7 +129,7 @@ class AvailabilityBoardService:
 
     @staticmethod
     async def rotate_stable() -> bool:
-        """تدوير ترتيب الدول الثابتة كل دورة (إحساس بالحركة)."""
+        """تدوير ترتيب الدول المتوفرة (النادرة والثابتة معاً) كل دورة."""
         return await FeatureService.config_bool(FEATURE_KEY, "rotate_stable", True)
 
     @staticmethod
@@ -342,37 +351,51 @@ class AvailabilityBoardService:
         now: float,
         rotate: bool,
     ) -> list[BoardEntry]:
-        """🔥 أولاً، ثم 💎 النادرة حسب ترتيب الأدمن، ثم الثابتة بترتيب دوّار."""
+        """🔥 أولاً، ثم كل الدول المتوفرة الباقية بمجموعة دوّارة واحدة.
+
+        النسخة السابقة كانت تُمسك الدول النادرة (المراقبة) في ترتيب
+        ثابت حسب أولوية الأدمن وتدوّر فقط «الثابتة» تحتها. بما أن القائمة
+        المراقبة افتراضياً تغطي الدول الكبرى (14 دولة)، كانت هذه الدول
+        تملأ أول ``top_n`` خانة دائماً بالترتيب نفسه كل دورة — فتعرض
+        القناة نفس الدول بنفس الترتيب وكأنها لا تتغير.
+
+        الآن المجموعة كلها (💎 النادرة ثم 🟢 الثابتة، وكلتاهما تصاعدياً
+        من الأرخص) تُدوَّر ككتلة واحدة كل دورة: الترتيب يتغير، وإذا
+        تجاوز عدد الدول المتوفرة عدد الدول المعروضة تدخل دول مختلفة
+        في النافذة كل دورة.
+        """
         priority = {code: index for index, code in enumerate(watched_order)}
         watched = set(watched_order)
 
         hot: list[BoardEntry] = []
-        rare: list[BoardEntry] = []
-        stable: list[BoardEntry] = []
+        rest: list[BoardEntry] = []
         for entry in entries:
             badge = cls._badge_for(entry, watched, state, now)
-            (hot if badge == BADGE_RESTOCK else rare if badge == BADGE_RARE else stable).append(entry)
+            (hot if badge == BADGE_RESTOCK else rest).append(entry)
 
-        def rare_key(entry: BoardEntry):
+        def base_key(entry: BoardEntry):
             code = cls._entry_key(entry)
-            return (priority.get(code, 10_000), entry.sell_usd, code)
+            # النادرة المراقبة أولاً داخل المجموعة الدوّارة (تبقى أولوية
+            # الأدمن حرجة عند تعطيل التدوير)، ثم الأرخص أولاً.
+            is_rare = 0 if cls._looks_watched(entry, watched) else 1
+            return (is_rare, priority.get(code, 10_000), entry.sell_usd, code)
 
         def hot_key(entry: BoardEntry):
             meta = state.get(cls._entry_key(entry)) or {}
             # الأحدث عودةً أولاً.
-            return (-float(meta.get("restocked_at", 0) or 0), *rare_key(entry))
+            return (-float(meta.get("restocked_at", 0) or 0), *base_key(entry))
 
         hot.sort(key=hot_key)
-        rare.sort(key=rare_key)
-        stable.sort(key=lambda e: (e.sell_usd, cls._entry_key(e)))
+        rest.sort(key=base_key)
 
-        if rotate and stable:
+        if rotate and rest:
             # تدوير: نفس الدول لكن نقطة البداية تتغير كل دورة، فتبدو اللوحة
-            # متحركة للمشترك دون أي ادعاء كاذب بتغيّر المخزون.
-            step = cls._cycle.get(service_code, 0) % len(stable)
-            stable = stable[step:] + stable[:step]
+            # متحركة للمشترك (وتتبدل دول النافذة نفسها عند ازدحام المتاح)
+            # دون أي ادعاء كاذب بتغيّر المخزون.
+            step = cls._cycle.get(service_code, 0) % len(rest)
+            rest = rest[step:] + rest[:step]
 
-        return hot + rare + stable
+        return hot + rest
 
     # ─────────── البناء ───────────
 
