@@ -67,7 +67,7 @@ def feature_detail_kb(spec: FeatureSpec, enabled: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📦 إعداد خصومات الجملة", callback_data="feat_bulk_discounts")]
         )
     rows.append(
-        [InlineKeyboardButton(text="♻️ إعادة للقيم الافتراضية", callback_data=f"feat_reset:{spec.key}")]
+        [InlineKeyboardButton(text="♻️ إعادة للقيم الافتراضية", callback_data=f"feat_reset:{spec.key}", style="danger")]
     )
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="feat_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

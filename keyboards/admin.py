@@ -117,7 +117,7 @@ def admin_orders_kb(orders, page: int = 0, total_pages: int = 1) -> InlineKeyboa
         status = order.status.value
         b.button(
             text=f"#{order.id} {product_name} · {status}",
-            callback_data=f"admin:order_view:{order.id}",
+            callback_data=f"admin:order_view:{order.id}", style="primary",
         )
     if page > 0:
         b.button(
@@ -141,11 +141,11 @@ def admin_order_detail_kb(order) -> InlineKeyboardMarkup:
     if status in ("pending", "processing"):
         b.button(
             text="✅ تعليم كمكتمل",
-            callback_data=f"admin:order_complete:{order.id}",
+            callback_data=f"admin:order_complete:{order.id}", style="primary",
         )
         b.button(
             text="↩️ استرجاع الرصيد",
-            callback_data=f"admin:order_refund_ask:{order.id}",
+            callback_data=f"admin:order_refund_ask:{order.id}", style="danger",
         )
     b.button(text="🔙 الطلبات", callback_data="admin:orders")
     b.adjust(2, 1)
@@ -163,7 +163,7 @@ def admin_deposits_kb(
         status = getattr(deposit.status, "value", deposit.status)
         b.button(
             text=f"#{deposit.id} {deposit.amount_usd}$ · {status}",
-            callback_data=f"admin:deposit_view:{deposit.id}",
+            callback_data=f"admin:deposit_view:{deposit.id}", style="primary",
         )
     if page > 0:
         b.button(
@@ -183,8 +183,8 @@ def admin_deposits_kb(
 def admin_deposit_view_kb(deposit_id: int, pending: bool) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if pending:
-        b.button(text="✅ قبول وإضافة الرصيد", callback_data=f"deposit_accept:{deposit_id}")
-        b.button(text="❌ رفض الطلب", callback_data=f"deposit_reject:{deposit_id}")
+        b.button(text="✅ قبول وإضافة الرصيد", callback_data=f"deposit_accept:{deposit_id}", style="primary")
+        b.button(text="❌ رفض الطلب", callback_data=f"deposit_reject:{deposit_id}", style="danger")
     b.button(text="🔙 طلبات الشحن", callback_data="admin:deposits")
     b.adjust(2, 1)
     return b.as_markup()
@@ -200,7 +200,7 @@ def admin_number_orders_kb(
     for order in orders:
         b.button(
             text=f"#{order.id} {order.phone_number} · {order.status.value}",
-            callback_data=f"admin:num_order_view:{order.id}",
+            callback_data=f"admin:num_order_view:{order.id}", style="primary",
         )
     if page > 0:
         b.button(
@@ -222,11 +222,11 @@ def admin_order_refund_confirm_kb(order_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text="✅ نعم، استرجع الرصيد",
-        callback_data=f"admin:order_refund:{order_id}",
+        callback_data=f"admin:order_refund:{order_id}", style="danger",
     )
     b.button(
         text="❌ إلغاء",
-        callback_data=f"admin:order_view:{order_id}",
+        callback_data=f"admin:order_view:{order_id}", style="primary",
     )
     b.adjust(1)
     return b.as_markup()
@@ -239,7 +239,7 @@ def admin_number_order_detail_kb(order) -> InlineKeyboardMarkup:
     if status == "pending":
         b.button(
             text="❌ إلغاء واسترجاع الرصيد",
-            callback_data=f"admin:num_order_refund_ask:{order.id}",
+            callback_data=f"admin:num_order_refund_ask:{order.id}", style="danger",
         )
     b.button(text="🔙 طلبات الأرقام", callback_data="admin:number_orders")
     b.button(text="🏠 اللوحة الرئيسية", callback_data="admin:main")
@@ -252,11 +252,11 @@ def admin_number_order_refund_confirm_kb(order_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text="✅ نعم، استرجع الرصيد",
-        callback_data=f"admin:num_order_refund:{order_id}",
+        callback_data=f"admin:num_order_refund:{order_id}", style="danger",
     )
     b.button(
         text="❌ إلغاء",
-        callback_data=f"admin:num_order_view:{order_id}",
+        callback_data=f"admin:num_order_view:{order_id}", style="primary",
     )
     b.adjust(1)
     return b.as_markup()
@@ -277,7 +277,7 @@ def admin_inventory_kb(products) -> InlineKeyboardMarkup:
 
 def admin_inventory_detail_kb(product_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="➕ إضافة كود/ترخيص", callback_data=f"admin:inv_add:{product_id}")
+    b.button(text="➕ إضافة كود/ترخيص", callback_data=f"admin:inv_add:{product_id}", style="success")
     b.button(text="📋 العناصر المتاحة", callback_data=f"admin:inv_items:{product_id}")
     b.button(text="🔙 المخزون", callback_data="admin:inventory")
     b.adjust(1)
@@ -289,11 +289,11 @@ def admin_inventory_items_kb(items, product_id: int) -> InlineKeyboardMarkup:
     for item in items:
         b.button(
             text=f"🗑 إلغاء العنصر #{item.id}",
-            callback_data=f"admin:inv_void:{item.id}:{product_id}",
+            callback_data=f"admin:inv_void:{item.id}:{product_id}", style="danger",
         )
     b.button(
         text="➕ إضافة عنصر",
-        callback_data=f"admin:inv_add:{product_id}",
+        callback_data=f"admin:inv_add:{product_id}", style="success",
     )
     b.button(text="🔙 تفاصيل المنتج", callback_data=f"admin:inv_product:{product_id}")
     b.adjust(1)
@@ -335,7 +335,7 @@ def admin_maintenance_kb(is_active: bool) -> InlineKeyboardMarkup:
     if is_active:
         b.button(text="🟢 إيقاف الصيانة", callback_data="admin:maintenance_off")
     else:
-        b.button(text="🔴 تفعيل الصيانة", callback_data="admin:maintenance_on")
+        b.button(text="🔴 تفعيل الصيانة", callback_data="admin:maintenance_on", style="danger")
     b.button(text="📝 تعديل رسالة الصيانة", callback_data="admin:maintenance_msg")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
@@ -353,7 +353,7 @@ def admin_categories_list_kb(categories) -> InlineKeyboardMarkup:
             text=f"{status} {cat.emoji} {cat.name_ar}",
             callback_data=f"admin:cat_view:{cat.id}",
         )
-    b.button(text="➕ إضافة قسم جديد", callback_data="admin:cat_add")
+    b.button(text="➕ إضافة قسم جديد", callback_data="admin:cat_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
@@ -368,7 +368,7 @@ def admin_category_detail_kb(category) -> InlineKeyboardMarkup:
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:cat_edit_name:{category.id}")
     b.button(text="🔢 تعديل الترتيب", callback_data=f"admin:cat_edit_sort:{category.id}")
     b.button(text="📂 الأقسام الفرعية", callback_data=f"admin:subcats:{category.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:cat_delete:{category.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:cat_delete:{category.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:categories")
     b.adjust(1)
     return b.as_markup()
@@ -385,7 +385,7 @@ def admin_subcats_list_kb(category_id: int, sub_categories) -> InlineKeyboardMar
             text=f"{status} {sub.emoji} {sub.name_ar}",
             callback_data=f"admin:subcat_view:{sub.id}",
         )
-    b.button(text="➕ إضافة قسم فرعي", callback_data=f"admin:subcat_add:{category_id}")
+    b.button(text="➕ إضافة قسم فرعي", callback_data=f"admin:subcat_add:{category_id}", style="success")
     b.button(text="🔙 رجوع", callback_data=f"admin:cat_view:{category_id}")
     b.adjust(1)
     return b.as_markup()
@@ -399,7 +399,7 @@ def admin_subcat_detail_kb(sub_category, category_id: int) -> InlineKeyboardMark
         b.button(text="🟢 تفعيل", callback_data=f"admin:subcat_toggle:{sub_category.id}")
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:subcat_edit_name:{sub_category.id}")
     b.button(text="📦 المنتجات", callback_data=f"admin:prods:{sub_category.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:subcat_delete:{sub_category.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:subcat_delete:{sub_category.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data=f"admin:subcats:{category_id}")
     b.adjust(1)
     return b.as_markup()
@@ -416,7 +416,7 @@ def admin_products_list_kb(sub_category_id: int, products) -> InlineKeyboardMark
             text=f"{status} {p.name_ar} ({p.price_usd}$)",
             callback_data=f"admin:prod_view:{p.id}",
         )
-    b.button(text="➕ إضافة منتج", callback_data=f"admin:prod_add:{sub_category_id}")
+    b.button(text="➕ إضافة منتج", callback_data=f"admin:prod_add:{sub_category_id}", style="success")
     b.button(text="🔙 رجوع", callback_data=f"admin:subcat_view:{sub_category_id}")
     b.adjust(1)
     return b.as_markup()
@@ -429,14 +429,14 @@ def admin_product_detail_kb(product, sub_category_id: int) -> InlineKeyboardMark
         b.button(text="⚪ تعطيل", callback_data=f"admin:prod_toggle:{product.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:prod_toggle:{product.id}")
-    b.button(text="➕ أضفه كزر رئيسي", callback_data=f"mb:add_prod:{product.id}")
+    b.button(text="➕ أضفه كزر رئيسي", callback_data=f"mb:add_prod:{product.id}", style="success")
     b.button(text="🧪 فحص جاهزية المنتج", callback_data=f"admin:prod_ready:{product.id}")
     b.button(text="💰 تعديل السعر", callback_data=f"admin:prod_edit_price:{product.id}")
-    b.button(text="💵 هامش ربح المنتج (%)", callback_data=f"admin:prod_margin:{product.id}")
+    b.button(text="💵 هامش ربح المنتج (%)", callback_data=f"admin:prod_margin:{product.id}", style="primary")
     b.button(text="📝 شرح/وصف الخدمة", callback_data=f"admin:prod_edit_desc:{product.id}")
     b.button(text="✏️ تعديل الاسم", callback_data=f"admin:prod_edit_name:{product.id}")
     b.button(text="🔌 تعديل آيدي المزود", callback_data=f"admin:prod_edit_svc_id:{product.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:prod_delete:{product.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:prod_delete:{product.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data=f"admin:prods:{sub_category_id}")
     b.adjust(1)
     return b.as_markup()
@@ -453,7 +453,7 @@ def admin_api_providers_kb(providers) -> InlineKeyboardMarkup:
             text=f"{status} {p.name} ({p.type.value})",
             callback_data=f"admin:aprov_view:{p.id}",
         )
-    b.button(text="➕ إضافة مزود", callback_data="admin:aprov_add")
+    b.button(text="➕ إضافة مزود", callback_data="admin:aprov_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
@@ -465,10 +465,10 @@ def admin_api_provider_detail_kb(provider) -> InlineKeyboardMarkup:
         b.button(text="🔴 تعطيل", callback_data=f"admin:aprov_toggle:{provider.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:aprov_toggle:{provider.id}")
-    b.button(text="💰 فحص الرصيد", callback_data=f"admin:aprov_balance:{provider.id}")
+    b.button(text="💰 فحص الرصيد", callback_data=f"admin:aprov_balance:{provider.id}", style="primary")
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:aprov_edit_name:{provider.id}")
     b.button(text="🔑 تعديل API Key", callback_data=f"admin:aprov_edit_key:{provider.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:aprov_delete:{provider.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:aprov_delete:{provider.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:api_providers")
     b.adjust(1)
     return b.as_markup()
@@ -485,7 +485,7 @@ def admin_stars_kb(packages) -> InlineKeyboardMarkup:
             text=f"{status} {pkg.label} = {pkg.usd_amount}$",
             callback_data=f"admin:star_view:{pkg.id}",
         )
-    b.button(text="➕ إضافة باقة", callback_data="admin:star_add")
+    b.button(text="➕ إضافة باقة", callback_data="admin:star_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
@@ -497,7 +497,7 @@ def admin_star_detail_kb(package) -> InlineKeyboardMarkup:
         b.button(text="⚪ تعطيل", callback_data=f"admin:star_toggle:{package.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:star_toggle:{package.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:star_delete:{package.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:star_delete:{package.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:stars")
     b.adjust(1)
     return b.as_markup()
@@ -512,9 +512,9 @@ def admin_coupons_kb(coupons) -> InlineKeyboardMarkup:
         status = "🟢" if c.is_active else "⚪"
         b.button(
             text=f"{status} {c.code} ({c.used_count}/{c.max_uses})",
-            callback_data=f"admin:coupon_view:{c.id}",
+            callback_data=f"admin:coupon_view:{c.id}", style="primary",
         )
-    b.button(text="➕ إنشاء كوبون", callback_data="admin:coupon_add")
+    b.button(text="➕ إنشاء كوبون", callback_data="admin:coupon_add", style="primary")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
@@ -523,10 +523,10 @@ def admin_coupons_kb(coupons) -> InlineKeyboardMarkup:
 def admin_coupon_detail_kb(coupon) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if coupon.is_active:
-        b.button(text="⚪ تعطيل", callback_data=f"admin:coupon_toggle:{coupon.id}")
+        b.button(text="⚪ تعطيل", callback_data=f"admin:coupon_toggle:{coupon.id}", style="primary")
     else:
-        b.button(text="🟢 تفعيل", callback_data=f"admin:coupon_toggle:{coupon.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:coupon_delete:{coupon.id}")
+        b.button(text="🟢 تفعيل", callback_data=f"admin:coupon_toggle:{coupon.id}", style="primary")
+    b.button(text="🗑 حذف", callback_data=f"admin:coupon_delete:{coupon.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:coupons")
     b.adjust(1)
     return b.as_markup()
@@ -542,7 +542,7 @@ def admin_multi_admin_kb(admins) -> InlineKeyboardMarkup:
             text=f"👤 {admin.full_name or admin.telegram_id} (@{admin.username or '-'})",
             callback_data=f"admin:madmin_view:{admin.id}",
         )
-    b.button(text="➕ إضافة أدمن", callback_data="admin:madmin_add")
+    b.button(text="➕ إضافة أدمن", callback_data="admin:madmin_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
@@ -551,7 +551,7 @@ def admin_multi_admin_kb(admins) -> InlineKeyboardMarkup:
 def admin_madmin_detail_kb(admin_user, is_primary: bool) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if not is_primary:
-        b.button(text="🗑 إزالة الأدمنية", callback_data=f"admin:madmin_remove:{admin_user.id}")
+        b.button(text="🗑 إزالة الأدمنية", callback_data=f"admin:madmin_remove:{admin_user.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:multi_admin")
     b.adjust(1)
     return b.as_markup()
@@ -568,7 +568,7 @@ def admin_number_services_kb(services) -> InlineKeyboardMarkup:
             text=f"{status} {svc.emoji} {svc.name_ar}",
             callback_data=f"admin:nsvc_view:{svc.id}",
         )
-    b.button(text="➕ إضافة خدمة أرقام", callback_data="admin:nsvc_add")
+    b.button(text="➕ إضافة خدمة أرقام", callback_data="admin:nsvc_add", style="success")
     b.button(text="📡 قناة التوفر المتقطع", callback_data="admin:nsvc_avail")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
@@ -609,7 +609,7 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:nsvc_toggle:{service.id}")
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_edit_name:{service.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:nsvc_delete:{service.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:nsvc_delete:{service.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:number_services")
     b.adjust(1)
     return b.as_markup()
@@ -647,9 +647,9 @@ def admin_countries_kb(countries, page: int = 0) -> InlineKeyboardMarkup:
         b.button(text="التالي ▶️", callback_data=f"admin:countries:{page + 1}")
         nav_buttons.append(1)
 
-    b.button(text="➕ إضافة دولة جديدة", callback_data="admin:country_add")
+    b.button(text="➕ إضافة دولة جديدة", callback_data="admin:country_add", style="success")
     b.button(text="🔄 سحب دول من HeroSMS", callback_data="admin:country_sync_herosms")
-    b.button(text="🗑 حذف جميع الدول", callback_data="admin:country_delete_all_confirm")
+    b.button(text="🗑 حذف جميع الدول", callback_data="admin:country_delete_all_confirm", style="danger")
     b.button(text="📋 أكواد 5sim المرجعية", callback_data="admin:country_reference_list")
     b.button(text="🔙 رجوع", callback_data="admin:main")
 
@@ -676,7 +676,7 @@ def herosms_sync_menu_kb() -> InlineKeyboardMarkup:
     )
     b.button(
         text="🗑 تصفير الدول المسحوبة وإعادة السحب",
-        callback_data="admin:country_reset",
+        callback_data="admin:country_reset", style="danger",
     )
     b.button(text="🔙 رجوع", callback_data="admin:countries")
     b.adjust(1, 2, 1, 1, 1)
@@ -688,7 +688,7 @@ def country_reset_confirm_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text="🗑 نعم، احذف جميع الدول",
-        callback_data="admin:country_delete_all_execute",
+        callback_data="admin:country_delete_all_execute", style="danger",
     )
     b.button(text="❌ تراجع", callback_data="admin:countries")
     b.adjust(1)
@@ -701,7 +701,7 @@ def admin_country_detail_kb(country) -> InlineKeyboardMarkup:
         b.button(text="⚪ تعطيل", callback_data=f"admin:country_toggle:{country.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:country_toggle:{country.id}")
-    b.button(text="🗑 حذف", callback_data=f"admin:country_delete:{country.id}")
+    b.button(text="🗑 حذف", callback_data=f"admin:country_delete:{country.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:countries")
     b.adjust(1)
     return b.as_markup()
@@ -712,7 +712,7 @@ def admin_country_detail_kb(country) -> InlineKeyboardMarkup:
 
 def admin_pricing_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="📈 تعديل نسبة الربح العامة", callback_data="admin:set_margin")
+    b.button(text="📈 تعديل نسبة الربح العامة", callback_data="admin:set_margin", style="primary")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
@@ -726,19 +726,19 @@ def admin_loyalty_settings_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text="💎 نقاط كل دولار",
-        callback_data="admin:loyalty_set:loyalty_points_per_usd",
+        callback_data="admin:loyalty_set:loyalty_points_per_usd", style="primary",
     )
     b.button(
         text="🎁 مكافأة التسجيل اليومي",
-        callback_data="admin:loyalty_set:loyalty_daily_points",
+        callback_data="admin:loyalty_set:loyalty_daily_points", style="primary",
     )
     b.button(
         text="💵 معامل الاستبدال",
-        callback_data="admin:loyalty_set:loyalty_points_per_usd_redeem",
+        callback_data="admin:loyalty_set:loyalty_points_per_usd_redeem", style="primary",
     )
     b.button(
         text="🔢 الحد الأدنى للاستبدال",
-        callback_data="admin:loyalty_set:loyalty_min_redeem_points",
+        callback_data="admin:loyalty_set:loyalty_min_redeem_points", style="primary",
     )
     b.button(text="🔙 لوحة الولاء", callback_data="admin:loyalty")
     b.adjust(1)
@@ -761,7 +761,7 @@ def admin_payment_settings_kb(settings_values: dict[str, bool]) -> InlineKeyboar
         state = "🟢 مفعّل" if settings_values.get(key, False) else "⚪ معطّل"
         b.button(
             text=f"{state} {label}",
-            callback_data=f"admin:payment_toggle:{key}",
+            callback_data=f"admin:payment_toggle:{key}", style="primary",
         )
     b.button(text="🔙 الإعدادات", callback_data="admin:settings")
     b.adjust(1)
@@ -770,16 +770,16 @@ def admin_payment_settings_kb(settings_values: dict[str, bool]) -> InlineKeyboar
 
 def admin_settings_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="💱 أسعار الصرف اليومية", callback_data="admin:rates")
+    b.button(text="💱 أسعار الصرف اليومية", callback_data="admin:rates", style="primary")
     b.button(text="🛠 يوزر الدعم", callback_data="admin:set_support")
-    b.button(text="💳 طريقة الدفع", callback_data="admin:set_payment")
-    b.button(text="🎛 تفعيل طرق الدفع", callback_data="admin:payment_settings")
-    b.button(text="🎁 إعدادات الولاء", callback_data="admin:loyalty_settings")
+    b.button(text="💳 طريقة الدفع", callback_data="admin:set_payment", style="primary")
+    b.button(text="🎛 تفعيل طرق الدفع", callback_data="admin:payment_settings", style="primary")
+    b.button(text="🎁 إعدادات الولاء", callback_data="admin:loyalty_settings", style="primary")
     b.button(text="🚨 حد التحويل الكبير", callback_data="admin:set_large_tx")
-    b.button(text="⏳ مهلة انتظار الكود", callback_data="admin:set_order_timeout")
+    b.button(text="⏳ مهلة انتظار الكود", callback_data="admin:set_order_timeout", style="primary")
     b.button(text="📝 رسالة الترحيب", callback_data="admin:set_welcome")
     b.button(text="💰 نسبة الكاشباك", callback_data="admin:set_cashback")
-    b.button(text="💎 نسبة الإحالة", callback_data="admin:set_referral_percent")
+    b.button(text="💎 نسبة الإحالة", callback_data="admin:set_referral_percent", style="primary")
     b.button(text="⏱ Rate Limit", callback_data="admin:set_rate_limit")
     b.button(text="📢 قناة الإشعارات العامة", callback_data="admin:set_public_channel")
     b.button(text="💾 قناة البكاب", callback_data="admin:set_backup_channel")
@@ -804,8 +804,8 @@ def admin_rates_kb() -> InlineKeyboardMarkup:
 
 def deposit_decision_kb(deposit_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="✅ قبول", callback_data=f"deposit_accept:{deposit_id}")
-    b.button(text="❌ رفض", callback_data=f"deposit_reject:{deposit_id}")
+    b.button(text="✅ قبول", callback_data=f"deposit_accept:{deposit_id}", style="primary")
+    b.button(text="❌ رفض", callback_data=f"deposit_reject:{deposit_id}", style="danger")
     b.adjust(2)
     return b.as_markup()
 
@@ -815,14 +815,14 @@ def deposit_decision_kb(deposit_id: int) -> InlineKeyboardMarkup:
 
 def user_manage_kb(user_id: int, is_banned: bool) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="➕ إضافة رصيد", callback_data=f"admin:user_add_balance:{user_id}")
-    b.button(text="➖ خصم رصيد", callback_data=f"admin:user_deduct_balance:{user_id}")
+    b.button(text="➕ إضافة رصيد", callback_data=f"admin:user_add_balance:{user_id}", style="primary")
+    b.button(text="➖ خصم رصيد", callback_data=f"admin:user_deduct_balance:{user_id}", style="primary")
     b.button(text="📋 سجل المعاملات", callback_data=f"admin:user_transactions:{user_id}")
     b.button(text="📩 إرسال رسالة", callback_data=f"admin:user_send_msg:{user_id}")
     if is_banned:
-        b.button(text="✅ فك الحظر", callback_data=f"admin:user_unban:{user_id}")
+        b.button(text="✅ فك الحظر", callback_data=f"admin:user_unban:{user_id}", style="danger")
     else:
-        b.button(text="🚫 حظر", callback_data=f"admin:user_ban:{user_id}")
+        b.button(text="🚫 حظر", callback_data=f"admin:user_ban:{user_id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:users")
     b.adjust(2, 2, 1, 1)
     return b.as_markup()
@@ -836,9 +836,9 @@ def admin_channels_kb(channels) -> InlineKeyboardMarkup:
     for ch in channels:
         b.button(
             text=f"❌ حذف: {ch.title or ch.chat_id}",
-            callback_data=f"admin:channel_del:{ch.id}",
+            callback_data=f"admin:channel_del:{ch.id}", style="danger",
         )
-    b.button(text="➕ إضافة قناة", callback_data="admin:channel_add")
+    b.button(text="➕ إضافة قناة", callback_data="admin:channel_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()

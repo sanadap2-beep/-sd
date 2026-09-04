@@ -27,7 +27,7 @@ def categories_list_kb(
 
     b.button(
         text="➕ إضافة قسم رئيسي",
-        callback_data="admin:cat_add",
+        callback_data="admin:cat_add", style="success",
     )
     b.button(
         text="🔙 رجوع",
@@ -186,7 +186,7 @@ def category_detail_kb(
 
     b.button(
         text="➕ أضفه كزر رئيسي",
-        callback_data=f"mb:add_cat:{category.id}",
+        callback_data=f"mb:add_cat:{category.id}", style="success",
     )
     b.button(
         text="📂 عرض الأقسام الفرعية",
@@ -194,12 +194,12 @@ def category_detail_kb(
     )
     b.button(
         text="➕ إضافة قسم فرعي",
-        callback_data=f"admin:subcat_add:{category.id}",
+        callback_data=f"admin:subcat_add:{category.id}", style="success",
     )
 
     b.button(
         text="💵 هامش ربح القسم (%)",
-        callback_data=f"admin:cat_margin:{category.id}",
+        callback_data=f"admin:cat_margin:{category.id}", style="primary",
     )
     b.button(
         text="📝 شرح القسم",
@@ -220,7 +220,7 @@ def category_detail_kb(
 
     b.button(
         text="🗑 حذف القسم",
-        callback_data=f"admin:cat_delete_confirm:{category.id}",
+        callback_data=f"admin:cat_delete_confirm:{category.id}", style="danger",
     )
     b.button(
         text="🔙 رجوع لقائمة الأقسام",
@@ -243,7 +243,7 @@ def confirm_delete_category_kb(
 
     b.button(
         text="⚠️ نعم، احذف نهائياً",
-        callback_data=f"admin:cat_delete:{category_id}",
+        callback_data=f"admin:cat_delete:{category_id}", style="danger",
     )
     b.button(
         text="🔙 لا، إلغاء",
@@ -273,7 +273,7 @@ def sub_categories_list_kb(
 
     b.button(
         text="➕ إضافة قسم فرعي",
-        callback_data=f"admin:subcat_add:{category_id}",
+        callback_data=f"admin:subcat_add:{category_id}", style="success",
     )
     b.button(
         text="🔙 رجوع للقسم الرئيسي",
@@ -320,12 +320,12 @@ def sub_category_detail_kb(
         # أقساماً داخلية — سلطة كاملة للأدمن في بناء الترتيب.
         b.button(
             text="➕ إضافة قسم داخلي",
-            callback_data=f"admin:subcat_add_child:{sub_category.id}",
+            callback_data=f"admin:subcat_add_child:{sub_category.id}", style="success",
         )
 
     b.button(
         text="➕ أضفه كزر رئيسي",
-        callback_data=(f"mb:add_subcat:{sub_category.id}"),
+        callback_data=(f"mb:add_subcat:{sub_category.id}"), style="success",
     )
     if not has_children:
         b.button(
@@ -339,7 +339,7 @@ def sub_category_detail_kb(
 
     b.button(
         text="💵 هامش ربح هذا القسم (%)",
-        callback_data=(f"admin:subcat_margin:{sub_category.id}"),
+        callback_data=(f"admin:subcat_margin:{sub_category.id}"), style="primary",
     )
     b.button(
         text="✏️ تعديل الاسم",
@@ -364,7 +364,7 @@ def sub_category_detail_kb(
 
     b.button(
         text="🗑 حذف القسم الفرعي",
-        callback_data=(f"admin:subcat_delete_confirm:{sub_category.id}"),
+        callback_data=(f"admin:subcat_delete_confirm:{sub_category.id}"), style="danger",
     )
     if sub_category.parent_sub_category_id is not None:
         b.button(
@@ -394,7 +394,7 @@ def confirm_delete_sub_category_kb(
 
     b.button(
         text="⚠️ نعم، احذف نهائياً",
-        callback_data=(f"admin:subcat_delete:{sub_category_id}"),
+        callback_data=(f"admin:subcat_delete:{sub_category_id}"), style="danger",
     )
     b.button(
         text="🔙 لا، إلغاء",

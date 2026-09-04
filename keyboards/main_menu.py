@@ -43,21 +43,21 @@ def build_main_menu(
 
     # Keep only the essential actions in the first screen.  Language and
     # currency are available from «حسابي» to avoid crowding the home menu.
-    b.button(text=t("menu_full_store"), callback_data="store:home")
+    b.button(text=t("menu_full_store"), callback_data="store:home", style="success")
     if completed_orders_count is not None:
         b.button(
             text=t("menu_completed_orders", count=completed_orders_count),
-            callback_data="info:stats",
+            callback_data="info:stats", style="primary",
         )
-    b.button(text=t("menu_account_with_balance", balance=balance_text), callback_data="menu:account")
-    b.button(text=t("menu_deposit"), callback_data="menu:deposit")
-    b.button(text=t("menu_transfer"), callback_data="menu:transfer")
-    b.button(text=t("menu_referral"), callback_data="menu:referral")
-    b.button(text=t("menu_extras"), callback_data="extras:home")
-    b.button(text=t("menu_terms"), callback_data="info:terms")
+    b.button(text=t("menu_account_with_balance", balance=balance_text), callback_data="menu:account", style="primary")
+    b.button(text=t("menu_deposit"), callback_data="menu:deposit", style="primary")
+    b.button(text=t("menu_transfer"), callback_data="menu:transfer", style="primary")
+    b.button(text=t("menu_referral"), callback_data="menu:referral", style="primary")
+    b.button(text=t("menu_extras"), callback_data="extras:home", style="success")
+    b.button(text=t("menu_terms"), callback_data="info:terms", style="danger")
     b.button(text=t("menu_support"), callback_data="menu:support")
     if show_agent:
-        b.button(text=t("menu_agent", percent=agent_percent), callback_data="agent:home")
+        b.button(text=t("menu_agent", percent=agent_percent), callback_data="agent:home", style="primary")
 
     b.adjust(2)
     return b.as_markup()
@@ -82,37 +82,37 @@ def deposit_menu_kb(
     if shamcash_manual_enabled:
         b.button(
             text=t("deposit_method_shamcash_manual"),
-            callback_data="deposit:shamcash_manual",
+            callback_data="deposit:shamcash_manual", style="primary",
         )
 
     if stars_enabled:
         b.button(
             text=t("deposit_method_stars"),
-            callback_data="deposit:stars",
+            callback_data="deposit:stars", style="primary",
         )
 
     if shamcash_auto_enabled:
         b.button(
             text=t("deposit_method_shamcash_auto"),
-            callback_data="deposit:shamcash_auto",
+            callback_data="deposit:shamcash_auto", style="primary",
         )
 
     if usdt_auto_enabled:
         b.button(
             text=t("deposit_method_usdt_auto"),
-            callback_data="deposit:usdt_auto",
+            callback_data="deposit:usdt_auto", style="primary",
         )
 
     if usdt_manual_enabled:
         b.button(
             text=t("deposit_method_usdt_manual"),
-            callback_data="deposit:usdt_manual",
+            callback_data="deposit:usdt_manual", style="primary",
         )
 
     if other_enabled:
         b.button(
             text=t("deposit_method_other"),
-            callback_data="deposit:other",
+            callback_data="deposit:other", style="primary",
         )
 
     b.button(
@@ -134,11 +134,11 @@ def stars_packages_kb(
     for pkg in packages:
         b.button(
             text=f"{pkg.label} = ${pkg.usd_amount}",
-            callback_data=f"stars_buy:{pkg.id}",
+            callback_data=f"stars_buy:{pkg.id}", style="primary",
         )
     b.button(
         text=t("back"),
-        callback_data="menu:deposit",
+        callback_data="menu:deposit", style="primary",
     )
     b.adjust(2)
     return b.as_markup()
@@ -150,7 +150,7 @@ def insufficient_balance_kb(language: str = "ar") -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text=t("topup_now"),
-        callback_data="menu:deposit",
+        callback_data="menu:deposit", style="primary",
     )
     b.button(
         text=t("back_to_menu"),

@@ -19,11 +19,11 @@ def store_control_home_kb(entries: list[StoreEntry]) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="➕ إضافة قسم للمتجر", callback_data="stc:add")])
+    rows.append([InlineKeyboardButton(text="➕ إضافة قسم للمتجر", callback_data="stc:add", style="success")])
     rows.append([InlineKeyboardButton(text="🗂 الأقسام الرئيسية (إدارة)", callback_data="admin:categories")])
     rows.append([InlineKeyboardButton(text="📱 خدمات الأرقام (إدارة)", callback_data="admin:number_services")])
     rows.append([InlineKeyboardButton(text="🧪 فحص الأزرار المكسورة", callback_data="stc:check")])
-    rows.append([InlineKeyboardButton(text="♻️ استعادة الافتراضي", callback_data="stc:reset")])
+    rows.append([InlineKeyboardButton(text="♻️ استعادة الافتراضي", callback_data="stc:reset", style="danger")])
     rows.append([InlineKeyboardButton(text="⬅️ لوحة الإدارة", callback_data="admin:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -42,7 +42,7 @@ def store_entry_detail_kb(entry: StoreEntry) -> InlineKeyboardMarkup:
         ],
     ]
     if not entry.is_builtin:
-        rows.append([InlineKeyboardButton(text="🗑 حذف القسم", callback_data=f"stc:delete:{entry.key}")])
+        rows.append([InlineKeyboardButton(text="🗑 حذف القسم", callback_data=f"stc:delete:{entry.key}", style="danger")])
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:store_control")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

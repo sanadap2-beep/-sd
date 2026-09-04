@@ -27,7 +27,7 @@ def sub_categories_kb(
     for sub in sub_categories:
         b.button(
             text=button_label(sub.name_ar, sub.emoji),
-            callback_data=f"subcat:{sub.id}",
+            callback_data=f"subcat:{sub.id}", style="success",
         )
     b.button(
         text="🔙 رجوع للقائمة",
@@ -50,7 +50,7 @@ def sections_kb(
         label = button_label(section.name_ar, section.emoji)
         b.button(
             text=f"{label} ({count})",
-            callback_data=f"subcat:{section.id}",
+            callback_data=f"subcat:{section.id}", style="success",
         )
     b.button(
         text="🔙 رجوع",
@@ -75,7 +75,7 @@ def products_kb(
     for p in products:
         b.button(
             text=f"{_short_name(p.name_ar)} - {p.price_usd}$",
-            callback_data=f"prod:{p.id}",
+            callback_data=f"prod:{p.id}", style="success",
         )
     if back_sub_id is not None:
         back_callback = f"subcat:{back_sub_id}"
@@ -97,11 +97,11 @@ def product_confirm_kb(
     b = InlineKeyboardBuilder()
     b.button(
         text="✅ تأكيد الشراء",
-        callback_data=f"prod_confirm:{product_id}",
+        callback_data=f"prod_confirm:{product_id}", style="primary",
     )
     b.button(
         text="🎟 لدي كوبون خصم",
-        callback_data=f"prod_coupon:{product_id}",
+        callback_data=f"prod_coupon:{product_id}", style="primary",
     )
     b.button(
         text="⭐ إضافة/إزالة من المفضلة",
@@ -109,7 +109,7 @@ def product_confirm_kb(
     )
     b.button(
         text="🛒 إضافة إلى السلة",
-        callback_data=f"cart:add:{product_id}",
+        callback_data=f"cart:add:{product_id}", style="primary",
     )
     b.button(
         text="🔔 تنبيه السعر/المخزون",
@@ -129,9 +129,9 @@ def product_search_results_kb(products) -> InlineKeyboardMarkup:
     for product in products:
         b.button(
             text=f"{_short_name(product.name_ar)} - {product.price_usd}$",
-            callback_data=f"prod:{product.id}",
+            callback_data=f"prod:{product.id}", style="success",
         )
-    b.button(text="🔎 بحث جديد", callback_data="menu:search")
+    b.button(text="🔎 بحث جديد", callback_data="menu:search", style="success")
     b.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)
     return b.as_markup()
@@ -143,11 +143,11 @@ def favorites_kb(products) -> InlineKeyboardMarkup:
     for product in products:
         b.button(
             text=f"📦 {_short_name(product.name_ar)} - {product.price_usd}$",
-            callback_data=f"prod:{product.id}",
+            callback_data=f"prod:{product.id}", style="success",
         )
         b.button(
             text="🗑 إزالة",
-            callback_data=f"favorite:remove:{product.id}",
+            callback_data=f"favorite:remove:{product.id}", style="danger",
         )
     b.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")
     b.adjust(2, 1)
@@ -164,7 +164,7 @@ def product_confirm_with_coupon_kb(
     b = InlineKeyboardBuilder()
     b.button(
         text=f"✅ تأكيد الشراء (خصم {discount_usd}$)",
-        callback_data=(f"prod_confirm_coupon:{product_id}:{coupon_code}"),
+        callback_data=(f"prod_confirm_coupon:{product_id}:{coupon_code}"), style="primary",
     )
     b.button(
         text="🔙 رجوع",
