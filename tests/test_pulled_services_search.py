@@ -200,6 +200,29 @@ async def test_search_ignores_inactive_services():
     assert (services, total) == ([], 0)
 
 
+async def test_list_active_by_provider_filters_and_sorts_cheapest_first():
+    """شاشة «كل خدمات المزود» تعرض كتالوج مزود واحد فقط الأرخص أولاً."""
+    provider_a, provider_b = await _seed()
+
+    async with async_session_maker() as session:
+        services, total = await PulledServicesService.list_active_by_provider(
+            session, provider_a
+        )
+
+    assert total == 4
+    # أرخص ← أغلى: لايكات 0.80 → متابعين 1.20 → إنستغرام 2.00 → ببجي 3.50
+    assert [s.external_service_id for s in services] == ["9004", "9003", "9005", "9002"]
+
+    async with async_session_maker() as session:
+        services, total = await PulledServicesService.list_active_by_provider(
+            session, provider_b, page=0, per_page=2
+        )
+
+    assert total == 2
+    assert len(services) == 2
+    assert [s.api_provider_id for s in services] == [provider_b, provider_b]
+
+
 def test_platforms_screen_offers_search_entry():
     """:زر البحث ظاهر في شاشة الخدمات المسحوبة (حتى لو كانت فارغة)."""
     from handlers.admin.pulled_services import _platforms_kb

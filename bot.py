@@ -85,6 +85,7 @@ from handlers.admin import (
     coupons as admin_coupons,
     multi_admin as admin_multi_admin,
     number_services as admin_number_services,
+    store_servers as admin_store_servers,
     number_orders as admin_number_orders,
     features as admin_features,
     tasks_center as admin_tasks_center,
@@ -234,6 +235,7 @@ def register_routers():
     dp.include_router(admin_coupons.router)
     dp.include_router(admin_multi_admin.router)
     dp.include_router(admin_number_services.router)
+    dp.include_router(admin_store_servers.router)
     dp.include_router(admin_number_orders.router)
     dp.include_router(admin_features.router)
     dp.include_router(admin_tasks_center.router)

@@ -17,13 +17,18 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from sqlalchemy import func, select
+
 from database.models import (
+    AuditAction,
     Category,
+    Product,
     SubCategory,
     CategoryType,
 )
 from services.audit_service import AuditService
 from services.dynamic_service import DynamicService
+from services.product_service import ProductService
 from states.states import (
     AdminCategoryStates,
     AdminSubCategoryStates,
@@ -34,6 +39,8 @@ from keyboards.admin_categories_v2 import (
     select_emoji_kb,
     category_detail_kb,
     confirm_delete_category_kb,
+    confirm_delete_category_products_kb,
+    confirm_delete_subcategory_products_kb,
     sub_categories_list_kb,
     sub_category_detail_kb,
     confirm_delete_sub_category_kb,
@@ -562,6 +569,131 @@ async def cat_delete(callback: CallbackQuery, session, db_user):
 
     await categories_list(callback, session)
     # ══════════════════════════════════════════════
+
+
+# ══════════════ حذف منتجات قسم كامل (بدون حذف الأقسام) ══════════════
+# ══════════════════════════════════════════════
+
+
+async def _category_products_count(session, category_id: int) -> int:
+    sub_ids = await ProductService.category_product_sub_ids(session, category_id)
+    if not sub_ids:
+        return 0
+    result = await session.execute(
+        select(func.count(Product.id)).where(Product.sub_category_id.in_(sub_ids))
+    )
+    return int(result.scalar_one() or 0)
+
+
+async def _subcategory_products_count(session, sub_category_id: int) -> int:
+    sub_ids = await ProductService.subcategory_tree_ids(session, sub_category_id)
+    if not sub_ids:
+        return 0
+    result = await session.execute(
+        select(func.count(Product.id)).where(Product.sub_category_id.in_(sub_ids))
+    )
+    return int(result.scalar_one() or 0)
+
+
+@router.callback_query(F.data.startswith("admin:cat_delete_products:"))
+async def cat_delete_products_confirm(callback: CallbackQuery, session):
+    """تأكيد حذف منتجات قسم رئيسي (الأقسام الفرعية تبقى سليمة)."""
+    cat_id = int(callback.data.split(":")[2])
+    category = await DynamicService.get_category(session, cat_id)
+    if not category:
+        await callback.answer("⚠️ غير موجود", show_alert=True)
+        return
+    count = await _category_products_count(session, cat_id)
+    sub_ids = await ProductService.category_product_sub_ids(session, cat_id)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🧹 <b>حذف منتجات «{category.emoji} {category.name_ar}»</b>\n\n"
+        f"سيُحذف <b>{count}</b> منتجاً من هذا القسم وكل أقسامه الفرعية "
+        f"(<b>{len(sub_ids)}</b> قسم فرعي).\n\n"
+        "⚠️ <b>لن تُحذف الأقسام الفرعية</b> — تبقى فارغة جاهزة لإعادة السحب.\n"
+        "لا يمكن التراجع عن حذف المنتجات.",
+        reply_markup=confirm_delete_category_products_kb(cat_id),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:cat_delete_products_go:"))
+async def cat_delete_products_go(callback: CallbackQuery, session, db_user):
+    """ينفذ حذف كل منتجات قسم رئيسي."""
+    cat_id = int(callback.data.split(":")[2])
+    category = await DynamicService.get_category(session, cat_id)
+    if not category:
+        await callback.answer("⚠️ غير موجود", show_alert=True)
+        return
+    deleted, errors = await ProductService.delete_products_for_category(session, cat_id)
+    await AuditService.log(
+        admin_id=db_user.id,
+        action=AuditAction.DELETE,
+        entity_type="category",
+        entity_id=cat_id,
+        entity_name=category.name_ar,
+        new_value={"deleted_products": deleted, "errors": errors},
+        description=f"حذف منتجات القسم {category.name_ar} ({deleted} منتج، {errors} خطأ)",
+        session=session,
+    )
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🧹 <b>تم حذف منتجات «{category.emoji} {category.name_ar}»</b>\n\n"
+        f"✅ حُذف: <b>{deleted}</b>\n"
+        + (f"⚠️ فشل حذف: <b>{errors}</b> (راجع السجل)\n" if errors else "")
+        + "\nالأقسام الفرعية ما زالت موجودة — يمكنك إعادة سحب الخدمات متى شئت.",
+        reply_markup=category_detail_kb(category),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:subcat_delete_products:"))
+async def subcat_delete_products_confirm(callback: CallbackQuery, session):
+    """تأكيد حذف منتجات قسم فرعي (مع الأقسام الداخلية)."""
+    sub_id = int(callback.data.split(":")[2])
+    sub = await DynamicService.get_sub_category(session, sub_id)
+    if not sub:
+        await callback.answer("⚠️ غير موجود", show_alert=True)
+        return
+    count = await _subcategory_products_count(session, sub_id)
+    sub_ids = await ProductService.subcategory_tree_ids(session, sub_id)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🧹 <b>حذف منتجات «{sub.emoji} {sub.name_ar}»</b>\n\n"
+        f"سيُحذف <b>{count}</b> منتجاً من هذا القسم"
+        + (f" وأقسامه الداخلية (<b>{len(sub_ids)}</b> قسم)" if len(sub_ids) > 1 else "")
+        + ".\n\n"
+        "⚠️ <b>لن تُحذف الأقسام</b> — تبقى فارغة جاهزة لإعادة التسريب.\n"
+        "لا يمكن التراجع عن حذف المنتجات.",
+        reply_markup=confirm_delete_subcategory_products_kb(sub_id, sub.category_id),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:subcat_delete_products_go:"))
+async def subcat_delete_products_go(callback: CallbackQuery, session, db_user):
+    """ينفذ حذف كل منتجات قسم فرعي."""
+    sub_id = int(callback.data.split(":")[2])
+    sub = await DynamicService.get_sub_category(session, sub_id)
+    if not sub:
+        await callback.answer("⚠️ غير موجود", show_alert=True)
+        return
+    deleted, errors = await ProductService.delete_products_for_subcategory(session, sub_id)
+    await AuditService.log(
+        admin_id=db_user.id,
+        action=AuditAction.DELETE,
+        entity_type="subcategory",
+        entity_id=sub_id,
+        entity_name=sub.name_ar,
+        new_value={"deleted_products": deleted, "errors": errors},
+        description=f"حذف منتجات القسم الفرعي {sub.name_ar} ({deleted} منتج، {errors} خطأ)",
+        session=session,
+    )
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🧹 <b>تم حذف منتجات «{sub.emoji} {sub.name_ar}»</b>\n\n"
+        f"✅ حُذف: <b>{deleted}</b>\n"
+        + (f"⚠️ فشل حذف: <b>{errors}</b> (راجع السجل)\n" if errors else "")
+        + "\nالقسم الفرعي ما زال موجوداً — يمكنك إعادة السحب متى شئت.",
+        reply_markup=sub_category_detail_kb(sub),
+    )
 
 
 # ══════════════ الأقسام الفرعية ══════════════

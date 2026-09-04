@@ -331,6 +331,21 @@ class AdminNumberServiceStates(StatesGroup):
     waiting_availability_topn = State()
     waiting_availability_watchlist = State()
     waiting_availability_repost_every = State()
+    # سيرفرات/مزودين الخدمة
+    waiting_server_name = State()
+    waiting_server_emoji = State()
+    waiting_server_provider = State()
+    waiting_server_edit_value = State()
+
+
+class AdminStoreServerStates(StatesGroup):
+    """معالج إضافة/تعديل السيرفرات العامة لكل الأقسام."""
+    waiting_name = State()
+    waiting_emoji = State()
+    waiting_provider_kind = State()
+    waiting_provider = State()
+    waiting_margin = State()
+    waiting_edit_value = State()
 
 
 class AdminMaintenanceStates(StatesGroup):

@@ -219,6 +219,10 @@ def category_detail_kb(
     )
 
     b.button(
+        text="🧹 حذف كل منتجات القسم (بدون حذف الأقسام)",
+        callback_data=f"admin:cat_delete_products:{category.id}", style="danger",
+    )
+    b.button(
         text="🗑 حذف القسم",
         callback_data=f"admin:cat_delete_confirm:{category.id}", style="danger",
     )
@@ -248,6 +252,41 @@ def confirm_delete_category_kb(
     b.button(
         text="🔙 لا، إلغاء",
         callback_data=f"admin:cat_view:{category_id}",
+    )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def confirm_delete_category_products_kb(
+    category_id: int,
+) -> InlineKeyboardMarkup:
+    """تأكيد حذف منتجات قسم رئيسي كامل (مع بقاء أقسامه الفرعية)."""
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="🧹 نعم، احذف كل المنتجات",
+        callback_data=f"admin:cat_delete_products_go:{category_id}", style="danger",
+    )
+    b.button(
+        text="🔙 لا، إلغاء",
+        callback_data=f"admin:cat_view:{category_id}",
+    )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def confirm_delete_subcategory_products_kb(
+    sub_category_id: int,
+    category_id: int,
+) -> InlineKeyboardMarkup:
+    """تأكيد حذف منتجات قسم فرعي (مع الأقسام الداخلية التابعة له)."""
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="🧹 نعم، احذف كل المنتجات",
+        callback_data=f"admin:subcat_delete_products_go:{sub_category_id}", style="danger",
+    )
+    b.button(
+        text="🔙 لا، إلغاء",
+        callback_data=f"admin:subcat_view:{sub_category_id}",
     )
     b.adjust(1)
     return b.as_markup()
@@ -362,6 +401,10 @@ def sub_category_detail_kb(
         callback_data=(f"admin:subcat_edit:sort:{sub_category.id}"),
     )
 
+    b.button(
+        text="🧹 حذف كل منتجات هذا القسم (بدون حذف الأقسام)",
+        callback_data=(f"admin:subcat_delete_products:{sub_category.id}"), style="danger",
+    )
     b.button(
         text="🗑 حذف القسم الفرعي",
         callback_data=(f"admin:subcat_delete_confirm:{sub_category.id}"), style="danger",

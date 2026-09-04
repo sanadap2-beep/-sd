@@ -204,6 +204,12 @@ async def deposit_photo_invalid(message: Message):
 @router.message(DepositStates.waiting_tx_number)
 async def deposit_tx_number_received(message: Message, state: FSMContext, session, db_user: User, bot):
     data = await state.get_data()
+    if "amount_usd" not in data or "photo_file_id" not in data:
+        # جلسة قديمة/فاقدة بعد إعادة تشغيل البوت — لا نُسقط بالـ KeyError.
+        await state.clear()
+        await message.answer(I18nService.t('ux_deposit_326_13', _auto_lang(locals())))
+        await message.answer(I18nService.t('ux_deposit_332_14', _auto_lang(locals())))
+        return
     amount_usd = Decimal(data['amount_usd'])
     photo_file_id = data['photo_file_id']
     tx_number = message.text.strip()

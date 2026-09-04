@@ -11,12 +11,16 @@ from services.dynamic_service import DynamicService
 from services.feature_service import FeatureService
 from services.availability_board_service import FEATURE_KEY as AVAIL_FEATURE, AvailabilityBoardService
 from services.number_catalog_service import normalize_country_code
+from services.number_server_service import NumberServerService, server_label
 from states.states import AdminNumberServiceStates
 from keyboards.admin import (
     admin_number_services_kb,
     admin_nsvc_avail_kb,
     admin_nsvc_avail_services_kb,
+    admin_nsvc_choose_provider_kb,
     admin_nsvc_detail_kb,
+    admin_nsvc_server_detail_kb,
+    admin_nsvc_servers_kb,
     admin_back_kb,
 )
 from filters.admin_filter import IsAdmin
@@ -226,6 +230,234 @@ async def nsvc_delete(callback: CallbackQuery, session):
     else:
         await callback.answer("⚠️ غير موجود.", show_alert=True)
     await number_services_list(callback, session)
+
+
+# ══════════════ سيرفرات/مزودي خدمة الأرقام (ديناميكي) ══════════════
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_servers:"))
+async def nsvc_servers_list(callback: CallbackQuery, session):
+    svc_id = int(callback.data.split(":")[2])
+    svc = await session.get(__import__("database.models", fromlist=["NumberService"]).NumberService, svc_id)
+    if not svc:
+        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        return
+    servers = await NumberServerService.list_servers(session, svc.id, active_only=False)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"⚙️ <b>سيرفرات «{svc.name_ar}»</b>\n\n"
+        "كل سيرفر = مزود مستقل. المستخدم يختار السيرفر قبل رؤية الدول.\n\n"
+        f"🟢 = مفعّل | ⚪ = معطّل",
+        reply_markup=admin_nsvc_servers_kb(svc.id, servers),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_auto:"))
+async def nsvc_server_auto(callback: CallbackQuery, session):
+    """ينشئ سيرفراً تلقائياً لكل مزود عليه كود مضبوط في هذه الخدمة."""
+    svc_id = int(callback.data.split(":")[2])
+    svc = await session.get(__import__("database.models", fromlist=["NumberService"]).NumberService, svc_id)
+    if not svc:
+        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        return
+    created = await NumberServerService.ensure_defaults(session, svc)
+    await callback.answer(f"✅ تم تجهيز {len(created)} سيرفر.")
+    await nsvc_servers_list(callback, session)
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_add:"))
+async def nsvc_server_add_start(callback: CallbackQuery, state: FSMContext):
+    svc_id = int(callback.data.split(":")[2])
+    await state.update_data(nsvc_server_service_id=svc_id)
+    await callback.message.edit_text(
+        "➕ <b>إضافة سيرفر</b>\n\n"
+        "أرسل اسم السيرفر بالعربي (مثال: سيرفر 5sim سريع):",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_server_name)
+
+
+@router.message(AdminNumberServiceStates.waiting_server_name)
+async def nsvc_server_name_received(message: Message, state: FSMContext):
+    await state.update_data(nsvc_server_name=message.text.strip())
+    await message.answer("🎨 أرسل إيموجي للسيرفر (أو أرسل - لاستخدام 🖥):")
+    await state.set_state(AdminNumberServiceStates.waiting_server_emoji)
+
+
+@router.message(AdminNumberServiceStates.waiting_server_emoji)
+async def nsvc_server_emoji_received(message: Message, state: FSMContext):
+    emoji = message.text.strip()
+    if emoji == "-":
+        emoji = "🖥"
+    await state.update_data(nsvc_server_emoji=emoji)
+    data = await state.get_data()
+    await message.answer(
+        "🔌 <b>اختر المزود المرتبط بهذا السيرفر:</b>",
+        reply_markup=admin_nsvc_choose_provider_kb(
+            data["nsvc_server_service_id"], show_back=False
+        ),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_server_provider)
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_provider:"))
+async def nsvc_server_provider_received(callback: CallbackQuery, state: FSMContext, session):
+    parts = callback.data.split(":")
+    server_id = int(parts[1])
+    provider_value = parts[2]
+    data = await state.get_data()
+    svc_id = data.get("nsvc_server_service_id") or data.get("edit_server_service_id")
+    await callback.answer()
+    if not svc_id:
+        await callback.answer("⚠️ بيانات ناقصة.", show_alert=True)
+        return
+    provider = NumberServerService.validate_provider(provider_value)
+    if not provider:
+        await callback.answer("❌ مزود غير معروف.", show_alert=True)
+        return
+    if server_id:
+        await NumberServerService.update(session, server_id, provider=provider)
+        await callback.message.edit_text(f"✅ تم ربط السيرفر بالمزود: {provider}")
+        await callback.message.answer("🔙 مباشرةً إلى شاشة السيرفر.", reply_markup=admin_back_kb())
+        await state.clear()
+        return
+    emoji, label = await server_label(provider)
+    name = data.get("nsvc_server_name") or label
+    emoji = data.get("nsvc_server_emoji") or emoji
+    server = await NumberServerService.create(
+        session,
+        number_service_id=int(svc_id),
+        name_ar=name,
+        provider=provider,
+        emoji=emoji,
+    )
+    await state.clear()
+    await callback.message.edit_text(
+        f"✅ <b>تمت إضافة السيرفر</b>\n\n{server.emoji} {server.name_ar}\n"
+        f"🔌 المزود: {provider}", reply_markup=admin_back_kb()
+    )
+    await callback.message.answer("🔙 مباشرةً إلى شاشة السيرفر.", reply_markup=admin_back_kb())
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server:"))
+async def nsvc_server_view(callback: CallbackQuery, session):
+    server_id = int(callback.data.split(":")[2])
+    server = await NumberServerService.get(session, server_id)
+    if server is None:
+        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        return
+    status = "🟢 مفعّل" if server.is_active else "⚪ معطّل"
+    await callback.answer()
+    margin_display = (
+        f"{server.margin_percent}% (خاص بالسيرفر)" if server.margin_percent is not None else "غير مضبوط — يستخدم هامش الخدمة/الدولة"
+    )
+    await callback.message.edit_text(
+        f"{server.emoji} <b>{server.name_ar}</b>\n\n"
+        f"الحالة: {status}\n"
+        f"🔌 المزود: <b>{server.provider}</b>\n"
+        f"💰 نسبة الربح: <b>{margin_display}</b>\n"
+        f"🔢 الترتيب: {server.sort_order}\n\n"
+        "المستخدم يرى هذا السيرفر قبل اختيار الدولة.",
+        reply_markup=admin_nsvc_server_detail_kb(server.number_service_id, server),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_toggle:"))
+async def nsvc_server_toggle(callback: CallbackQuery, session):
+    server_id = int(callback.data.split(":")[2])
+    server = await NumberServerService.get(session, server_id)
+    if server is None:
+        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        return
+    await NumberServerService.update(session, server_id, is_active=not server.is_active)
+    await callback.answer("✅ تم التحديث.")
+    await nsvc_server_view(callback, session)
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_edit_name:"))
+async def nsvc_server_edit_name(callback: CallbackQuery, state: FSMContext):
+    server_id = int(callback.data.split(":")[2])
+    await state.update_data(edit_server_id=server_id, edit_server_field="name")
+    await callback.message.edit_text("📝 أرسل اسم السيرفر الجديد:", reply_markup=admin_back_kb())
+    await state.set_state(AdminNumberServiceStates.waiting_server_edit_value)
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_edit_emoji:"))
+async def nsvc_server_edit_emoji(callback: CallbackQuery, state: FSMContext):
+    server_id = int(callback.data.split(":")[2])
+    await state.update_data(edit_server_id=server_id, edit_server_field="emoji")
+    await callback.message.edit_text("🎨 أرسل الإيموجي الجديد (أو - للافتراضي):", reply_markup=admin_back_kb())
+    await state.set_state(AdminNumberServiceStates.waiting_server_edit_value)
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_edit_provider:"))
+async def nsvc_server_edit_provider(callback: CallbackQuery, state: FSMContext, session):
+    server_id = int(callback.data.split(":")[2])
+    server = await NumberServerService.get(session, server_id)
+    if server is None:
+        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        return
+    await state.update_data(edit_server_id=server_id, edit_server_service_id=server.number_service_id)
+    await callback.answer()
+    await callback.message.edit_text(
+        "🔌 اختر المزود الجديد لهذا السيرفر:",
+        reply_markup=admin_nsvc_choose_provider_kb(server.number_service_id, server_id),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_edit_margin:"))
+async def nsvc_server_edit_margin(callback: CallbackQuery, state: FSMContext):
+    server_id = int(callback.data.split(":")[2])
+    await state.update_data(edit_server_id=server_id, edit_server_field="margin")
+    await callback.message.edit_text(
+        "💰 أرسل نسبة الربح لهذا السيرفر (%).\n"
+        "• 30 = ربح 30% على سعر التكلفة\n"
+        "• أو «-» للمسح واستخدام هامش الخدمة/الدولة الحالي.",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_server_edit_value)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:nsvc_server_delete:"))
+async def nsvc_server_delete(callback: CallbackQuery, session):
+    server_id = int(callback.data.split(":")[2])
+    server = await NumberServerService.get(session, server_id)
+    if server is None:
+        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        return
+    svc_id = server.number_service_id
+    await NumberServerService.delete(session, server_id)
+    await callback.answer("🗑 تم حذف السيرفر.")
+    await nsvc_servers_list(callback, session)
+
+
+@router.message(AdminNumberServiceStates.waiting_server_edit_value)
+async def nsvc_server_edit_value_received(message: Message, state: FSMContext, session):
+    data = await state.get_data()
+    server_id = data.get("edit_server_id")
+    field = data.get("edit_server_field")
+    value = message.text.strip()
+    if field == "name" and value:
+        await NumberServerService.update(session, server_id, name_ar=value)
+    elif field == "emoji":
+        await NumberServerService.update(session, server_id, emoji="🖥" if value == "-" else value)
+    elif field == "margin":
+        from decimal import Decimal, InvalidOperation
+
+        margin = None
+        if value not in ("", "-"):
+            try:
+                margin = Decimal(value)
+            except InvalidOperation:
+                await message.answer("⚠️ أرسل رقماً صحيحاً (مثل 30 أو 12.5) أو - لمسح الهامش.")
+                return
+            if margin < 0:
+                await message.answer("⚠️ نسبة الربح لا يمكن أن تكون سالبة.")
+                return
+        await NumberServerService.update(session, server_id, margin_percent=margin)
+    await message.answer("✅ تم التحديث.")
+    await state.clear()
 
 
 # ══════════════ قناة التوفر المتقطع (الأرقام الحية) ══════════════

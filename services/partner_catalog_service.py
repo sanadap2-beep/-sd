@@ -295,6 +295,7 @@ class PartnerCatalogService:
                 ),
                 pricing_type=ProductPricingType.MARGIN_PERCENT,
                 profit_margin_percent=margin_percent,
+                margin_manual=False,
                 status=ProductStatus.ACTIVE,
             )
             session.add(product)
@@ -339,3 +340,4 @@ class PartnerCatalogService:
         if margin_percent is not None:
             product.pricing_type = ProductPricingType.MARGIN_PERCENT
             product.profit_margin_percent = margin_percent
+            product.margin_manual = False

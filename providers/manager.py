@@ -119,13 +119,19 @@ class ProviderManager:
         country: Country,
         session=None,
         use_cache: bool = True,
+        only_provider: ProviderName | None = None,
     ) -> dict[ProviderName, Decimal]:
         """
-        يجلب أسعار كل المزودين المتاحين لخدمة/دولة معينة.
+        يجلب أسعار المزودين المتاحين لخدمة/دولة معينة.
         يرجع dict مع المزود كمفتاح والسعر بالدولار كقيمة.
         ``use_cache=False`` يستعمل لقناة التوفر المتقطع حتى تقارن مخزوناً حياً.
+
+        ``only_provider``: عند تمرير مزود (من اختيار «السيرفر» لدى المستخدم)
+        يجلب سعر هذا المزود فقط ولا يعرض بقية المزودين.
         """
         cache_key = f"number-price:{service.code}:{country.code}"
+        if only_provider is not None:
+            cache_key += f":{only_provider.value}"
         if use_cache:
             cached = await PriceCacheService.get(cache_key)
             if cached is not None:
@@ -136,6 +142,8 @@ class ProviderManager:
         # للاستخدام المتزامن، ومحاولة تواريها تُنتج أخطاء حالة صامتة.
         candidates: list[tuple[ProviderName, object, str, str]] = []
         for provider_name, instance in self._providers.items():
+            if only_provider is not None and provider_name != only_provider:
+                continue
             country_code = self._get_provider_code(provider_name, country)
             service_code = self._get_service_code(provider_name, service)
             if not country_code or not service_code:
@@ -243,10 +251,14 @@ class ProviderManager:
         country: Country,
         session=None,
         preferred_provider: ProviderName | None = None,
+        strict_provider: ProviderName | None = None,
     ) -> BuyResult:
         """
         يشتري رقماً من أرخص مزود متاح.
         إذا فشل ينتقل تلقائياً للمزود التالي (Failover).
+
+        ``strict_provider``: عند اختيار المستخدم «سيرفر» محدداً، يشتري من
+        المزود المحدد فقط ولا يتجاوز غيره حتى لو فشل (شفافية السيرفر).
         """
         prices = await self.get_cheapest_price(service, country, session)
 
@@ -255,17 +267,24 @@ class ProviderManager:
                 f"لا يوجد مزود متاح لـ {service.name_ar} - {country.name_ar}"
             )
 
-        sorted_providers = await self._rank_providers_for_purchase(
-            prices,
-            service_code=service.code,
-            country_code=country.code,
-            session=session,
-        )
-        if preferred_provider in prices:
-            sorted_providers = [
-                (preferred_provider, prices[preferred_provider]),
-                *[item for item in sorted_providers if item[0] != preferred_provider],
-            ]
+        if strict_provider is not None:
+            if strict_provider not in prices:
+                raise ProviderUnavailableError(
+                    f"لا يوجد رقم متاح على المزود {strict_provider.value}"
+                )
+            sorted_providers = [(strict_provider, prices[strict_provider])]
+        else:
+            sorted_providers = await self._rank_providers_for_purchase(
+                prices,
+                service_code=service.code,
+                country_code=country.code,
+                session=session,
+            )
+            if preferred_provider in prices:
+                sorted_providers = [
+                    (preferred_provider, prices[preferred_provider]),
+                    *[item for item in sorted_providers if item[0] != preferred_provider],
+                ]
 
         errors = []
 

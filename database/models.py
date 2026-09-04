@@ -496,6 +496,76 @@ class NumberService(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class NumberServer(Base):
+    """سيرفر/مزود ديناميكي ضمن خدمة أرقام.
+
+    المفهوم:
+    - يمكن أن تحوي خدمة الأرقام الواحدة (مثل WhatsApp) عدة سيرفرات؛
+      كل سيرفر مربوط بمزود مختلف (5sim / HeroSMS / SMS-Activate / SMSHub ...).
+    - قبل أن يرى المستخدم الدول، يختار السيرفر (المزود) الذي يريد الشراء منه.
+    - الأدمن يتحكم بالكامل: إضافة، تعطيل، إعادة ترتيب، حذف، وبحث لكل سيرفر.
+    - نفس النمط قابل للتعميم لاحقاً على أقسام الرشق والألعاب (سيرفر لكل متجر/مزود).
+    """
+
+    __tablename__ = "number_servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    number_service_id: Mapped[int] = mapped_column(
+        ForeignKey("number_services.id", ondelete="CASCADE"), index=True
+    )
+    # provider يحمل قيمة ProviderName التي يقرأها ProviderManager،
+    # وسيُفسَّر لاحقاً كمفتاح عام لأي مزود (رقم/رشق/ألعاب).
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    name_ar: Mapped[str] = mapped_column(String(96))
+    emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # نسبة ربح السيرفر (تتجاوز هامش الخدمة/الدولة/المزود العام عند ضبطها).
+    margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class StoreServer(Base):
+    """سيرفر/مزود ديناميكي عام يعمل على أي قسم.
+
+    المفهوم (يغطي كل الأقسام، ليس الأرقام فقط):
+    - كل قسم (رئيسي ``category`` أو فرعي ``subcategory``) أو خدمة أرقام
+      يمكن أن يحوي عدة سيرفرات.
+    - كل سيرفر مربوط بمزود:
+        * ``provider_kind='api'`` + ``api_provider_id`` → مزود المتجر
+          (رشق / ألعاب / تطبيقات / متجر عام ...).
+        * ``provider_kind='number'`` + ``provider_value`` → مزود أرقام
+          (5sim / HeroSMS / SMS-Activate / SMSHub ...).
+    - ``margin_percent`` نسبة ربح السيرفر (تتجاوز هامش القسم/العام عند ضبطه).
+    - من لوحة الأدمن يمكن إضافة/تعديل/تعطيل/حذف وأي سيرفر لأي قسم بلا كود.
+    """
+
+    __tablename__ = "store_servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # category | subcategory | number_service | global
+    scope: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[int] = mapped_column(Integer, index=True)
+
+    # number | api
+    provider_kind: Mapped[str] = mapped_column(String(16), default="api")
+    provider_value: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    api_provider_id: Mapped[int | None] = mapped_column(
+        ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    name_ar: Mapped[str] = mapped_column(String(96))
+    emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class MandatoryChannel(Base):
     __tablename__ = "mandatory_channels"
 
@@ -976,6 +1046,9 @@ class Product(Base):
         default=ProductPricingType.FIXED,
     )
     profit_margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    # True = الأدمن ضبط هامش المنتج يدوياً (لا يُلمس عند تغيير هامش قسمه).
+    # False = هامش ضمني/تلقائي من السحب (يتأثر بهامش القسم الفرعي/القسم).
+    margin_manual: Mapped[bool] = mapped_column(Boolean, default=False)
     display_type: Mapped[ProductDisplayType] = mapped_column(
         SAEnum(ProductDisplayType),
         default=ProductDisplayType.PER_1000,

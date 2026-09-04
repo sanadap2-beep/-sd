@@ -121,6 +121,30 @@ class PulledServicesService:
         start = page * per_page
         return matched[start : start + per_page], total
 
+    @staticmethod
+    async def list_active_by_provider(
+        session,
+        provider_id: int,
+        page: int = 0,
+        per_page: int = SERVICES_PER_PAGE,
+    ) -> tuple[list[ProviderService], int]:
+        """كل الخدمات المسحوبة لمزود واحد، مرتبة من الأرخص للأغلى.
+
+        تُستخدم من شاشة «الخدمات المسحوبة حسب المزود» حتى يرى الأدمن كتالوج
+        مزوده كاملاً قبل النشر أو الحذف، بدل تصفّح كل المزودين معاً.
+        """
+        services = await PulledServicesService.load_active(session)
+        matched = [
+            service
+            for service in services
+            if service.api_provider_id == provider_id
+        ]
+        matched.sort(key=lambda s: (Decimal(str(s.rate_usd or 0)), s.id))
+        total = len(matched)
+        page = max(0, page)
+        start = page * per_page
+        return matched[start : start + per_page], total
+
     # ─────────── البحث عن خدمة محددة ───────────
 
     @staticmethod
@@ -420,6 +444,7 @@ class PulledServicesService:
                 cost_price_usd=rate,
                 pricing_type=ProductPricingType.MARGIN_PERCENT,
                 profit_margin_percent=margin,
+                margin_manual=False,
                 fulfillment_type=ProductFulfillmentType.API,
                 min_quantity=int(service.min_quantity or 1),
                 max_quantity=int(service.max_quantity or 1000000),

@@ -3,6 +3,8 @@
 تُبنى ديناميكياً من قاعدة البيانات.
 """
 
+from decimal import Decimal
+
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -60,21 +62,45 @@ def sections_kb(
     return b.as_markup()
 
 
+def _server_product_price(product, server) -> Decimal:
+    """سعر الوحدة بعد هامش السيرفر (حساب ثابت/نسبة فقط بلا كمية)."""
+    if server is None or server.margin_percent is None:
+        return Decimal(str(product.price_usd or 0))
+    cost = getattr(product, "cost_price_usd", None)
+    if cost is None or Decimal(str(cost or 0)) <= 0:
+        return Decimal(str(product.price_usd or 0))
+    return (
+        Decimal(str(cost)) * (Decimal("100") + Decimal(str(server.margin_percent))) / Decimal("100")
+    ).quantize(Decimal("0.0001"))
+
+
 def products_kb(
     sub_category_id: int,
     products: list[Product],
     category_id: int,
     back_sub_id: int | None = None,
+    server=None,
+    price_map=None,
 ) -> InlineKeyboardMarkup:
     """قائمة المنتجات مع الأسعار بالدولار.
 
     ``back_sub_id`` يُستخدم للمنتجات داخل قسم داخلي (تطبيق): الزر «رجوع»
     يعيد إلى التطبيق بدل قائمة التطبيقات.
+    ``server`` يضيف زر «تغيير السيرفر» في أعلى القائمة.
     """
     b = InlineKeyboardBuilder()
-    for p in products:
+    if server is not None:
         b.button(
-            text=f"{_short_name(p.name_ar)} - {p.price_usd}$",
+            text=f"{server.emoji} 🔄 تغيير السيرفر: {_short_name(server.name_ar, 26)}",
+            callback_data=f"subcat:{sub_category_id}", style="success",
+        )
+    for p in products:
+        if price_map is not None and p.id in price_map:
+            price = price_map[p.id]
+        else:
+            price = _server_product_price(p, server)
+        b.button(
+            text=f"{_short_name(p.name_ar)} - {price}$",
             callback_data=f"prod:{p.id}", style="success",
         )
     if back_sub_id is not None:
@@ -84,6 +110,33 @@ def products_kb(
     b.button(
         text="🔙 رجوع",
         callback_data=back_callback,
+    )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def store_servers_kb(
+    sub_category_id: int,
+    servers,
+    category_id: int,
+) -> InlineKeyboardMarkup:
+    """اختيار سيرفر قبل عرض منتجات القسم الفرعي.
+
+    كل سيرفر يعرض اسمه + نسبة الربح (إن ضُبطت) كي يعرف المستخدم
+    الفروقات بين السيرفرات.
+    """
+    b = InlineKeyboardBuilder()
+    for s in servers:
+        margin_label = ""
+        if s.margin_percent is not None:
+            margin_label = f"  ({s.margin_percent}%)"
+        b.button(
+            text=f"{s.emoji} {_short_name(s.name_ar, 34)}{margin_label}",
+            callback_data=f"svc_pick:{sub_category_id}:{s.id}", style="success",
+        )
+    b.button(
+        text="🔙 رجوع",
+        callback_data=f"cat:{category_id}",
     )
     b.adjust(1)
     return b.as_markup()

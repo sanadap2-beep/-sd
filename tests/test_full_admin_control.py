@@ -165,7 +165,7 @@ def test_admin_main_is_grouped_into_four_tabs():
     kb = admin_main_kb()
     buttons = [b.callback_data for row in kb.inline_keyboard for b in row]
     assert "admin:tab:finance" in buttons
-    assert "admin:tab:catalog" in buttons
+    assert "admin:tab:store" in buttons
     assert "admin:tab:users" in buttons
     assert "admin:tab:system" in buttons
 

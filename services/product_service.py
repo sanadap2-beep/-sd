@@ -475,6 +475,79 @@ class ProductService:
         return True
 
     # ══════════════════════════════════════════
+    # ══════════════ حذف منتجات قسم كامل ══════════════
+    # ══════════════════════════════════════════
+
+    @staticmethod
+    async def subcategory_tree_ids(session, sub_category_id: int) -> list[int]:
+        """أرقام القسم الفرعي وكل أقسامه الداخلية (لحذف منتجاتها فقط)."""
+        result = await session.execute(
+            select(SubCategory).where(
+                SubCategory.parent_sub_category_id == sub_category_id
+            )
+        )
+        ids = [sub_category_id]
+        for child in result.scalars().all():
+            ids.extend(await ProductService.subcategory_tree_ids(session, child.id))
+        return ids
+
+    @staticmethod
+    async def category_product_sub_ids(session, category_id: int) -> list[int]:
+        """كل أرقام الأقسام الفرعية التابعة لقسم رئيسي (شاملة الداخلية)."""
+        result = await session.execute(
+            select(SubCategory).where(SubCategory.category_id == category_id)
+        )
+        ids: list[int] = []
+        for root in result.scalars().all():
+            ids.extend(await ProductService.subcategory_tree_ids(session, root.id))
+        return list(dict.fromkeys(ids))
+
+    @staticmethod
+    async def delete_products_by_subcategory_ids(
+        session,
+        sub_ids: list[int],
+    ) -> tuple[int, int]:
+        """يحذف منتجات مجموعة أقسام فرعية (بدون حذف الأقسام).
+
+        يرجع (المحذوف، الأخطاء). يحذف صفوف `Product` فقط؛ لو ربطها طلب
+        تاريخي يفسد الحفظ نُسجّل ذلك ويُكمل الباقي.
+        """
+        if not sub_ids:
+            return 0, 0
+        result = await session.execute(
+            select(Product).where(Product.sub_category_id.in_(sub_ids))
+        )
+        products = list(result.scalars().all())
+        deleted = 0
+        errors = 0
+        for product in products:
+            try:
+                await session.delete(product)
+                deleted += 1
+            except Exception:
+                logger.exception("فشل حذف منتج %s أثناء التنظيف الجماعي", product.id)
+                errors += 1
+        try:
+            await session.commit()
+        except Exception:
+            logger.exception("فشل حفظ حذف المنتجات الجماعي")
+            await session.rollback()
+            return 0, errors + deleted
+        return deleted, errors
+
+    @staticmethod
+    async def delete_products_for_category(session, category_id: int) -> tuple[int, int]:
+        """يحذف كل منتجات قسم رئيسي وما يتبعه — يبقي الأقسام الفرعية."""
+        sub_ids = await ProductService.category_product_sub_ids(session, category_id)
+        return await ProductService.delete_products_by_subcategory_ids(session, sub_ids)
+
+    @staticmethod
+    async def delete_products_for_subcategory(session, sub_category_id: int) -> tuple[int, int]:
+        """يحذف كل منتجات قسم فرعي وأقسامه الداخلية — يبقي القسم."""
+        sub_ids = await ProductService.subcategory_tree_ids(session, sub_category_id)
+        return await ProductService.delete_products_by_subcategory_ids(session, sub_ids)
+
+    # ══════════════════════════════════════════
     # ══════════════ إحصائيات ══════════════
     # ══════════════════════════════════════════
 

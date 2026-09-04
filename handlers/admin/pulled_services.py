@@ -16,7 +16,15 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import func, select
 
-from database.models import ApiProvider, Category, ProviderService, ProviderServiceStatus, SubCategory
+from database.models import (
+    ApiProvider,
+    Category,
+    Product,
+    ProductFulfillmentType,
+    ProviderService,
+    ProviderServiceStatus,
+    SubCategory,
+)
 from filters.admin_filter import IsAdmin
 from services.pulled_services_service import (
     SEARCH_PER_PAGE,
@@ -41,6 +49,11 @@ def _platforms_kb(rows: list[tuple[str, str, str, int]]):
     for key, emoji, label, count in rows:
         b.button(text=f"{emoji} {label} ({count})", callback_data=f"ps:pl:{key}")
     b.button(
+        text="🔌 إدارة كل مزود لحاله (مسح / إعادة سحب / بحث)",
+        callback_data="ps:providers",
+        style="primary",
+    )
+    b.button(
         text="🚀 إنشاء أقسام الرشق تلقائياً (أرخص 5 لكل نوع)",
         callback_data="ps:build",
     )
@@ -61,8 +74,8 @@ def _platforms_kb(rows: list[tuple[str, str, str, int]]):
     layout = [2] * (len(rows) // 2)
     if len(rows) % 2:
         layout.append(1)
-    # منصات + بناء تلقائي + مزامنة اشتراكات + مزامنة متجر + بحث + رجوع
-    layout.extend([1, 1, 1, 1, 1])
+    # منصات + إدارة حسب المزود + بناء تلقائي + مزامنة اشتراكات + مزامنة متجر + بحث + رجوع
+    layout.extend([1, 1, 1, 1, 1, 1])
     b.adjust(*layout)
     return b.as_markup()
 
@@ -162,8 +175,12 @@ def _build_report_kb():
     return b.as_markup()
 
 
-def _search_results_kb(services, page: int, total: int):
-    """نتائج البحث: الخدمة تفتح تفاصيلها مباشرة (نشر/سعر)."""
+def _search_results_kb(services, page: int, total: int, provider_id: int | None = None):
+    """نتائج البحث: الخدمة تفتح تفاصيلها مباشرة (نشر/سعر).
+
+    عند تمرير ``provider_id`` يبقى البحث داخل كتالوج ذلك المزود وتُضاف
+    أزرار رجوع إلى شاشة المزود نفسه.
+    """
     from services.service_localization_service import service_name_ar
 
     b = InlineKeyboardBuilder()
@@ -179,8 +196,12 @@ def _search_results_kb(services, page: int, total: int):
     if page < last_page:
         b.button(text="التالي ▶️", callback_data=f"ps:sr:{page + 1}")
         nav.append(1)
-    b.button(text="🔎 بحث جديد", callback_data="ps:search", style="primary")
-    b.button(text="🔙 الخدمات المسحوبة", callback_data="admin:pulled_services")
+    if provider_id:
+        b.button(text="🔎 بحث جديد في المزود", callback_data=f"ps:psr:{provider_id}", style="primary")
+        b.button(text="🔙 شاشة المزود", callback_data=f"ps:prov:{provider_id}")
+    else:
+        b.button(text="🔎 بحث جديد", callback_data="ps:search", style="primary")
+        b.button(text="🔙 الخدمات المسحوبة", callback_data="admin:pulled_services")
     rows = [1] * len(services)
     if nav:
         rows.append(len(nav))
@@ -245,6 +266,8 @@ async def _show_platforms(callback: CallbackQuery, session) -> None:
     await callback.message.edit_text(
         "📥 <b>خدمات مسحوبة من المزودين</b>\n\n"
         f"المجموع: <b>{total}</b> خدمة مخفية عن المتجر.\n"
+        "🔌 <b>إدارة حسب المزود:</b> لكل مزود كتالوجه وحده — ابحث في "
+        "خدماته، امسح كل منتجاته من المتجر، ثم أعد سحبها/نشرها بدون تشتّت.\n\n"
         "اختر المنصة ثم النوع (لايكات / مشاهدات / متابعون…).\n"
         "الترتيب داخل كل نوع: الأرخص ← الأغلى.\n\n"
         "🚀 <b>البناء التلقائي</b> ينشئ لكل تطبيق أقسامه الداخلية "
@@ -253,6 +276,355 @@ async def _show_platforms(callback: CallbackQuery, session) -> None:
         "🔎 <b>تبحث عن خدمة بعينها؟</b> استخدم زر البحث واكتب اسمها "
         "أو آيديها عند المزود بدل التصفّح.",
         reply_markup=_platforms_kb(rows),
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+# ═══ إدارة الخدمات / المنتجات حسب المزود (لكل مزود وحده) ═══
+# ══════════════════════════════════════════════════════════════
+
+
+def _providers_kb(rows: list[tuple[ApiProvider, int, int, bool]]) -> InlineKeyboardMarkup:
+    """``(provider, services_count, products_count, active)``"""
+    b = InlineKeyboardBuilder()
+    for provider, svc_count, prod_count, active in rows:
+        status = "🟢" if active else "🔴"
+        b.button(
+            text=f"{status} {provider.name} — {svc_count} خدمة · {prod_count} منتج",
+            callback_data=f"ps:prov:{provider.id}",
+        )
+    b.button(text="🔙 الخدمات المسحوبة", callback_data="admin:pulled_services")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def _provider_detail_kb(provider_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🔎 بحث في خدمات هذا المزود", callback_data=f"ps:psr:{provider_id}")
+    b.button(text="📃 كل خدمات المزود (الأرخص ← الأغلى)", callback_data=f"ps:plist:{provider_id}:0")
+    b.button(
+        text="🚀 نشر أرخص 5 في كل نوع (قسم الرشق)",
+        callback_data=f"ps:pbuild:{provider_id}",
+        style="primary",
+    )
+    b.button(
+        text="🏬 مزامنة كاملة كقسم باسم المزود",
+        callback_data=f"ps:psync:{provider_id}",
+    )
+    b.button(
+        text="🗑 مسح كل منتجات المزود من المتجر",
+        callback_data=f"ps:pdelc:{provider_id}",
+        style="danger",
+    )
+    b.button(text="🔙 كل المزودين", callback_data="ps:providers")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def _provider_services_kb(
+    services: list[ProviderService], provider_id: int, page: int, total: int
+) -> InlineKeyboardMarkup:
+    from services.service_localization_service import service_name_ar
+
+    b = InlineKeyboardBuilder()
+    for service in services:
+        rate = service.rate_usd or 0
+        name = service_name_ar(service)[:36]
+        b.button(text=f"{rate}$ · {name}", callback_data=f"ps:sv:{service.id}")
+    last_page = max(0, (total - 1) // SERVICES_PER_PAGE)
+    nav = []
+    if page > 0:
+        b.button(text="◀️ السابق", callback_data=f"ps:plist:{provider_id}:{page - 1}")
+        nav.append(1)
+    if page < last_page:
+        b.button(text="التالي ▶️", callback_data=f"ps:plist:{provider_id}:{page + 1}")
+        nav.append(1)
+    b.button(text="🧹 إعادة توجيه للبناء التلقائي", callback_data=f"ps:pbuild:{provider_id}")
+    b.button(text="🔙 تفاصيل المزود", callback_data=f"ps:prov:{provider_id}")
+    rows = [1] * len(services)
+    if nav:
+        rows.append(len(nav))
+    rows.extend([1, 1])
+    b.adjust(*rows)
+    return b.as_markup()
+
+
+def _provider_delete_confirm_kb(provider_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="❌ نعم، احذف كل منتجات هذا المزود",
+        callback_data=f"ps:pdel:{provider_id}",
+        style="danger",
+    )
+    b.button(text="🔙 إلغاء", callback_data=f"ps:prov:{provider_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def _provider_report_kb(provider_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🚀 إعادة النشر التلقائي", callback_data=f"ps:pbuild:{provider_id}")
+    b.button(text="🔙 خدمة المزود", callback_data=f"ps:prov:{provider_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+@router.callback_query(F.data == "ps:providers")
+async def pulled_providers_home(callback: CallbackQuery, session, state: FSMContext):
+    """قائمة المزودين مع عدد خدماتهم ومنتجاتهم — بوابة إدارة كل مزود لحاله."""
+    await state.clear()
+    await callback.answer()
+    providers = list(
+        (await session.execute(select(ApiProvider).order_by(ApiProvider.id))).scalars().all()
+    )
+    rows: list[tuple[ApiProvider, int, int, bool]] = []
+    for provider in providers:
+        svc_count = (
+            await session.execute(
+                select(func.count(ProviderService.id)).where(
+                    ProviderService.api_provider_id == provider.id,
+                    ProviderService.status == ProviderServiceStatus.ACTIVE,
+                )
+            )
+        ).scalar_one()
+        prod_count = (
+            await session.execute(
+                select(func.count(Product.id)).where(Product.api_provider_id == provider.id)
+            )
+        ).scalar_one()
+        rows.append((provider, int(svc_count), int(prod_count), bool(provider.is_active)))
+
+    if not rows:
+        await callback.message.edit_text(
+            "🔌 <b>إدارة حسب المزود</b>\n\n"
+            "لا يوجد مزودون بعد.\nأضف مزوداً من «🔌 مزودو المتجر» أولاً ثم اسحب خدماته.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:pulled_services")]]
+            ),
+        )
+        return
+
+    lines = ["🔌 <b>الخدمات المسحوبة حسب المزود</b>\n", "لكل مزود كتالوج وحده:"]
+    for provider, svc_count, prod_count, _active in rows:
+        lines.append(f"• {provider.name} — {svc_count} خدمة / {prod_count} منتج")
+    lines.append(
+        "\nمن شاشة المزود تستطيع: البحث في خدماته، رؤية كتالوجه كاملاً، "
+        "نشر أرخص 5 بكل نوع، مزامنته كقسم، أو مسح كل منتجاته ثم إعادة سحبها."
+    )
+    await callback.message.edit_text("\n".join(lines), reply_markup=_providers_kb(rows))
+
+
+@router.callback_query(F.data.startswith("ps:prov:"))
+async def pulled_provider_detail(callback: CallbackQuery, session, state: FSMContext):
+    await state.clear()
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    svc_count = (
+        await session.execute(
+            select(func.count(ProviderService.id)).where(
+                ProviderService.api_provider_id == provider.id,
+                ProviderService.status == ProviderServiceStatus.ACTIVE,
+            )
+        )
+    ).scalar_one()
+    prod_count = (
+        await session.execute(
+            select(func.count(Product.id)).where(Product.api_provider_id == provider.id)
+        )
+    ).scalar_one()
+    active = "🟢 مفعّل" if provider.is_active else "🔴 معطّل"
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🔌 <b>{provider.name}</b>\n\n"
+        f"الحالة: {active}\n"
+        f"🆔 ID: <code>{provider.id}</code>\n"
+        f"📥 الخدمات المسحوبة: <b>{svc_count}</b>\n"
+        f"📦 المنتجات المنشورة: <b>{prod_count}</b>\n"
+        f"🧩 البروتوكول: {provider.protocol.value if provider.protocol else '—'}\n"
+        f"🏷 النوع: {provider.type.value if provider.type else '—'}\n\n"
+        "اختر عملاً واحداً — مسح كل المنتجات ثم إعادة السحب صارت بضغطتين.",
+        reply_markup=_provider_detail_kb(provider.id),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:plist:"))
+async def pulled_provider_services_list(callback: CallbackQuery, session, state: FSMContext):
+    """كل خدمات مزود واحد مرتبة من الأرخص للأغلى، مع ترقيم الصفحات."""
+    await state.clear()
+    parts = callback.data.split(":")
+    try:
+        provider_id = int(parts[2])
+        page = max(0, int(parts[3]))
+    except (IndexError, ValueError):
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    services, total = await PulledServicesService.list_active_by_provider(
+        session, provider_id, page=page
+    )
+    last_page = max(0, (total - 1) // SERVICES_PER_PAGE)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🔌 <b>{provider.name}</b> · الخدمات المسحوبة\n"
+        f"📊 {total} خدمة · من الأرخص للأغلى\n"
+        f"📄 صفحة {page + 1}/{last_page + 1}",
+        reply_markup=_provider_services_kb(services, provider_id, page, total),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:psr:"))
+async def pulled_provider_search_start(callback: CallbackQuery, session, state: FSMContext):
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    services = await PulledServicesService.load_active(session)
+    own_only = [s for s in services if s.api_provider_id == provider.id]
+    await state.clear()
+    await state.update_data(search_provider_id=provider_id)
+    await state.set_state(AdminPulledServicesStates.waiting_search)
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🔎 <b>ابحث في خدمات «{provider.name}»</b>\n\n"
+        f"لديك <b>{len(own_only)}</b> خدمة مسحوبة من هذا المزود فقط.\n\n"
+        "اكتب الاسم أو التصنيف أو آيدي الخدمة عند المزود:"
+        "\n• <code>pubg</code>\n• <code>متتبع</code>\n• <code>9002</code>"
+        "\n\nالنتائج ضمن كتالوج هذا المزود فقط.",
+        reply_markup=_search_intro_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:pbuild:"))
+async def pulled_provider_build(callback: CallbackQuery, session, state: FSMContext):
+    """بناء/تحديث أقسام الرشق لكن من خدمات مزود واحد فقط."""
+    await state.clear()
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    await callback.answer(f"🚀 جارٍ بناء كتالوج {provider.name}...")
+    report = await SmmSectionsService.build(session, provider_id=provider_id)
+    lines = [
+        f"🚀 <b>تم بناء كتالوج «{provider.name}»</b>\n",
+        f"📱 تطبيقات المعالجة: <b>{report['apps']}</b>",
+        f"📂 أقسام داخلية جديدة: <b>{report['sections_created']}</b>",
+        f"📦 منتجات جديدة منشورة: <b>{report['products_created']}</b>",
+        f"🔄 أعيد ترتيبها: <b>{report['reordered']}</b>",
+        f"♻️ أعيد تفعيلها: <b>{report['products_reactivated']}</b>",
+        f"⏸ عُطّلت (خارج أرخص 5): <b>{report['products_deactivated']}</b>",
+    ]
+    if report["errors"]:
+        lines.append(f"\n⚠️ أخطاء جزئية: <b>{report['errors']}</b>")
+    lines.append("\nلم يُمسّ كتالوج أي مزود آخر.")
+    await callback.message.edit_text("\n".join(lines), reply_markup=_provider_report_kb(provider.id))
+
+
+@router.callback_query(F.data.startswith("ps:psync:"))
+async def pulled_provider_store_sync(callback: CallbackQuery, session, state: FSMContext):
+    await state.clear()
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    await callback.answer("⏳ جارٍ مزامنة المتجر...")
+    try:
+        report = await PulledServicesService.sync_store_to_section(session, provider)
+    except Exception:
+        logger.exception("فشل مزامنة متجر %s", provider.id)
+        await callback.message.edit_text(
+            f"❌ <b>فشل مزامنة متجر {provider.name}</b>\nراجع السجل.",
+            reply_markup=_provider_report_kb(provider.id),
+        )
+        return
+    await callback.message.edit_text(
+        f"🏬 <b>تمت مزامنة متجر «{provider.name}»</b>\n\n"
+        f"🆕 منتجات جديدة: <b>{report['created']}</b>\n"
+        f"♻️ أعيد تفعيلها: <b>{report['reactivated']}</b>\n"
+        f"🔀 أعيد ترتيبها: <b>{report['reordered']}</b>\n"
+        f"⏭ منتجات يدوية لم تُمس: <b>{report['skipped_manual']}</b>",
+        reply_markup=_provider_report_kb(provider.id),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:pdelc:"))
+async def pulled_provider_delete_confirm(callback: CallbackQuery, session, state: FSMContext):
+    await state.clear()
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    prod_count = (
+        await session.execute(
+            select(func.count(Product.id)).where(Product.api_provider_id == provider.id)
+        )
+    ).scalar_one()
+    await callback.answer()
+    await callback.message.edit_text(
+        f"⚠️ <b>مسح منتجات «{provider.name}»</b>\n\n"
+        f"سيُحذف <b>{prod_count}</b> منتجاً منشوراً من هذا المزود.\n"
+        "لن تُحذف الخدمات المسحوبة نفسها — فقط منتجات المتجر.\n"
+        "بعدها اضغط «🚀 إعادة النشر التلقائي» أو «🏬 مزامنة كاملة».",
+        reply_markup=_provider_delete_confirm_kb(provider.id),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:pdel:"))
+async def pulled_provider_delete_products(callback: CallbackQuery, session, state: FSMContext):
+    await state.clear()
+    provider_id = int(callback.data.split(":")[2])
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    products = list(
+        (
+            await session.execute(
+                select(Product).where(
+                    Product.api_provider_id == provider.id,
+                    Product.fulfillment_type == ProductFulfillmentType.API,
+                )
+            )
+        ).scalars().all()
+    )
+    deleted = 0
+    errors = 0
+    for product in products:
+        try:
+            await session.delete(product)
+            deleted += 1
+        except Exception:
+            logger.exception("فشل حذف منتج %s من مزود %s", product.id, provider.name)
+            errors += 1
+    if deleted:
+        try:
+            await session.commit()
+        except Exception:
+            logger.exception("فشل حفظ حذف منتجات مزود %s", provider.name)
+            await session.rollback()
+            await callback.answer()
+            await callback.message.edit_text(
+                f"❌ <b>لم يُكمل حذف منتجات «{provider.name}»</b>\n"
+                "راجع السجل — غالباً بسبب طلبات مرتبطة بالمنتج.",
+                reply_markup=_provider_report_kb(provider.id),
+            )
+            return
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🗑 <b>تم مسح منتجات «{provider.name}»</b>\n\n"
+        f"✅ حُذف: <b>{deleted}</b>\n"
+        + (f"⚠️ فشل حذف: <b>{errors}</b> (راجع السجل)\n" if errors else "")
+        + "\nالخدمات المسحوبة ما زالت موجودة — أعد سحبها متى شئت.",
+        reply_markup=_provider_report_kb(provider.id),
     )
 
 
@@ -265,35 +637,37 @@ async def pulled_home(callback: CallbackQuery, session, state: FSMContext):
 
 # نتائج البحث تُحفظ مؤقتاً لكل أدمن حتى يستطيع التنقّل بين صفحاتها.
 # (لا نضع الاستعلام داخل callback_data لأن الحد 64 بايت والنص عربي متعدد البايت.)
-_SEARCH_CACHE: dict[int, tuple[float, str, list[int]]] = {}
+_SEARCH_CACHE: dict[int, tuple[float, str, list[int], int | None]] = {}
 _SEARCH_CACHE_TTL = 1800.0
 _SEARCH_CACHE_MAX = 200
 
 
-def _store_search(user_id: int, query: str, service_ids: list[int]) -> None:
+def _store_search(
+    user_id: int, query: str, service_ids: list[int], provider_id: int | None = None
+) -> None:
     import time
 
     now = time.time()
-    for key, (stamp, _q, _ids) in list(_SEARCH_CACHE.items()):
+    for key, (stamp, _q, _ids, _p) in list(_SEARCH_CACHE.items()):
         if now - stamp > _SEARCH_CACHE_TTL:
             _SEARCH_CACHE.pop(key, None)
     if len(_SEARCH_CACHE) >= _SEARCH_CACHE_MAX:
         oldest = min(_SEARCH_CACHE, key=lambda key: _SEARCH_CACHE[key][0])
         _SEARCH_CACHE.pop(oldest, None)
-    _SEARCH_CACHE[user_id] = (now, query, service_ids)
+    _SEARCH_CACHE[user_id] = (now, query, service_ids, provider_id)
 
 
-def _get_search(user_id: int) -> tuple[str, list[int]] | None:
+def _get_search(user_id: int) -> tuple[str, list[int], int | None] | None:
     import time
 
     cached = _SEARCH_CACHE.get(user_id)
     if cached is None:
         return None
-    stamp, query, service_ids = cached
+    stamp, query, service_ids, provider_id = cached
     if time.time() - stamp > _SEARCH_CACHE_TTL:
         _SEARCH_CACHE.pop(user_id, None)
         return None
-    return query, service_ids
+    return query, service_ids, provider_id
 
 
 @router.callback_query(F.data == "ps:search")
@@ -323,8 +697,19 @@ async def pulled_search_received(message: Message, session, state: FSMContext):
         await message.answer("⚠️ اكتب كلمة أو رقمين على الأقل للبحث.")
         return
 
-    services, total = await PulledServicesService.search_services(session, query)
+    state_data = await state.get_data()
+    provider_id = state_data.get("search_provider_id")
+    services, total = await PulledServicesService.search_services(
+        session, query, provider_id=provider_id
+    )
     await state.clear()
+
+    search_new_cb = f"ps:psr:{provider_id}" if provider_id else "ps:search"
+    no_search_back = (
+        [f"🔙 مزود #{provider_id}", f"ps:prov:{provider_id}"]
+        if provider_id
+        else ["📥 الخدمات المسحوبة", "admin:pulled_services"]
+    )
 
     if not services:
         await message.answer(
@@ -335,12 +720,12 @@ async def pulled_search_received(message: Message, session, state: FSMContext):
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🔎 بحث جديد", callback_data="ps:search", style="primary"
+                            text="🔎 بحث جديد", callback_data=search_new_cb, style="primary"
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            text="📥 الخدمات المسحوبة", callback_data="admin:pulled_services"
+                            text=no_search_back[0], callback_data=no_search_back[1]
                         )
                     ],
                 ]
@@ -348,13 +733,15 @@ async def pulled_search_received(message: Message, session, state: FSMContext):
         )
         return
 
-    _store_search(message.from_user.id, query, [service.id for service in services])
+    _store_search(
+        message.from_user.id, query, [service.id for service in services], provider_id
+    )
     await message.answer(
         f"🔎 <b>نتائج «{escape(query)}»</b>\\n\\n"
         f"وُجدت <b>{total}</b> خدمة · من الأرخص للأغلى\\n"
         f"📄 صفحة 1/{max(1, (total - 1) // SEARCH_PER_PAGE + 1)}\\n\\n"
         "اضغط الخدمة لتنشرها في القسم الذي تريده.",
-        reply_markup=_search_results_kb(services, 0, total),
+        reply_markup=_search_results_kb(services, 0, total, provider_id),
     )
 
 
@@ -381,7 +768,7 @@ async def pulled_search_page(callback: CallbackQuery, session, state: FSMContext
         )
         return
 
-    query, service_ids = cached
+    query, service_ids, provider_id = cached
     if not service_ids:
         await callback.answer("لا توجد نتائج محفوظة.", show_alert=True)
         return
@@ -404,7 +791,7 @@ async def pulled_search_page(callback: CallbackQuery, session, state: FSMContext
         f"📄 صفحة {page + 1}/{last_page + 1}\\n\\n"
         "اضغط الخدمة لتنشرها في القسم الذي تريده.",
         reply_markup=_search_results_kb(
-            services[start : start + SEARCH_PER_PAGE], page, total
+            services[start : start + SEARCH_PER_PAGE], page, total, provider_id
         ),
     )
     await callback.answer()

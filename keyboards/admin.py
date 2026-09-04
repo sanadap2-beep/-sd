@@ -23,19 +23,20 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("📊 إحصائيات البوت", "admin:stats"),
         ],
     ),
-    "catalog": (
-        "📦 الكتالوج والمنتجات",
+    "store": (
+        "🛍 المتجر والخدمات والرشق",
         [
+            ("📥 الخدمات المسحوبة (مزود/بحث)", "admin:pulled_services"),
+            ("🔌 مزودو المتجر", "admin:api_providers"),
             ("📂 إدارة الأقسام", "admin:categories"),
             ("📦 إدارة المنتجات", "admin:products_menu"),
-            ("📥 خدمات مسحوبة", "admin:pulled_services"),
-            ("🔌 مزودو المتجر", "admin:api_providers"),
-            ("📞 إدارة خدمات الأرقام", "admin:number_services"),
-            ("🌍 إدارة الدول", "admin:countries"),
-            ("🌐 مزودو الأرقام", "admin:providers"),
-            ("💵 تعديل الأسعار", "admin:pricing"),
-            ("⭐ إدارة باقات النجوم", "admin:stars"),
+            ("💵 تعديل الأسعار والهوامش", "admin:pricing"),
             ("📦 المخزون الرقمي", "admin:inventory"),
+            ("⭐ إدارة باقات النجوم", "admin:stars"),
+            ("📞 إدارة خدمات الأرقام", "admin:number_services"),
+            ("🖥 السيرفرات العامة", "admin:store_servers"),
+            ("🌐 مزودو الأرقام", "admin:providers"),
+            ("🌍 إدارة الدول", "admin:countries"),
         ],
     ),
     "users": (
@@ -56,23 +57,22 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         ],
     ),
     "system": (
-        "⚙️ إعدادات النظام والعمليات",
+        "⚙️ النظام والعمليات",
         [
-            ("⚙️ الإعدادات العامة", "admin:settings"),
-            ("🧩 مركز الإضافات", "admin:features"),
+            ("🎛 مركز العمليات", "admin:ops"),
+            ("🎯 مركز المهام", "admin:tasks_center"),
             ("🩺 صحة النظام", "admin:health"),
+            ("🧩 مركز الإضافات", "admin:features"),
+            ("⚙️ الإعدادات العامة", "admin:settings"),
             ("🔧 وضع الصيانة", "admin:maintenance"),
-            ("🎛 مركز القيادة", "admin:cockpit"),
-            ("🛠 مركز العمليات", "admin:ops"),
-            ("🎛 أزرار الواجهة", "admin:main_buttons"),
             ("🛍 التحكم بالمتجر", "admin:store_control"),
             ("🧩 التحكم بخدمات الأخرى", "admin:extras_control"),
+            ("🎛 أزرار الواجهة", "admin:main_buttons"),
+            ("📊 جودة مزودي الأرقام", "admin:number_provider_quality"),
+            ("📡 مباشر البوت", "admin:live_feed"),
             ("👨‍💼 إدارة الأدمنية", "admin:multi_admin"),
             ("📜 سجل الإدارة", "admin:audit"),
             ("🎫 تذاكر الدعم", "admin:tickets"),
-            ("📡 مباشر البوت", "admin:live_feed"),
-            ("📊 جودة مزودي الأرقام", "admin:number_provider_quality"),
-            ("🎯 مركز المهام", "admin:tasks_center"),
         ],
     ),
 }
@@ -630,10 +630,198 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
         b.button(text="⚪ تعطيل", callback_data=f"admin:nsvc_toggle:{service.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:nsvc_toggle:{service.id}")
+    b.button(
+        text="⚙️ السيرفرات/المزودين التابعين",
+        callback_data=f"admin:nsvc_servers:{service.id}",
+        style="primary",
+    )
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_edit_name:{service.id}")
     b.button(text="🗑 حذف", callback_data=f"admin:nsvc_delete:{service.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:number_services")
     b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_servers_kb(service_id: int, servers) -> InlineKeyboardMarkup:
+    """قائمة سيرفرات خدمة أرقام (كل سيرفر = مزود مستقل)."""
+    b = InlineKeyboardBuilder()
+    for server in servers:
+        status = "🟢" if server.is_active else "⚪"
+        b.button(
+            text=f"{status} {server.emoji} {server.name_ar}",
+            callback_data=f"admin:nsvc_server:{server.id}",
+        )
+    b.button(text="➕ إضافة سيرفر", callback_data=f"admin:nsvc_server_add:{service_id}", style="success")
+    b.button(
+        text="🤖 إنشاء سيرفر لكل مزود مضبوط تلقائياً",
+        callback_data=f"admin:nsvc_server_auto:{service_id}",
+        style="success",
+    )
+    b.button(text="🔙 رجوع", callback_data=f"admin:nsvc_view:{service_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_server_detail_kb(service_id: int, server) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    if server.is_active:
+        b.button(text="⚪ تعطيل السيرفر", callback_data=f"admin:nsvc_server_toggle:{server.id}")
+    else:
+        b.button(text="🟢 تفعيل السيرفر", callback_data=f"admin:nsvc_server_toggle:{server.id}")
+    b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_server_edit_name:{server.id}")
+    b.button(text="🎨 تعديل الإيموجي", callback_data=f"admin:nsvc_server_edit_emoji:{server.id}")
+    b.button(text="🔁 تغيير المزود", callback_data=f"admin:nsvc_server_edit_provider:{server.id}")
+    b.button(text="💰 نسبة الربح", callback_data=f"admin:nsvc_server_edit_margin:{server.id}", style="primary")
+    b.button(text="🗑 حذف السيرفر", callback_data=f"admin:nsvc_server_delete:{server.id}", style="danger")
+    b.button(text="🔙 السيرفرات", callback_data=f"admin:nsvc_servers:{service_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_choose_provider_kb(service_id: int, server_id: int | None = None, show_back: bool = True) -> InlineKeyboardMarkup:
+    """اختيار المزود المرتبط بالسيرفر."""
+    from database.models import ProviderName
+
+    b = InlineKeyboardBuilder()
+    for provider in ProviderName:
+        b.button(text=f"{provider.value}", callback_data=f"admin:nsvc_server_provider:{server_id or 0}:{provider.value}")
+    if show_back:
+        back = f"admin:nsvc_server:{server_id}" if server_id else f"admin:nsvc_servers:{service_id}"
+        b.button(text="🔙 رجوع", callback_data=back)
+    b.adjust(2)
+    return b.as_markup()
+
+
+# ══════════════ السيرفرات العامة (كل الأقسام) ══════════════
+
+SCOPE_LABELS = {
+    "category": "📂 قسم رئيسي",
+    "subcategory": "🗂 قسم فرعي",
+    "number_service": "📞 خدمة أرقام",
+    "global": "🌐 عام (كل الأقسام)",
+}
+
+
+def admin_store_servers_kb(servers, scope_counts=None) -> InlineKeyboardMarkup:
+    """قائمة كل السيرفرات العامة مع عددها حسب النطاق."""
+    b = InlineKeyboardBuilder()
+    for server in servers:
+        status = "🟢" if server.is_active else "⚪"
+        kind = "🔌" if server.provider_kind == "api" else "📱"
+        b.button(
+            text=f"{status} {kind} {server.emoji} {server.name_ar}",
+            callback_data=f"admin:ssvc_server:{server.id}",
+        )
+    b.button(
+        text="➕ إضافة سيرفر عام",
+        callback_data="admin:ssvc_add",
+        style="success",
+    )
+    b.button(text="🔙 رجوع", callback_data="admin:main")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_store_server_detail_kb(server) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    if server.is_active:
+        b.button(text="⚪ تعطيل السيرفر", callback_data=f"admin:ssvc_toggle:{server.id}")
+    else:
+        b.button(text="🟢 تفعيل السيرفر", callback_data=f"admin:ssvc_toggle:{server.id}")
+    b.button(text="📝 تعديل الاسم", callback_data=f"admin:ssvc_edit_name:{server.id}")
+    b.button(text="🎨 تعديل الإيموجي", callback_data=f"admin:ssvc_edit_emoji:{server.id}")
+    b.button(text="💰 تعديل نسبة الربح", callback_data=f"admin:ssvc_edit_margin:{server.id}", style="primary")
+    b.button(text="🩺 تعديل الوصف", callback_data=f"admin:ssvc_edit_desc:{server.id}")
+    b.button(text="🗑 حذف السيرفر", callback_data=f"admin:ssvc_delete:{server.id}", style="danger")
+    b.button(text="🔙 كل السيرفرات", callback_data="admin:store_servers")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_ssvc_scope_kb() -> InlineKeyboardMarkup:
+    """اختيار نطاق السيرفر: أي قسم سيُربط به.
+
+    «خدمة الأرقام» لها نظام سيرفرات مخصص (أنظر إدارة خدمات الأرقام)
+    لذلك لا نعرضه هنا حتى لا يُنشئ الأدمن سيرفراً لا يظهر.
+    """
+    b = InlineKeyboardBuilder()
+    for key in ("category", "subcategory", "global"):
+        b.button(text=SCOPE_LABELS[key], callback_data=f"admin:ssvc_scope:{key}", style="success")
+    b.button(text="🔙 رجوع", callback_data="admin:store_servers")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_ssvc_target_kb(scope: str, targets) -> InlineKeyboardMarkup:
+    """اختيار القسم المستهدف من القائمة المحددة."""
+    b = InlineKeyboardBuilder()
+    for target in targets:
+        emoji = getattr(target, "emoji", "📦")
+        name = getattr(target, "name_ar", str(target))
+        b.button(
+            text=f"{emoji} {name}",
+            callback_data=f"admin:ssvc_target:{scope}:{target.id}",
+            style="success",
+        )
+    b.button(text="🔙 النطاق", callback_data="admin:ssvc_add")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_ssvc_auto_target_kb(scope: str, targets) -> InlineKeyboardMarkup:
+    """إنشاء سيرفر تلقائي لكل قسم في النطاق المختار."""
+    b = InlineKeyboardBuilder()
+    for target in targets:
+        emoji = getattr(target, "emoji", "📦")
+        name = getattr(target, "name_ar", str(target))
+        b.button(
+            text=f"{emoji} {name}",
+            callback_data=f"admin:ssvc_auto:{scope}:{target.id}",
+            style="success",
+        )
+    b.button(text="🔙 رجوع", callback_data="admin:store_servers")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_ssvc_provider_kind_kb() -> InlineKeyboardMarkup:
+    """نوع المزود: API (متجر/رشق/ألعاب) أو رقم."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🔌 مزود متجر/رشق/ألعاب", callback_data="admin:ssvc_provider_kind:api", style="success")
+    b.button(text="📱 مزود أرقام", callback_data="admin:ssvc_provider_kind:number", style="success")
+    b.button(text="🔙 رجوع", callback_data="admin:ssvc_edit")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_ssvc_api_provider_kb(providers) -> InlineKeyboardMarkup:
+    """اختيار مزود API مرتبط بالسيرفر."""
+    b = InlineKeyboardBuilder()
+    for provider in providers:
+        status = "🟢" if provider.is_active else "⚪"
+        b.button(
+            text=f"{status} {provider.name}",
+            callback_data=f"admin:ssvc_api_provider:{provider.id}",
+            style="success",
+        )
+    b.button(text="🔙 رجوع", callback_data="admin:ssvc_provider_kind:api")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_ssvc_number_provider_kb() -> InlineKeyboardMarkup:
+    """اختيار مزود أرقام مرتبط بالسيرفر."""
+    from database.models import ProviderName
+
+    b = InlineKeyboardBuilder()
+    for provider in ProviderName:
+        b.button(
+            text=f"📱 {provider.value}",
+            callback_data=f"admin:ssvc_number_provider:{provider.value}",
+            style="success",
+        )
+    b.button(text="🔙 رجوع", callback_data="admin:ssvc_provider_kind:number")
+    b.adjust(2)
     return b.as_markup()
 
 
