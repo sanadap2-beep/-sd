@@ -111,6 +111,11 @@ async def test_build_rows_none_when_no_stock(monkeypatch):
 
 
 async def test_post_board_publishes_and_replaces(monkeypatch):
+    """:بين دورتين لإعادة النشر تُعدَّل اللوحة في مكانها بدل إزعاج القناة.
+
+    (الافتراضي الجديد = إعادة نشر كل دورة، لذا نضبط هنا 5 دورات لنختبر
+    مسار «التعديل في المكان» نفسه.)
+    """
     await FeatureService.reload()
     import services.number_catalog_service as ncs
 
@@ -119,6 +124,7 @@ async def test_post_board_publishes_and_replaces(monkeypatch):
         await FeatureService.set_enabled(session, "numbers_availability_board", True)
         await FeatureService.set_option(session, "numbers_availability_board", "channel_chat_id", "-1001")
         await FeatureService.set_option(session, "numbers_availability_board", "top_n", 5)
+        await FeatureService.set_option(session, "numbers_availability_board", "repost_every_cycles", 5)
         await FeatureService.set_option(
             session,
             "numbers_availability_board",
@@ -486,3 +492,162 @@ async def test_board_not_published_without_username(monkeypatch):
     result = await AvailabilityBoardService.post_board(bot)
     assert "يوزرنيم" in result
     assert bot.sent == []
+
+
+# ══════════════ «القناة تُسمع بنفسها»: إعادة النشر الدورية ══════════════
+
+
+def _fake_bot():
+    class FakeMessage:
+        def __init__(self, message_id):
+            self.message_id = message_id
+
+    class FakeBot:
+        def __init__(self):
+            self.sent = []
+            self.deleted = []
+            self.edited = []
+            self._next = 100
+
+        async def send_message(self, chat_id, text, reply_markup=None):
+            self._next += 1
+            self.sent.append((chat_id, text, reply_markup, self._next))
+            return FakeMessage(self._next)
+
+        async def delete_message(self, chat_id, message_id):
+            self.deleted.append((chat_id, message_id))
+
+        async def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
+            self.edited.append(((chat_id, message_id), reply_markup, text))
+
+    return FakeBot()
+
+
+def _static_board(entries):
+    import services.number_catalog_service as ncs_module
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return list(entries)
+
+    return ncs_module, fake_build_board
+
+
+async def test_auto_repost_publishes_fresh_message_every_n_cycles(monkeypatch):
+    """اللوحة تُعاد كرسالة جديدة كل N دورة: تبقى بأعلى القناة + إشعار."""
+    import services.number_catalog_service as ncs
+
+    await _configure(
+        channel_chat_id="-1009",
+        watched_country_codes="cc0",
+        top_n=5,
+        repost_every_cycles=3,
+        auto_repost=True,
+    )
+    async with async_session_maker() as session:
+        await FeatureService.set_enabled(session, "numbers_availability_board", True)
+
+    entries = [BoardEntry("cc0", "دولة 0", "🌍", Decimal("0.1"), Decimal("0.2"))]
+    monkeypatch.setattr(ncs, "build_board", _static_board(entries)[1])
+    AvailabilityBoardService.reset_state()
+
+    bot = _fake_bot()
+    for _ in range(7):
+        await AvailabilityBoardService.post_board(bot)
+
+    # نشر عند الدورة 1، ثم إعادة نشر عند 4 و7 (كل 3 دورات).
+    assert len(bot.sent) == 3
+    assert len(bot.deleted) == 2  # حذف القديم قبل كل إعادة نشر
+    assert len(bot.edited) == 4  # الدورات البينية تُعدَّل في مكانها
+
+
+async def test_auto_repost_disabled_keeps_editing_in_place(monkeypatch):
+    import services.number_catalog_service as ncs
+
+    await _configure(
+        channel_chat_id="-1010",
+        watched_country_codes="cc0",
+        top_n=5,
+        repost_every_cycles=2,
+        auto_repost=False,
+    )
+    async with async_session_maker() as session:
+        await FeatureService.set_enabled(session, "numbers_availability_board", True)
+
+    entries = [BoardEntry("cc0", "دولة 0", "🌍", Decimal("0.1"), Decimal("0.2"))]
+    monkeypatch.setattr(ncs, "build_board", _static_board(entries)[1])
+    AvailabilityBoardService.reset_state()
+
+    bot = _fake_bot()
+    for _ in range(6):
+        await AvailabilityBoardService.post_board(bot)
+
+    assert len(bot.sent) == 1  # النشر الأول فقط
+    assert bot.deleted == []
+    assert len(bot.edited) == 5
+
+
+async def test_restock_push_sends_new_message_when_enabled(monkeypatch):
+    """إشعار فوري لحظة رجوع دولة نادرة (اختياري، معطّل افتراضياً)."""
+    import services.number_catalog_service as ncs
+
+    await _configure(
+        channel_chat_id="-1011",
+        watched_country_codes="ae,sa",
+        top_n=5,
+        auto_repost=False,
+        repost_on_restock=True,
+    )
+    async with async_session_maker() as session:
+        await FeatureService.set_enabled(session, "numbers_availability_board", True)
+
+    first = [BoardEntry("id", "إندونيسيا", "🇮🇩", Decimal("0.1"), Decimal("0.2"))]
+    second = first + [
+        BoardEntry("ae", "الإمارات", "🇦🇪", Decimal("3"), Decimal("4.5"), True)
+    ]
+    calls = {"count": 0}
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        calls["count"] += 1
+        return list(first if calls["count"] == 1 else second)
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    bot = _fake_bot()
+    await AvailabilityBoardService.post_board(bot)
+    assert len(bot.sent) == 1
+
+    # الإمارات رجعت للمخزون → رسالة جديدة (إشعار) بدل تعديل صامت.
+    await AvailabilityBoardService.post_board(bot)
+    assert len(bot.sent) == 2
+    assert len(bot.deleted) == 1
+    assert bot.edited == []
+
+
+async def test_board_is_reposted_every_single_cycle_by_default(monkeypatch):
+    """:الافتراضي: كل دورة = حذف القديمة + رسالة جديدة (إشعار كل دقيقة)."""
+    import services.number_catalog_service as ncs
+
+    await _configure(channel_chat_id="-1012", watched_country_codes="cc0", top_n=5)
+    async with async_session_maker() as session:
+        await FeatureService.set_enabled(session, "numbers_availability_board", True)
+
+    entries = [BoardEntry("cc0", "دولة 0", "🌍", Decimal("0.1"), Decimal("0.2"))]
+    monkeypatch.setattr(ncs, "build_board", _static_board(entries)[1])
+    AvailabilityBoardService.reset_state()
+
+    bot = _fake_bot()
+    for _ in range(4):
+        result = await AvailabilityBoardService.post_board(bot)
+        assert "نُشرت" in result
+
+    assert len(bot.sent) == 4  # رسالة جديدة كل دورة
+    assert len(bot.deleted) == 3  # حذف السابقة قبل كل رسالة
+    assert bot.edited == []  # لا تعديل في مكان أبداً
+
+
+async def test_repost_settings_defaults():
+    await FeatureService.reload()
+    assert await AvailabilityBoardService.auto_repost() is True
+    assert await AvailabilityBoardService.repost_every_cycles() == 1
+    assert await AvailabilityBoardService.repost_on_restock() is False

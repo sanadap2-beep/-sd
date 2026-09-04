@@ -8,6 +8,7 @@ sell price (per 1000), and only then is a product created.
 from __future__ import annotations
 
 import logging
+from html import escape
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -17,7 +18,11 @@ from sqlalchemy import func, select
 
 from database.models import ApiProvider, Category, ProviderService, ProviderServiceStatus, SubCategory
 from filters.admin_filter import IsAdmin
-from services.pulled_services_service import SERVICES_PER_PAGE, PulledServicesService
+from services.pulled_services_service import (
+    SEARCH_PER_PAGE,
+    SERVICES_PER_PAGE,
+    PulledServicesService,
+)
 from services.smm_catalog import kind_meta, platform_meta
 from services.smm_sections_service import SmmSectionsService
 from states.states import AdminPulledServicesStates
@@ -47,11 +52,17 @@ def _platforms_kb(rows: list[tuple[str, str, str, int]]):
         text="🏬 مزامنة متجر كامل ← قسم باسم المتجر",
         callback_data="ps:storesync",
     )
+    b.button(
+        text="🔎 ابحث عن خدمة محددة بالاسم/الآيدي",
+        callback_data="ps:search",
+        style="primary",
+    )
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     layout = [2] * (len(rows) // 2)
     if len(rows) % 2:
         layout.append(1)
-    layout.extend([1, 1, 1, 1])
+    # منصات + بناء تلقائي + مزامنة اشتراكات + مزامنة متجر + بحث + رجوع
+    layout.extend([1, 1, 1, 1, 1])
     b.adjust(*layout)
     return b.as_markup()
 
@@ -153,6 +164,43 @@ def _build_report_kb():
     return b.as_markup()
 
 
+def _search_results_kb(services, page: int, total: int):
+    """نتائج البحث: الخدمة تفتح تفاصيلها مباشرة (نشر/سعر)."""
+    from services.service_localization_service import display_service_name
+
+    b = InlineKeyboardBuilder()
+    for service in services:
+        rate = service.rate_usd or 0
+        name = display_service_name(
+            service.name, service.category, service.service_type
+        )[:36]
+        b.button(text=f"{rate}$ · {name}", callback_data=f"ps:sv:{service.id}")
+    nav = []
+    if page > 0:
+        b.button(text="◀️ السابق", callback_data=f"ps:sr:{page - 1}")
+        nav.append(1)
+    last_page = max(0, (total - 1) // SEARCH_PER_PAGE)
+    if page < last_page:
+        b.button(text="التالي ▶️", callback_data=f"ps:sr:{page + 1}")
+        nav.append(1)
+    b.button(text="🔎 بحث جديد", callback_data="ps:search", style="primary")
+    b.button(text="🔙 الخدمات المسحوبة", callback_data="admin:pulled_services")
+    rows = [1] * len(services)
+    if nav:
+        rows.append(len(nav))
+    rows.extend([1, 1])
+    b.adjust(*rows)
+    return b.as_markup()
+
+
+def _search_intro_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:pulled_services")]
+        ]
+    )
+
+
 def _subs_kb(service_id: int, subs, page: int):
     b = InlineKeyboardBuilder()
     start = page * SUBS_PER_PAGE
@@ -205,7 +253,9 @@ async def _show_platforms(callback: CallbackQuery, session) -> None:
         "الترتيب داخل كل نوع: الأرخص ← الأغلى.\n\n"
         "🚀 <b>البناء التلقائي</b> ينشئ لكل تطبيق أقسامه الداخلية "
         "(متابعون/لايكات/مشاهدات...) وينشر أرخص 5 خدمات في كل نوع، "
-        "وتستطيع بعده نشر أي خدمة يدوياً بسعرك الخاص داخل قسمها.",
+        "وتستطيع بعده نشر أي خدمة يدوياً بسعرك الخاص داخل قسمها.\\n\\n"
+        "🔎 <b>تبحث عن خدمة بعينها؟</b> استخدم زر البحث واكتب اسمها "
+        "أو آيديها عند المزود بدل التصفّح.",
         reply_markup=_platforms_kb(rows),
     )
 
@@ -215,6 +265,153 @@ async def pulled_home(callback: CallbackQuery, session, state: FSMContext):
     await state.clear()
     await callback.answer()
     await _show_platforms(callback, session)
+
+
+# نتائج البحث تُحفظ مؤقتاً لكل أدمن حتى يستطيع التنقّل بين صفحاتها.
+# (لا نضع الاستعلام داخل callback_data لأن الحد 64 بايت والنص عربي متعدد البايت.)
+_SEARCH_CACHE: dict[int, tuple[float, str, list[int]]] = {}
+_SEARCH_CACHE_TTL = 1800.0
+_SEARCH_CACHE_MAX = 200
+
+
+def _store_search(user_id: int, query: str, service_ids: list[int]) -> None:
+    import time
+
+    now = time.time()
+    for key, (stamp, _q, _ids) in list(_SEARCH_CACHE.items()):
+        if now - stamp > _SEARCH_CACHE_TTL:
+            _SEARCH_CACHE.pop(key, None)
+    if len(_SEARCH_CACHE) >= _SEARCH_CACHE_MAX:
+        oldest = min(_SEARCH_CACHE, key=lambda key: _SEARCH_CACHE[key][0])
+        _SEARCH_CACHE.pop(oldest, None)
+    _SEARCH_CACHE[user_id] = (now, query, service_ids)
+
+
+def _get_search(user_id: int) -> tuple[str, list[int]] | None:
+    import time
+
+    cached = _SEARCH_CACHE.get(user_id)
+    if cached is None:
+        return None
+    stamp, query, service_ids = cached
+    if time.time() - stamp > _SEARCH_CACHE_TTL:
+        _SEARCH_CACHE.pop(user_id, None)
+        return None
+    return query, service_ids
+
+
+@router.callback_query(F.data == "ps:search")
+async def pulled_search_start(callback: CallbackQuery, session, state: FSMContext):
+    """🔎 بحث مباشر عن خدمة محددة بالاسم/التصنيف/الآيدي."""
+    await state.clear()
+    services = await PulledServicesService.load_active(session)
+    await state.set_state(AdminPulledServicesStates.waiting_search)
+    await callback.message.edit_text(
+        "🔎 <b>ابحث عن خدمة محددة</b>\\n\\n"
+        f"لديك <b>{len(services)}</b> خدمة مسحوبة مخفية عن المتجر.\\n\\n"
+        "اكتب ما تبحث عنه — الاسم أو التصنيف أو آيدي الخدمة عند المزود:\\n"
+        "• <code>pubg</code>\\n"
+        "• <code>تيك توك متابعين</code> (أكثر من كلمة: كلها يجب أن توجد)\\n"
+        "• <code>9002</code> (آيدي الخدمة عند المزود)\\n\\n"
+        "النتائج مرتبة من الأرخص للأغلى، وبالضغط على أي نتيجة تفتح صفحتها "
+        "لتحدد القسم وسعر البيع.",
+        reply_markup=_search_intro_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminPulledServicesStates.waiting_search)
+async def pulled_search_received(message: Message, session, state: FSMContext):
+    query = (message.text or "").strip()
+    if len(query) < 2:
+        await message.answer("⚠️ اكتب كلمة أو رقمين على الأقل للبحث.")
+        return
+
+    services, total = await PulledServicesService.search_services(session, query)
+    await state.clear()
+
+    if not services:
+        await message.answer(
+            f"🔎 <b>لا نتائج لـ «{escape(query)}»</b>\\n\\n"
+            "جرّب كلمة أقصر، أو ابحث بآيدي الخدمة عند المزود، "
+            "أو تصفّح المنصات من «📥 الخدمات المسحوبة».",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔎 بحث جديد", callback_data="ps:search", style="primary"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="📥 الخدمات المسحوبة", callback_data="admin:pulled_services"
+                        )
+                    ],
+                ]
+            ),
+        )
+        return
+
+    _store_search(message.from_user.id, query, [service.id for service in services])
+    await message.answer(
+        f"🔎 <b>نتائج «{escape(query)}»</b>\\n\\n"
+        f"وُجدت <b>{total}</b> خدمة · من الأرخص للأغلى\\n"
+        f"📄 صفحة 1/{max(1, (total - 1) // SEARCH_PER_PAGE + 1)}\\n\\n"
+        "اضغط الخدمة لتنشرها في القسم الذي تريده.",
+        reply_markup=_search_results_kb(services, 0, total),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:sr:"))
+async def pulled_search_page(callback: CallbackQuery, session, state: FSMContext):
+    """تنقّل بين صفحات نتائج البحث."""
+    await state.clear()
+    parts = callback.data.split(":")
+    try:
+        page = max(0, int(parts[2]))
+    except (IndexError, ValueError):
+        page = 0
+
+    cached = _get_search(callback.from_user.id)
+    if cached is None:
+        await callback.answer("انتهت صلاحية البحث — أعد كتابته.", show_alert=True)
+        services = await PulledServicesService.load_active(session)
+        await state.set_state(AdminPulledServicesStates.waiting_search)
+        await callback.message.edit_text(
+            "🔎 <b>ابحث عن خدمة محددة</b>\\n\\n"
+            f"لديك <b>{len(services)}</b> خدمة مسحوبة مخفية عن المتجر.\\n\\n"
+            "اكتب الاسم أو التصنيف أو آيدي الخدمة عند المزود.",
+            reply_markup=_search_intro_kb(),
+        )
+        return
+
+    query, service_ids = cached
+    if not service_ids:
+        await callback.answer("لا توجد نتائج محفوظة.", show_alert=True)
+        return
+
+    result = await session.execute(
+        select(ProviderService).where(
+            ProviderService.id.in_(service_ids),
+            ProviderService.status == ProviderServiceStatus.ACTIVE,
+        )
+    )
+    found = {service.id: service for service in result.scalars().all()}
+    services = [found[service_id] for service_id in service_ids if service_id in found]
+    total = len(services)
+    last_page = max(0, (total - 1) // SEARCH_PER_PAGE)
+    page = min(page, last_page)
+    start = page * SEARCH_PER_PAGE
+    await callback.message.edit_text(
+        f"🔎 <b>نتائج «{escape(query)}»</b>\\n\\n"
+        f"وُجدت <b>{total}</b> خدمة · من الأرخص للأغلى\\n"
+        f"📄 صفحة {page + 1}/{last_page + 1}\\n\\n"
+        "اضغط الخدمة لتنشرها في القسم الذي تريده.",
+        reply_markup=_search_results_kb(
+            services[start : start + SEARCH_PER_PAGE], page, total
+        ),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "ps:build")
