@@ -1046,6 +1046,9 @@ class Product(Base):
         default=ProductPricingType.FIXED,
     )
     profit_margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    # True = الأدمن ضبط هامش المنتج يدوياً (لا يُلمس عند تغيير هامش قسمه).
+    # False = هامش ضمني/تلقائي من السحب (يتأثر بهامش القسم الفرعي/القسم).
+    margin_manual: Mapped[bool] = mapped_column(Boolean, default=False)
     display_type: Mapped[ProductDisplayType] = mapped_column(
         SAEnum(ProductDisplayType),
         default=ProductDisplayType.PER_1000,

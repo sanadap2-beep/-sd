@@ -108,8 +108,9 @@ async def test_resolve_hierarchy():
         percent, source = await MarginService.resolve_product_margin(session, p2)
         assert percent == Decimal("80")
 
-        # هامش المنتج له الأولوية دائماً
+        # هامش المنتج اليدوي له الأولوية دائماً (margin_manual=True يحفظها الأدمن)
         p1.profit_margin_percent = Decimal("90")
+        p1.margin_manual = True
         await session.commit()
         percent, source = await MarginService.resolve_product_margin(session, p1)
         assert (percent, source) == (Decimal("90"), "منتج")
@@ -211,14 +212,15 @@ async def test_publish_rashi_service_stores_margin():
         assert product.pricing_type == ProductPricingType.MARGIN_PERCENT
         assert product.price_usd == Decimal("15")  # السعر يدوي لم يتغير
 
-        # رفع هامش القسم → المنتج هنا له هامش خاص (الضمني) فلا يتأثر
+        # رفع هامش القسم → الهامش الضمني ليس يدوياً، فهامش القسم يتحكم به
+        # (هذا هو السلوك المطلوب: تتحكم بهامش كل قسم وكل قسم فرعي).
         category = await session.get(Category, _category.id)
-        await MarginService.set_category_margin(session, category, Decimal("100"))
-        assert product.price_usd == Decimal("15")
-
-        # إزالة هامش المنتج الخاص → يرث هامش القسم (100%) ويُعاد حسابه
-        await MarginService.set_product_margin(session, product, None)
+        updated = await MarginService.set_category_margin(session, category, Decimal("100"))
+        assert updated >= 1
         assert product.price_usd == Decimal("20.0000")
+
+        # المنتج ما زال غير يدوي → يقبل التحكم من هامش قسمه.
+        assert product.margin_manual is False
 
 
 async def test_global_margin_setting_applies_to_plain_products():

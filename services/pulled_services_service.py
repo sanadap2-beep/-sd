@@ -444,6 +444,7 @@ class PulledServicesService:
                 cost_price_usd=rate,
                 pricing_type=ProductPricingType.MARGIN_PERCENT,
                 profit_margin_percent=margin,
+                margin_manual=False,
                 fulfillment_type=ProductFulfillmentType.API,
                 min_quantity=int(service.min_quantity or 1),
                 max_quantity=int(service.max_quantity or 1000000),

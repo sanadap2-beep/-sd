@@ -198,18 +198,23 @@ async def _server_from_state(session, state: FSMContext) -> StoreServer | None:
     return server
 
 
-async def _server_unit_price(product, server: StoreServer | None) -> Decimal:
-    """سعر الوحدة بعد تطبيق هامش السيرفر (أو السعر الأصلي)."""
-    if server is None:
-        return Decimal(str(getattr(product, "price_usd", 0) or 0))
-    return await StoreServerService.unit_price(product, server)
+async def _server_unit_price(session, product, server: StoreServer | None) -> Decimal:
+    """سعر الوحدة بعد تطبيق أولوية الهوامش.
+
+    الترتيب: المنتج اليدوي > القسم الفرعي/التطبيق > القسم > السيرفر >
+    السعر المحفوظ. لذلك هامش «لايكات انستا» أو «متابعين تيك توك»
+    يتحكم بسعرها حتى لو كان للسيرفر هامش آخر.
+    """
+    from services.margin_service import MarginService
+
+    return await MarginService.product_sell_price(session, product, server)
 
 
-async def _server_total_price(product, quantity: int, server: StoreServer | None) -> Decimal:
+async def _server_total_price(session, product, quantity: int, server: StoreServer | None) -> Decimal:
     """السعر الإجمالي (يدعم حساب الرشق لكل 1000)."""
-    if server is None:
-        return ProductService.calculate_order_total(product, quantity)
-    unit = await _server_unit_price(product, server)
+    from services.margin_service import MarginService
+
+    unit = await MarginService.product_sell_price(session, product, server)
     if not getattr(product, "requires_quantity", False):
         return unit.quantize(Decimal("0.0001"), rounding="ROUND_HALF_UP")
     display = getattr(product, "display_type", None)
@@ -279,6 +284,12 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar", serv
         server_line = ""
         if server is not None:
             server_line = f"\n🖥 السيرفر: <b>{esc(server.name_ar)}</b>"
+        from services.margin_service import MarginService
+
+        price_map = {
+            p.id: await MarginService.product_sell_price(session, p, server)
+            for p in products
+        }
         text = f"{header}{server_line}{I18nService.t('ux_games_282_17', language)}"
         markup = products_kb(
             sub_cat.id,
@@ -286,6 +297,7 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar", serv
             sub_cat.category_id,
             back_sub_id=back_sub_id,
             server=server,
+            price_map=price_map,
         )
     elif server is not None:
         back_sub_id = sub_cat.parent_sub_category_id
@@ -438,7 +450,7 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     await callback.answer()
     sub_cat = product.sub_category
     language = _glang(db_user)
-    unit_price = await _server_unit_price(product, server)
+    unit_price = await _server_unit_price(session, product, server)
     price_display = await _dual_price(unit_price, db_user, session)
     await state.update_data(product_id=product_id)
     if server is not None:
@@ -485,7 +497,7 @@ async def player_id_received(message: Message, state: FSMContext, session, db_us
         return
     await state.update_data(target=player_id, quantity=1)
     server = await _server_from_state(session, state)
-    unit_price = await _server_unit_price(product, server)
+    unit_price = await _server_unit_price(session, product, server)
     await message.answer(f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{unit_price}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_link)
@@ -507,7 +519,7 @@ async def smm_link_received(message: Message, state: FSMContext, session):
         return
     await state.update_data(target=link)
     server = await _server_from_state(session, state)
-    unit_price = await _server_unit_price(product, server)
+    unit_price = await _server_unit_price(session, product, server)
     if product.requires_quantity:
         await message.answer(f"{I18nService.t('ux_games_441_26', _auto_lang(locals()))}{product.min_quantity}{I18nService.t('ux_games_441_27', _auto_lang(locals()))}{product.max_quantity}")
         await state.set_state(SMMOrderStates.waiting_quantity)
@@ -541,7 +553,7 @@ async def smm_quantity_received(message: Message, state: FSMContext, session):
         await message.answer(f"{I18nService.t('ux_games_485_34', _auto_lang(locals()))}{product.max_quantity}")
         return
     server = await _server_from_state(session, state)
-    total_price = await _server_total_price(product, quantity, server)
+    total_price = await _server_total_price(session, product, quantity, server)
     await state.update_data(quantity=quantity, total_price=str(total_price))
     sub_cat = product.sub_category
     link = data.get('target', '—')
@@ -640,7 +652,7 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
     target = fsm_data.get('target', '')
     quantity = fsm_data.get('quantity', 1)
     server = await _server_from_state(session, state)
-    total_price = await _server_total_price(product, quantity, server)
+    total_price = await _server_total_price(session, product, quantity, server)
     promotion, promotion_discount = await PromotionService.get_best_promotion(session, product.id, total_price)
     if fulfillment == ProductFulfillmentType.INVENTORY.value and coupon_code:
         await callback.answer(I18nService.t('ux_games_678_49', _auto_lang(locals())), show_alert=True)
@@ -690,7 +702,7 @@ async def product_final_confirm(callback: CallbackQuery, session, db_user: User,
         return
     await callback.answer(I18nService.t('ux_games_767_51', _auto_lang(locals())))
     server = await _server_from_state(session, state)
-    total_price = await _server_total_price(product, quantity, server)
+    total_price = await _server_total_price(session, product, quantity, server)
     fulfillment = getattr(product.fulfillment_type, 'value', product.fulfillment_type)
     promotion, promotion_discount = await PromotionService.get_best_promotion(session, product.id, total_price)
     if fulfillment == ProductFulfillmentType.INVENTORY.value and coupon_code:

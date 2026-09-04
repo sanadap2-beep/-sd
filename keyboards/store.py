@@ -172,11 +172,15 @@ def store_products_kb(
     section: str,
     language: str = "ar",
     server=None,
+    price_map=None,
 ) -> InlineKeyboardMarkup:
     rows = []
     for product in products:
         name = product.name_ar if len(product.name_ar) <= 36 else product.name_ar[:35] + "…"
-        price = _server_price(product, server)
+        if price_map is not None and product.id in price_map:
+            price = price_map[product.id]
+        else:
+            price = _server_price(product, server)
         rows.append([
             InlineKeyboardButton(
                 text=f"🛒 {name} · {price}$",

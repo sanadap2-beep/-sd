@@ -80,6 +80,7 @@ def products_kb(
     category_id: int,
     back_sub_id: int | None = None,
     server=None,
+    price_map=None,
 ) -> InlineKeyboardMarkup:
     """قائمة المنتجات مع الأسعار بالدولار.
 
@@ -94,7 +95,10 @@ def products_kb(
             callback_data=f"subcat:{sub_category_id}", style="success",
         )
     for p in products:
-        price = _server_product_price(p, server)
+        if price_map is not None and p.id in price_map:
+            price = price_map[p.id]
+        else:
+            price = _server_product_price(p, server)
         b.button(
             text=f"{_short_name(p.name_ar)} - {price}$",
             callback_data=f"prod:{p.id}", style="success",

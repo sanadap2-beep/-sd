@@ -349,6 +349,7 @@ class SubscriptionsSyncService:
                 cost_price_usd=Decimal(str(svc.rate or 0)),
                 pricing_type=ProductPricingType.MARGIN_PERCENT,
                 profit_margin_percent=margin,
+                margin_manual=False,
                 display_type=ProductDisplayType.FIXED_TOTAL,
                 fulfillment_type=ProductFulfillmentType.API,
                 min_quantity=1,
@@ -376,6 +377,7 @@ class SubscriptionsSyncService:
             product.price_usd = sell_price
             product.cost_price_usd = Decimal(str(svc.rate or 0))
             product.profit_margin_percent = margin
+            product.margin_manual = False
             report["products_repriced"] += 1
         product.sort_order = int((raw.get("sort_order") or 0) or 0)
         return product

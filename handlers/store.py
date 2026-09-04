@@ -1,5 +1,6 @@
 """Universal storefront for all products, not only SMS numbers."""
 
+from decimal import Decimal
 from html import escape
 
 from aiogram import F, Router
@@ -137,7 +138,7 @@ async def store_section(callback: CallbackQuery, session, db_user, state: FSMCon
     lines.append(f"\n{I18nService.t('store_products_hint', language)}")
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=store_products_kb(products, section, language, server=server),
+        reply_markup=store_products_kb(products, section, language),
     )
     await callback.answer()
 
@@ -184,9 +185,13 @@ async def store_section_server_picked(callback: CallbackQuery, session, db_user,
         )
         await callback.answer()
         return
+    from services.margin_service import MarginService
+
+    price_map: dict[int, Decimal] = {}
     lines = [section_label(section, language), f"🖥 السيرفر: <b>{escape(server.name_ar)}</b>", ""]
     for index, product in enumerate(products, start=1):
-        display_unit = await StoreServerService.unit_price(product, server)
+        display_unit = await MarginService.product_sell_price(session, product, server)
+        price_map[product.id] = display_unit
         price = await CurrencyService.format_dual(display_unit, db_user, session)
         category = product.sub_category.category if product.sub_category else None
         sub = product.sub_category.name_ar if product.sub_category else (
@@ -209,6 +214,6 @@ async def store_section_server_picked(callback: CallbackQuery, session, db_user,
     lines.append(f"\n{I18nService.t('store_products_hint', language)}")
     await callback.message.edit_text(
         "\n".join(lines),
-        reply_markup=store_products_kb(products, section, language),
+        reply_markup=store_products_kb(products, section, language, server=server, price_map=price_map),
     )
     await callback.answer()

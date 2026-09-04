@@ -79,8 +79,13 @@ class MarginService:
     async def resolve_product_margin(
         cls, session, product: Product
     ) -> tuple[Decimal, str]:
-        """هوامش المنتج الفعّالة (النسبة، مصدرها)."""
-        if product.profit_margin_percent is not None:
+        """هوامش المنتج الفعّالة (النسبة، مصدرها).
+
+        الهامش الموجود على المنتج يُحترم فقط إذا ضبطه الأدمن يدوياً
+        (``margin_manual=True``)؛ أما الهامش الضمني من السحب فيخضع لهامش
+        قسمه (القسم الفرعي/الداخلي ثم القسم الرئيسي ثم العالمي).
+        """
+        if product.profit_margin_percent is not None and getattr(product, "margin_manual", False):
             return Decimal(str(product.profit_margin_percent)), "منتج"
 
         sub = await session.get(SubCategory, product.sub_category_id)
@@ -100,6 +105,38 @@ class MarginService:
                 )
 
         return await cls.global_percent(), "عالمي"
+
+    @classmethod
+    async def effective_margin(
+        cls, session, product: Product, server=None
+    ) -> tuple[Decimal, str]:
+        """الهامش الفعّال مع أولوية: منتج > قسم فرعي > قسم > سيرفر > عالمي."""
+        percent, source = await cls.resolve_product_margin(session, product)
+        if source != "عالمي":
+            return Decimal(str(percent)), source
+        if server is not None and getattr(server, "margin_percent", None) is not None:
+            return Decimal(str(server.margin_percent)), "سيرفر"
+        return Decimal(str(percent)), "عالمي"
+
+    @classmethod
+    async def product_sell_price(
+        cls, session, product: Product, server=None, default_price=None
+    ) -> Decimal:
+        """سعر البيع النهائي حسب أولوية الهوامش.
+
+        يطبّق حساب التكلفة عندما يتوفر هامش فعلي (منتج/قسم فرعي/قسم/سيرفر)؛
+        وإلا يُبقي السعر المحفوظ (كأنه بلا هامش مخصص) حتى لا يغيّر
+        أسعار منتجاتٍ جاهزة بلا إرادة الأدمن.
+        """
+        percent, source = await cls.effective_margin(session, product, server)
+        if source == "عالمي":
+            if default_price is not None:
+                return Decimal(str(default_price))
+            return Decimal(str(getattr(product, "price_usd", 0) or 0))
+        cost = Decimal(str(getattr(product, "cost_price_usd", 0) or 0))
+        if cost <= 0:
+            return Decimal(str(default_price if default_price is not None else getattr(product, "price_usd", 0) or 0))
+        return cls.price_from_cost(cost, percent)
 
     @classmethod
     async def resolve_sub_margin(
@@ -163,9 +200,29 @@ class MarginService:
         product.price_usd = new_price
         return True
 
+    @staticmethod
+    def recalc_forced_from_margin(product: Product, percent: Decimal | None) -> bool:
+        """يعيد حساب المنتج من هامشه حتى لو كان سعره يدوياً.
+
+        يستخدمه تغيير هامش القسم/القسم الفرعي ليطبّق الهامش على كل
+        المنتجات غير اليدوية (لا يتجاوز هامشاً ضبطه الأدمن يدوياً).
+        """
+        if percent is None:
+            return False
+        cost = Decimal(str(product.cost_price_usd or 0))
+        if cost <= 0:
+            return False
+        new_price = MarginService.price_from_cost(cost, Decimal(str(percent)))
+        product.pricing_type = ProductPricingType.MARGIN_PERCENT
+        product.profit_margin_percent = Decimal(str(percent))
+        if new_price == Decimal(str(product.price_usd)):
+            return False
+        product.price_usd = new_price
+        return True
+
     @classmethod
     async def cascade_subtree(cls, session, sub: SubCategory) -> int:
-        """يعيد حساب أسعار كل منتجات الشجرة الفرعية (بلا هامش خاص)."""
+        """يعيد حساب أسعار كل منتجات الشجرة الفرعية (بلا هامش يدوي خاص)."""
         # كل الأقسام الفرعية في الشجرة (القسم + الأبناء)
         all_subs = await cls._subtree(session, sub)
         updated = 0
@@ -174,12 +231,13 @@ class MarginService:
                 select(Product).where(Product.sub_category_id == row.id)
             )
             for product in result.scalars().all():
-                if product.profit_margin_percent is not None:
-                    continue  # للمنتج هامش خاص → له الأولوية
-                if not cls.is_margin_priced(product):
+                if getattr(product, "margin_manual", False):
+                    continue  # الأدمن ضبط هامش المنتج يدوياً → الأولوية له
+                cost = Decimal(str(product.cost_price_usd or 0))
+                if cost <= 0:
                     continue
                 percent, _src = await cls.resolve_product_margin(session, product)
-                if await cls.recalc_product_from_margin(session, product, percent):
+                if cls.recalc_forced_from_margin(product, percent):
                     updated += 1
         return updated
 
@@ -247,6 +305,7 @@ class MarginService:
         """يضبط هامش منتج ويعيد سعره إن كان مسعّراً بهامش."""
         percent = cls._clamp(percent)
         product.profit_margin_percent = percent
+        product.margin_manual = percent is not None
         if percent is not None:
             product.pricing_type = ProductPricingType.MARGIN_PERCENT
             changed = await cls.recalc_product_from_margin(session, product, percent)
@@ -283,4 +342,5 @@ class MarginService:
             return None
         product.profit_margin_percent = implicit
         product.pricing_type = ProductPricingType.MARGIN_PERCENT
+        product.margin_manual = False
         return implicit
