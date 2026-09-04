@@ -1,5 +1,7 @@
 """Keyboards for the universal store hub."""
 
+from decimal import Decimal
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -132,17 +134,52 @@ def store_empty_section_kb(language: str = "ar") -> InlineKeyboardMarkup:
     )
 
 
+def store_section_servers_kb(
+    section: str,
+    servers,
+    language: str = "ar",
+) -> InlineKeyboardMarkup:
+    """اختيار سيرفر عام لقسم المتجر الذكي (ألعاب/تطبيقات/رشق...)."""
+    b = InlineKeyboardBuilder()
+    for s in servers:
+        margin_label = ""
+        if s.margin_percent is not None:
+            margin_label = f"  ({s.margin_percent}%)"
+        b.button(
+            text=f"{s.emoji} {s.name_ar}{margin_label}",
+            callback_data=f"store_svc_pick:{section}:{s.id}", style="success",
+        )
+    b.button(
+        text=I18nService.t("store_back", language),
+        callback_data="store:home", style="success",
+    )
+    b.adjust(1)
+    return b.as_markup()
+
+
+def _server_price(product, server) -> Decimal:
+    """سعر الوحدة بعد هامش السيرفر (لفرضة عرض ثابتة فقط)."""
+    if server is None or server.margin_percent is None:
+        return product.price_usd
+    cost = getattr(product, "cost_price_usd", None)
+    if cost is None or Decimal(str(cost or 0)) <= 0:
+        return product.price_usd
+    return (Decimal(str(cost)) * (Decimal("100") + Decimal(str(server.margin_percent))) / Decimal("100")).quantize(Decimal("0.0001"))
+
+
 def store_products_kb(
     products,
     section: str,
     language: str = "ar",
+    server=None,
 ) -> InlineKeyboardMarkup:
     rows = []
     for product in products:
         name = product.name_ar if len(product.name_ar) <= 36 else product.name_ar[:35] + "…"
+        price = _server_price(product, server)
         rows.append([
             InlineKeyboardButton(
-                text=f"🛒 {name} · {product.price_usd}$",
+                text=f"🛒 {name} · {price}$",
                 callback_data=f"prod:{product.id}", style="success",
             )
         ])

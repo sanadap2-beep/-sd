@@ -17,7 +17,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType
+from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType, StoreServer
+from services.store_server_service import StoreServerService
 from services.agent_service import AgentService
 from services.html_guard import esc
 from services.dynamic_service import DynamicService
@@ -40,7 +41,7 @@ from services.watch_service import WatchService
 from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
-from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb
+from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb, store_servers_kb
 from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 logger = logging.getLogger(__name__)
 router = Router(name='games')
@@ -163,7 +164,80 @@ async def favorite_remove(callback: CallbackQuery, session, db_user: User):
         await session.commit()
     await favorites_list(callback, session, db_user)
 
-async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
+async def _servers_for_subcategory(session, sub_category_id: int):
+    """السيرفرات المتاحة لقسم فرعي.
+
+    أولوية البحث:
+    1. سيرفرات هذا القسم الفرعي نفسه.
+    2. سيرفرات القسم الأب (لتطبيقات الرشق ذات الأقسام الداخلية).
+    3. سيرفرات «عام» (scope=global, scope_id=0).
+    """
+    sub_cat = await DynamicService.get_sub_category(session, sub_category_id)
+    parent_id = getattr(sub_cat, "parent_sub_category_id", None) if sub_cat else None
+    for candidate_id in (sub_category_id, parent_id):
+        if candidate_id:
+            servers = await StoreServerService.active_for_scope(session, "subcategory", candidate_id)
+            if servers:
+                return servers
+    return await StoreServerService.active_for_scope(session, "global", 0)
+
+
+async def _server_from_state(session, state: FSMContext) -> StoreServer | None:
+    """السيرفر المختار في حالة اللوحة (يرجَّع None إذا عُطّل/حُذف)."""
+    data = await state.get_data()
+    server_id = data.get("server_id")
+    if not server_id:
+        return None
+    try:
+        server_id = int(server_id)
+    except (TypeError, ValueError):
+        return None
+    server = await StoreServerService.get(session, server_id)
+    if server is None or not server.is_active:
+        return None
+    return server
+
+
+async def _server_unit_price(product, server: StoreServer | None) -> Decimal:
+    """سعر الوحدة بعد تطبيق هامش السيرفر (أو السعر الأصلي)."""
+    if server is None:
+        return Decimal(str(getattr(product, "price_usd", 0) or 0))
+    return await StoreServerService.unit_price(product, server)
+
+
+async def _server_total_price(product, quantity: int, server: StoreServer | None) -> Decimal:
+    """السعر الإجمالي (يدعم حساب الرشق لكل 1000)."""
+    if server is None:
+        return ProductService.calculate_order_total(product, quantity)
+    unit = await _server_unit_price(product, server)
+    if not getattr(product, "requires_quantity", False):
+        return unit.quantize(Decimal("0.0001"), rounding="ROUND_HALF_UP")
+    display = getattr(product, "display_type", None)
+    value = getattr(display, "value", display)
+    if value == "per_min_quantity":
+        min_qty = int(product.min_quantity or 0)
+        if min_qty > 0:
+            total = unit * Decimal(str(quantity)) / Decimal(str(min_qty))
+        else:
+            total = unit
+    elif value == "fixed_total":
+        total = unit
+    else:
+        # PER_1000 — السعر هو لكمية 1000.
+        total = unit * Decimal(str(quantity)) / Decimal("1000")
+    return total.quantize(Decimal("0.0001"), rounding="ROUND_HALF_UP")
+
+
+async def _show_subcategory(target, session, sub_cat, language: str = "ar", server: StoreServer | None = None, state: FSMContext | None = None):
+    """Render a subcategory.
+
+    - إذا كان القسم تطبيقاً يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات)
+      تعرض الأقسام الداخلية أولاً (ميزة أقسام الرشق الداخلية).
+    - وإلا تعرض منتجات القسم مباشرة.
+    ``target`` is a Message or CallbackQuery. Products are loaded with an
+    explicit query so AsyncSession never tries a lazy ``sub_cat.products``
+    IO (MissingGreenlet).
+    """
     """Render a subcategory.
 
     - إذا كان القسم تطبيقاً يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات)
@@ -180,6 +254,9 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
     # خدمة مسحوب من المزود يكسر شاشة القسم كلها.
     header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
     products = await DynamicService.get_active_products(session, sub_cat.id)
+
+    if server is not None:
+        products = await StoreServerService.filter_products(products, server)
 
     inner_sections: list[tuple[object, int]] = []
     if await FeatureService.enabled("smm_inner_sections", default=True):
@@ -199,12 +276,25 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
         markup = sections_kb(sub_cat.category_id, inner_sections)
     elif products:
         back_sub_id = sub_cat.parent_sub_category_id
-        text = f"{header}{I18nService.t('ux_games_282_17', language)}"
+        server_line = ""
+        if server is not None:
+            server_line = f"\n🖥 السيرفر: <b>{esc(server.name_ar)}</b>"
+        text = f"{header}{server_line}{I18nService.t('ux_games_282_17', language)}"
         markup = products_kb(
             sub_cat.id,
             products,
             sub_cat.category_id,
             back_sub_id=back_sub_id,
+            server=server,
+        )
+    elif server is not None:
+        back_sub_id = sub_cat.parent_sub_category_id
+        text = f"{header}\n⚠️ لا توجد منتجات لهذا السيرفر في هذا القسم حالياً."
+        markup = store_servers_kb(
+            sub_cat.id,
+            await StoreServerService.active_for_scope(session, "subcategory", sub_cat.id)
+            or await StoreServerService.active_for_scope(session, "global", 0),
+            sub_cat.category_id,
         )
     else:
         text = f"{header}{I18nService.t('ux_games_276_16', language)}"
@@ -216,12 +306,14 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar"):
 
 
 @router.callback_query(F.data.startswith('cat:'))
-async def category_selected(callback: CallbackQuery, session):
+async def category_selected(callback: CallbackQuery, session, state: FSMContext = None):
     category_id = int(callback.data.split(':')[1])
     category = await DynamicService.get_category(session, category_id)
     if not category or not category.is_active:
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
+    if state is not None:
+        await state.update_data(server_id=None)
     await callback.answer()
     # المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)؛ الأقسام الداخلية تظهر
     # عند فتح التطبيق نفسه عبر subcat:.
@@ -235,7 +327,7 @@ async def category_selected(callback: CallbackQuery, session):
     await callback.message.edit_text(f"{header}{I18nService.t('ux_games_252_14', language)}", reply_markup=sub_categories_kb(category_id, sub_cats))
 
 @router.callback_query(F.data.startswith('subcat:'))
-async def sub_category_selected(callback: CallbackQuery, session, db_user=None):
+async def sub_category_selected(callback: CallbackQuery, session, db_user=None, state: FSMContext = None):
     sub_cat_id = int(callback.data.split(':')[1])
     sub_cat = await DynamicService.get_sub_category(session, sub_cat_id)
     if not sub_cat or not sub_cat.is_active:
@@ -243,11 +335,53 @@ async def sub_category_selected(callback: CallbackQuery, session, db_user=None):
         return
     await callback.answer()
     language = _glang(db_user) if db_user else _auto_lang(locals())
+    servers = await _servers_for_subcategory(session, sub_cat.id)
+    if servers and state is not None:
+        # زر تغيير سيرفر في القسم: لا نعرض المنتجات حتى يختار السيرفر.
+        header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
+        text = f"{header}🖥 اختر السيرفر الذي تريد الشراء منه:"
+        await callback.message.edit_text(text, reply_markup=store_servers_kb(sub_cat.id, servers, sub_cat.category_id))
+        return
+    if state is not None:
+        await state.update_data(server_id=None)
     await _show_subcategory(callback, session, sub_cat, language)
 
 
+@router.callback_query(F.data.startswith('svc_pick:'))
+async def subcategory_server_picked(callback: CallbackQuery, session, db_user=None, state: FSMContext = None):
+    """اختيار سيرفر لقسم فرعي ثم عرض منتجات ذلك السيرفر."""
+    parts = callback.data.split(':')
+    if len(parts) < 3:
+        await callback.answer("⚠️ بيانات السيرفر ناقصة", show_alert=True)
+        return
+    try:
+        sub_cat_id = int(parts[1])
+        server_id = int(parts[2])
+    except ValueError:
+        await callback.answer("⚠️ بيانات السيرفر غير صحيحة", show_alert=True)
+        return
+    sub_cat = await DynamicService.get_sub_category(session, sub_cat_id)
+    if not sub_cat or not sub_cat.is_active:
+        await callback.answer(I18nService.t('ux_games_266_15', _auto_lang(locals())), show_alert=True)
+        return
+    server = await StoreServerService.get(session, server_id)
+    if server is None or not server.is_active:
+        await callback.answer("⚠️ هذا السيرفر معطّل أو محذوف", show_alert=True)
+        return
+    if state is not None:
+        await state.update_data(
+            server_id=server.id,
+            server_scope=server.scope,
+            server_scope_id=server.scope_id,
+            server_margin_percent=str(server.margin_percent) if server.margin_percent is not None else "",
+        )
+    language = _glang(db_user) if db_user else _auto_lang(locals())
+    await callback.answer()
+    await _show_subcategory(callback, session, sub_cat, language, server=server, state=state)
+
+
 @router.message(StateFilter(None), SmmAppLabelFilter())
-async def catalog_label_selected(message: Message, session, db_user=None):
+async def catalog_label_selected(message: Message, session, db_user=None, state: FSMContext = None):
     """Open a رشق app when the user sends its name, e.g. ``تيك توك 🎵``.
 
     Older clients keep a ReplyKeyboard whose buttons send the label as a
@@ -263,6 +397,16 @@ async def catalog_label_selected(message: Message, session, db_user=None):
             reply_markup=back_to_main_kb(language),
         )
         return
+    servers = await _servers_for_subcategory(session, sub_cat.id)
+    if servers and state is not None:
+        from services.smm_catalog import button_label
+
+        header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
+        text = f"{header}🖥 اختر السيرفر الذي تريد الشراء منه:"
+        await message.answer(text, reply_markup=store_servers_kb(sub_cat.id, servers, sub_cat.category_id))
+        return
+    if state is not None:
+        await state.update_data(server_id=None)
     await _show_subcategory(message, session, sub_cat, language)
 
 def _product_head(product, icon: str) -> str:
@@ -278,32 +422,41 @@ def _product_head(product, icon: str) -> str:
 
 @router.callback_query(F.data.startswith('prod:'))
 async def product_selected(callback: CallbackQuery, session, db_user: User, state: FSMContext):
+    data = await state.get_data()
+    server_id = data.get('server_id')
     await state.clear()
     product_id = int(callback.data.split(':')[1])
     product = await DynamicService.get_product(session, product_id)
     if not product or product.status != ProductStatus.ACTIVE:
         await callback.answer(I18nService.t('ux_games_305_18', _auto_lang(locals())), show_alert=True)
         return
+    server = None
+    if server_id:
+        server = await StoreServerService.get(session, int(server_id))
+        if server is None or not server.is_active:
+            server = None
     await callback.answer()
     sub_cat = product.sub_category
     language = _glang(db_user)
-    price_display = await _dual_price(product.price_usd, db_user, session)
+    unit_price = await _server_unit_price(product, server)
+    price_display = await _dual_price(unit_price, db_user, session)
+    await state.update_data(product_id=product_id)
+    if server is not None:
+        await state.update_data(server_id=server.id)
     price_label = I18nService.t('price', language)
     confirm_q = I18nService.t('confirm_purchase_q', language)
     if product.requires_player_id:
         head = _product_head(product, '🎮')
         await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
-        await state.update_data(product_id=product_id)
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         head = _product_head(product, '📈')
         if product.requires_quantity:
             await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
-            await state.update_data(product_id=product_id)
             await state.set_state(SMMOrderStates.waiting_link)
         else:
             await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
-            await state.update_data(product_id=product_id, quantity=1)
+            await state.update_data(quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:
         head = _product_head(product, '📦')
@@ -331,7 +484,9 @@ async def player_id_received(message: Message, state: FSMContext, session, db_us
         await message.answer(f"⚠️ {esc(exc)}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
         return
     await state.update_data(target=player_id, quantity=1)
-    await message.answer(f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+    server = await _server_from_state(session, state)
+    unit_price = await _server_unit_price(product, server)
+    await message.answer(f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{unit_price}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_link)
 async def smm_link_received(message: Message, state: FSMContext, session):
@@ -351,13 +506,15 @@ async def smm_link_received(message: Message, state: FSMContext, session):
         await state.clear()
         return
     await state.update_data(target=link)
+    server = await _server_from_state(session, state)
+    unit_price = await _server_unit_price(product, server)
     if product.requires_quantity:
         await message.answer(f"{I18nService.t('ux_games_441_26', _auto_lang(locals()))}{product.min_quantity}{I18nService.t('ux_games_441_27', _auto_lang(locals()))}{product.max_quantity}")
         await state.set_state(SMMOrderStates.waiting_quantity)
     else:
         await state.update_data(quantity=1)
         sub_cat = product.sub_category
-        await message.answer(f"📈 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_450_28', _auto_lang(locals()))}{esc(link)}{I18nService.t('ux_games_450_29', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_450_30', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        await message.answer(f"📈 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_450_28', _auto_lang(locals()))}{esc(link)}{I18nService.t('ux_games_450_29', _auto_lang(locals()))}{unit_price}{I18nService.t('ux_games_450_30', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
 
 @router.message(SMMOrderStates.waiting_quantity)
 async def smm_quantity_received(message: Message, state: FSMContext, session):
@@ -383,7 +540,8 @@ async def smm_quantity_received(message: Message, state: FSMContext, session):
     if quantity > product.max_quantity:
         await message.answer(f"{I18nService.t('ux_games_485_34', _auto_lang(locals()))}{product.max_quantity}")
         return
-    total_price = ProductService.calculate_order_total(product, quantity)
+    server = await _server_from_state(session, state)
+    total_price = await _server_total_price(product, quantity, server)
     await state.update_data(quantity=quantity, total_price=str(total_price))
     sub_cat = product.sub_category
     link = data.get('target', '—')
@@ -481,7 +639,8 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
     fsm_data = await state.get_data()
     target = fsm_data.get('target', '')
     quantity = fsm_data.get('quantity', 1)
-    total_price = ProductService.calculate_order_total(product, quantity)
+    server = await _server_from_state(session, state)
+    total_price = await _server_total_price(product, quantity, server)
     promotion, promotion_discount = await PromotionService.get_best_promotion(session, product.id, total_price)
     if fulfillment == ProductFulfillmentType.INVENTORY.value and coupon_code:
         await callback.answer(I18nService.t('ux_games_678_49', _auto_lang(locals())), show_alert=True)
@@ -530,7 +689,8 @@ async def product_final_confirm(callback: CallbackQuery, session, db_user: User,
         await state.clear()
         return
     await callback.answer(I18nService.t('ux_games_767_51', _auto_lang(locals())))
-    total_price = ProductService.calculate_order_total(product, quantity)
+    server = await _server_from_state(session, state)
+    total_price = await _server_total_price(product, quantity, server)
     fulfillment = getattr(product.fulfillment_type, 'value', product.fulfillment_type)
     promotion, promotion_discount = await PromotionService.get_best_promotion(session, product.id, total_price)
     if fulfillment == ProductFulfillmentType.INVENTORY.value and coupon_code:

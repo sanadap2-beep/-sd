@@ -338,6 +338,16 @@ class AdminNumberServiceStates(StatesGroup):
     waiting_server_edit_value = State()
 
 
+class AdminStoreServerStates(StatesGroup):
+    """معالج إضافة/تعديل السيرفرات العامة لكل الأقسام."""
+    waiting_name = State()
+    waiting_emoji = State()
+    waiting_provider_kind = State()
+    waiting_provider = State()
+    waiting_margin = State()
+    waiting_edit_value = State()
+
+
 class AdminMaintenanceStates(StatesGroup):
     waiting_message = State()
 
