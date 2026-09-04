@@ -26,37 +26,37 @@ def deposit_methods_kb(
     if shamcash_manual_enabled:
         b.button(
             text="💵 شام كاش يدوي",
-            callback_data="deposit:shamcash_manual",
+            callback_data="deposit:shamcash_manual", style="primary",
         )
 
     if stars_enabled:
         b.button(
             text="⭐ نجوم تليجرام",
-            callback_data="deposit:stars",
+            callback_data="deposit:stars", style="primary",
         )
 
     if shamcash_auto_enabled:
         b.button(
             text="💳 شام كاش تلقائي",
-            callback_data="deposit:shamcash_auto",
+            callback_data="deposit:shamcash_auto", style="primary",
         )
 
     if usdt_auto_enabled:
         b.button(
             text="₮ USDT تلقائي",
-            callback_data="deposit:usdt_auto",
+            callback_data="deposit:usdt_auto", style="primary",
         )
 
     if usdt_manual_enabled:
         b.button(
             text="₮ USDT يدوي",
-            callback_data="deposit:usdt_manual",
+            callback_data="deposit:usdt_manual", style="primary",
         )
 
     if other_enabled:
         b.button(
             text="📞 طرق دفع أخرى",
-            callback_data="deposit:other",
+            callback_data="deposit:other", style="primary",
         )
 
     b.button(
@@ -76,7 +76,7 @@ def start_deposit_kb(method: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text="✅ ابدأ الشحن",
-        callback_data=f"deposit_start:{method}",
+        callback_data=f"deposit_start:{method}", style="primary",
     )
     b.button(
         text="🔙 رجوع",
@@ -217,7 +217,7 @@ def shamcash_invoice_kb(
 
     b.button(
         text="❌ إلغاء الفاتورة",
-        callback_data=f"sc_cancel:{invoice_id}",
+        callback_data=f"sc_cancel:{invoice_id}", style="danger",
     )
     b.adjust(1)
     return b.as_markup()
@@ -249,7 +249,7 @@ def usdt_auto_invoice_kb(
 
     b.button(
         text="❌ إلغاء الفاتورة",
-        callback_data=f"usdt_cancel:{invoice_id}",
+        callback_data=f"usdt_cancel:{invoice_id}", style="danger",
     )
     b.adjust(1)
     return b.as_markup()
@@ -263,6 +263,6 @@ def cancel_deposit_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(
         text="❌ إلغاء",
-        callback_data="menu:deposit",
+        callback_data="menu:deposit", style="primary",
     )
     return b.as_markup()

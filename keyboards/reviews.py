@@ -11,7 +11,7 @@ def rating_kb(order_id: int) -> InlineKeyboardMarkup:
             text="⭐" * rating,
             callback_data=f"review:rating:{order_id}:{rating}",
         )
-    builder.button(text="❌ إلغاء", callback_data="menu:account")
+    builder.button(text="❌ إلغاء", callback_data="menu:account", style="primary")
     builder.adjust(1)
     return builder.as_markup()
 

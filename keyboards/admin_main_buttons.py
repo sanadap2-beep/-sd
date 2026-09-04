@@ -13,10 +13,10 @@ def main_buttons_kb(buttons: list[MainMenuButton]) -> InlineKeyboardMarkup:
         rows.append([
             InlineKeyboardButton(text=f"{mark} {label}", callback_data=f"mb:view:{button.id}")
         ])
-    rows.append([InlineKeyboardButton(text="➕ إضافة زر", callback_data="mb:add")])
-    rows.append([InlineKeyboardButton(text="⚡ إضافة زر جاهز", callback_data="mb:presets")])
+    rows.append([InlineKeyboardButton(text="➕ إضافة زر", callback_data="mb:add", style="success")])
+    rows.append([InlineKeyboardButton(text="⚡ إضافة زر جاهز", callback_data="mb:presets", style="danger")])
     rows.append([InlineKeyboardButton(text="🧪 فحص الأزرار المكسورة", callback_data="mb:check")])
-    rows.append([InlineKeyboardButton(text="♻️ استعادة الافتراضي", callback_data="mb:reset")])
+    rows.append([InlineKeyboardButton(text="♻️ استعادة الافتراضي", callback_data="mb:reset", style="danger")])
     rows.append([InlineKeyboardButton(text="⬅️ لوحة الإدارة", callback_data="admin:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -33,7 +33,7 @@ def main_button_detail_kb(button_id: str, enabled: bool) -> InlineKeyboardMarkup
             InlineKeyboardButton(text="⬆️ رفع", callback_data=f"mb:move:{button_id}:up"),
             InlineKeyboardButton(text="⬇️ تنزيل", callback_data=f"mb:move:{button_id}:down"),
         ],
-        [InlineKeyboardButton(text="🗑 حذف", callback_data=f"mb:delete:{button_id}")],
+        [InlineKeyboardButton(text="🗑 حذف", callback_data=f"mb:delete:{button_id}", style="danger")],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:main_buttons")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -42,7 +42,7 @@ def main_button_detail_kb(button_id: str, enabled: bool) -> InlineKeyboardMarkup
 def main_button_presets_kb() -> InlineKeyboardMarkup:
     rows = []
     for key, (label, _action) in MainButtonService.PRESETS.items():
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"mb:preset:{key}")])
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"mb:preset:{key}", style="danger")])
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:main_buttons")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

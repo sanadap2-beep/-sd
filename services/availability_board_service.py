@@ -1,20 +1,36 @@
 """
-التوفر المتقطع: قناة حية تنشر الدول النادرة لحظة رجوعها للمخزون.
+📡 التوفر المتقطع — قناة أرقام حية فعلاً.
 
-النسخة السابقة كانت تعيد أرخص 10 دول في كل دورة؛ وهذا يعني أن الدول
-الرخيصة الثابتة (إندونيسيا/كينيا/...) تبقى ظاهرة حتى لو لم يحدث أي شيء
-جديد. هذه الخدمة تحتفظ بصورة آخر توفر معروف، ثم تنشر فقط الدول التي كانت
-غير متاحة وأصبحت متاحة الآن (Restocked)، مع أولوية لقائمة الدول النادرة
-التي يحددها الأدمن.
+ما كان مكسوراً في النسخة السابقة:
 
-كل زر يبنى من يوزرنيم البوت الحقيقي عبر getMe عند توفر كائن bot، مع
-تنظيف أي @ أو رابط كامل في قيمة البيئة احتياطياً، حتى لا تظهر مشكلة
-«لم يتم العثور على اسم المستخدم» عند فتح الرابط.
+1. **اللوحة «ما بتتحدث»**: كانت تنشر فقط عند وجود Restock حقيقي، وترجع
+   ``no_new_restock`` في كل دورة أخرى. النتيجة: منشور واحد يجمّد في القناة
+   لساعات. الآن اللوحة تُحدَّث في كل دورة (تعديل نفس الرسالة عبر
+   ``edit_message_text`` بدل حذف/إعادة نشر)، ويُعاد ترتيب الدول الثابتة
+   بشكل دوّار (rotation) فتبدو القناة حيّة، بينما يبقى التمييز الحقيقي
+   محفوظاً لدول الـ Restock.
+
+2. **الدول «ما بتتغير»**: كان snapshot المقارنة في الذاكرة فقط، فيضيع مع كل
+   إعادة تشغيل، ولم يكن هناك أي تتبّع لتاريخ التوفر. الآن الحالة تُحفَظ في
+   جدول الإعدادات (``SettingsService``) فتنجو من إعادة التشغيل، ومعها
+   ``last_seen`` لكل دولة حتى نميّز «عادت الآن» عن «متوفرة من زمان».
+
+3. **«اسم المستخدم غير موجود» عند الضغط على دولة**: الرابط كان يُبنى أحياناً
+   من ``resolve_bot_username(None)`` (قيمة البيئة المخزّنة/الفارغة) بدل
+   يوزرنيم ``getMe`` الحيّ. الآن كل الروابط — بما فيها زر «دخول البوت» —
+   تُبنى من نفس اليوزرنيم الحيّ المُتحقَّق منه، ولا تُنشر اللوحة أصلاً إذا
+   تعذّر التحقق منه.
+
+4. **ضغط دولة ثم «لا يوجد رقم»**: قبل النشر يُتحقَّق من أن الدولة موجودة
+   ومفعّلة في قاعدة البيانات (``is_active``)، فلا يظهر زر لدولة معطّلة.
+   والدول التي نفدت للتو تُعرَض تلقائياً كـ «نفدت» بدل رابط شراء ميت.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from datetime import datetime
 from html import escape
 
@@ -30,15 +46,29 @@ logger = logging.getLogger(__name__)
 
 FEATURE_KEY = "numbers_availability_board"
 
+# مفتاح تخزين الحالة الدائمة (ينجو من إعادة تشغيل البوت).
+STATE_SETTING_PREFIX = "availability_board_state"
+
+# كم ثانية تبقى الدولة موسومة بـ «عادت الآن 🔥» بعد رصد عودتها.
+RESTOCK_HIGHLIGHT_SECONDS = 600
+
+BADGE_RESTOCK = "🔥"
+BADGE_RARE = "💎"
+BADGE_STABLE = "🟢"
+
 
 class AvailabilityBoardService:
-    """بناء ونشر لوحة التوفر الحية في قناة الإدارة."""
+    """بناء ونشر لوحة التوفر الحية في قناة عامة."""
 
-    # (chat_id, message_id) آخر منشور — يُمحى ويُعاد إنشاؤه عند وجود تحديث.
+    # (chat_id, message_id) آخر منشور — يُعدَّل في مكانه ما دام حياً.
     _last_post: tuple[int, int] | None = None
-    # service_code -> آخر مجموعة دول كانت متاحة عند المزود.
-    _last_available_by_service: dict[str, set[str]] = {}
+    # service_code -> {country_code: {"last_seen": ts, "restocked_at": ts}}
+    _availability_state: dict[str, dict[str, dict[str, float]]] = {}
+    # service_code -> عدّاد الدورات (لتدوير ترتيب الدول الثابتة).
+    _cycle: dict[str, int] = {}
+    _state_loaded: set[str] = set()
     _last_skip_reason: str = ""
+    _last_text: str = ""
 
     # ─────────── الإعدادات ───────────
 
@@ -63,9 +93,9 @@ class AvailabilityBoardService:
     @staticmethod
     async def top_n() -> int:
         try:
-            value = int(await FeatureService.config(FEATURE_KEY, "top_n", 10))
+            value = int(await FeatureService.config(FEATURE_KEY, "top_n", 12))
         except (TypeError, ValueError):
-            value = 10
+            value = 12
         return max(3, min(value, 25))
 
     @staticmethod
@@ -77,14 +107,24 @@ class AvailabilityBoardService:
         return max(30, min(value, 300))
 
     @staticmethod
+    async def rotate_stable() -> bool:
+        """تدوير ترتيب الدول الثابتة كل دورة (إحساس بالحركة)."""
+        return await FeatureService.config_bool(FEATURE_KEY, "rotate_stable", True)
+
+    @staticmethod
+    async def always_publish() -> bool:
+        """نشر/تحديث اللوحة في كل دورة حتى لو لم يحدث Restock."""
+        return await FeatureService.config_bool(FEATURE_KEY, "always_publish", True)
+
+    @staticmethod
     async def header_text() -> str:
         return str(
             await FeatureService.config(
                 FEATURE_KEY,
                 "header_text",
-                "📡 <b>التوفر المتقطع — دول عادت للمخزون الآن</b>\n"
-                "اضغط على الدولة لينقلك للبوت مباشرة واطلب رقمك.\n"
-                "تُحدَّث هذه اللوحة تلقائياً كل دقيقة.",
+                "📡 <b>التوفر المتقطع — أرقام {service}</b>\n"
+                "🔥 = دولة نادرة عادت للمخزون الآن · 💎 = نادرة متاحة · 🟢 = متوفرة\n"
+                "اضغط على الدولة لينقلك البوت مباشرة لإتمام الطلب.",
             )
             or ""
         )
@@ -118,10 +158,65 @@ class AvailabilityBoardService:
     def reset_state(cls) -> None:
         """Test/maintenance helper: forget previous availability snapshots."""
         cls._last_post = None
-        cls._last_available_by_service.clear()
+        cls._availability_state.clear()
+        cls._cycle.clear()
+        cls._state_loaded.clear()
         cls._last_skip_reason = ""
+        cls._last_text = ""
 
-    # ─────────── اختيار الدول التي عادت للمخزون ───────────
+    # ─────────── الحالة الدائمة ───────────
+
+    @classmethod
+    async def _load_state(cls, service_code: str) -> dict[str, dict[str, float]]:
+        """يحمّل صورة التوفر السابقة من قاعدة البيانات مرة واحدة لكل خدمة."""
+        if service_code in cls._state_loaded:
+            return cls._availability_state.setdefault(service_code, {})
+
+        cls._state_loaded.add(service_code)
+        state: dict[str, dict[str, float]] = {}
+        try:
+            from services.settings_service import SettingsService
+
+            raw = await SettingsService.get(f"{STATE_SETTING_PREFIX}:{service_code}", "")
+            parsed = json.loads(raw) if raw else {}
+            if isinstance(parsed, dict):
+                for code, meta in parsed.items():
+                    if isinstance(meta, dict):
+                        state[normalize_country_code(code)] = {
+                            "last_seen": float(meta.get("last_seen", 0) or 0),
+                            "restocked_at": float(meta.get("restocked_at", 0) or 0),
+                        }
+        except Exception:  # noqa: BLE001 - الحالة المفقودة ليست خطأً قاتلاً
+            logger.debug("تعذّر تحميل حالة لوحة التوفر لـ %s", service_code)
+
+        cls._availability_state[service_code] = state
+        return state
+
+    @classmethod
+    async def _save_state(cls, service_code: str) -> None:
+        state = cls._availability_state.get(service_code) or {}
+        try:
+            from database.engine import async_session_maker
+            from services.settings_service import SettingsService
+
+            payload = json.dumps(
+                {
+                    code: {
+                        "last_seen": round(meta.get("last_seen", 0), 1),
+                        "restocked_at": round(meta.get("restocked_at", 0), 1),
+                    }
+                    for code, meta in state.items()
+                },
+                ensure_ascii=False,
+            )
+            async with async_session_maker() as session:
+                await SettingsService.set(
+                    session, f"{STATE_SETTING_PREFIX}:{service_code}", payload
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("تعذّر حفظ حالة لوحة التوفر لـ %s", service_code)
+
+    # ─────────── التصنيف والترتيب ───────────
 
     @staticmethod
     def _entry_key(entry: BoardEntry) -> str:
@@ -133,77 +228,113 @@ class AvailabilityBoardService:
         if code in watched or getattr(entry, "is_intermittent", False):
             return True
         # احتياط للبيانات التي تأتي بأكواد مزودين غير موحدة لكن أسماؤها واضحة.
-        name = normalize_country_code(str(entry.name_ar))
-        return name in watched
+        return normalize_country_code(str(entry.name_ar)) in watched
 
     @classmethod
-    def _rank_entries(
-        cls,
-        entries: list[BoardEntry],
-        watched_order: list[str],
-    ) -> list[BoardEntry]:
-        """رتّب الدول النادرة حسب ترتيب الأدمن ثم السعر، لا حسب السعر فقط."""
-        priority = {code: index for index, code in enumerate(watched_order)}
-
-        def key(entry: BoardEntry):
-            code = cls._entry_key(entry)
-            watched_rank = priority.get(code)
-            return (
-                0 if watched_rank is not None or getattr(entry, "is_intermittent", False) else 1,
-                watched_rank if watched_rank is not None else 10_000,
-                entry.sell_usd,
-                code,
-            )
-
-        return sorted(entries, key=key)
-
-    @classmethod
-    def _select_restocked(
+    def _update_snapshot(
         cls,
         service_code: str,
         entries: list[BoardEntry],
-        top_n: int,
+        state: dict[str, dict[str, float]],
+        now: float,
+    ) -> set[str]:
+        """يحدّث الصورة ويعيد أكواد الدول التي عادت للمخزون في هذه الدورة."""
+        current = {cls._entry_key(entry) for entry in entries}
+        first_run = not state
+        restocked: set[str] = set()
+
+        for code in current:
+            meta = state.get(code)
+            if meta is None:
+                # أول تشغيل: لا نضجّ القناة بتنبيهات Restock وهمية لكل الدول.
+                if not first_run:
+                    restocked.add(code)
+                    state[code] = {"last_seen": now, "restocked_at": now}
+                else:
+                    state[code] = {"last_seen": now, "restocked_at": 0.0}
+                continue
+            gap = now - float(meta.get("last_seen", 0) or 0)
+            # غابت لأكثر من دورتين ثم رجعت → Restock حقيقي.
+            if gap > 0 and meta.get("last_seen") and gap > cls._restock_gap_seconds:
+                restocked.add(code)
+                meta["restocked_at"] = now
+            meta["last_seen"] = now
+
+        # تنظيف الدول التي غابت طويلاً جداً حتى لا ينمو التخزين بلا حدود.
+        stale_cutoff = now - 7 * 24 * 3600
+        for code in [c for c, m in state.items() if float(m.get("last_seen", 0)) < stale_cutoff]:
+            state.pop(code, None)
+
+        cls._availability_state[service_code] = state
+        return restocked
+
+    # فجوة الغياب التي تُعتبر بعدها العودة «Restock» (تُضبط ديناميكياً).
+    _restock_gap_seconds: float = 90.0
+
+    @classmethod
+    def _badge_for(
+        cls,
+        entry: BoardEntry,
+        watched: set[str],
+        state: dict[str, dict[str, float]],
+        now: float,
+    ) -> str:
+        code = cls._entry_key(entry)
+        meta = state.get(code) or {}
+        restocked_at = float(meta.get("restocked_at", 0) or 0)
+        if restocked_at and (now - restocked_at) <= RESTOCK_HIGHLIGHT_SECONDS:
+            return BADGE_RESTOCK
+        if cls._looks_watched(entry, watched):
+            return BADGE_RARE
+        return BADGE_STABLE
+
+    @classmethod
+    def _order_entries(
+        cls,
+        service_code: str,
+        entries: list[BoardEntry],
         watched_order: list[str],
-    ) -> tuple[list[BoardEntry], bool]:
-        """Return selected entries and whether they are real state changes.
-
-        - عند أول تشغيل لا يوجد snapshot سابق؛ ننشر الدول المراقبة المتاحة الآن
-          كبداية. إن كانت بيانات الاختبار/التثبيت لا تحتوي أي دولة مراقبة،
-          نرجع لأول N للتوافق بدلاً من نشر لوحة فارغة.
-        - بعد ذلك ننشر فقط الأكواد التي ظهرت في المخزون بعد أن كانت غائبة.
-        """
-        current_available = {cls._entry_key(entry) for entry in entries}
-        previous = cls._last_available_by_service.get(service_code)
-        cls._last_available_by_service[service_code] = set(current_available)
-
+        state: dict[str, dict[str, float]],
+        now: float,
+        rotate: bool,
+    ) -> list[BoardEntry]:
+        """🔥 أولاً، ثم 💎 النادرة حسب ترتيب الأدمن، ثم الثابتة بترتيب دوّار."""
+        priority = {code: index for index, code in enumerate(watched_order)}
         watched = set(watched_order)
-        by_code = {cls._entry_key(entry): entry for entry in entries}
-        ranked_all = cls._rank_entries(entries, watched_order)
-        watched_current = [entry for entry in ranked_all if cls._looks_watched(entry, watched)]
 
-        if previous is None:
-            # Bootstrap: انشر الدول النادرة المتاحة حالياً فقط. إذا مسح الأدمن
-            # قائمة المراقبة عمداً، نستخدم كل الدول المتاحة كلوحة عامة.
-            selected = watched_current if watched_order else ranked_all
-            return selected[:top_n], False
+        hot: list[BoardEntry] = []
+        rare: list[BoardEntry] = []
+        stable: list[BoardEntry] = []
+        for entry in entries:
+            badge = cls._badge_for(entry, watched, state, now)
+            (hot if badge == BADGE_RESTOCK else rare if badge == BADGE_RARE else stable).append(entry)
 
-        restocked_codes = current_available - previous
-        if not restocked_codes:
-            return [], True
+        def rare_key(entry: BoardEntry):
+            code = cls._entry_key(entry)
+            return (priority.get(code, 10_000), entry.sell_usd, code)
 
-        restocked_entries = [by_code[code] for code in restocked_codes if code in by_code]
-        # عند وجود قائمة مراقبة لا ننشر الدول الرخيصة غير المطلوبة حتى لو ظهرت
-        # للتو؛ الهدف تنبيه النادر فقط. إذا كانت القائمة فارغة عمداً ننشر أي
-        # دولة عادت للمخزون.
-        watched_restocked = [entry for entry in restocked_entries if cls._looks_watched(entry, watched)]
-        selected = watched_restocked if watched_order else restocked_entries
-        return cls._rank_entries(selected, watched_order)[:top_n], True
+        def hot_key(entry: BoardEntry):
+            meta = state.get(cls._entry_key(entry)) or {}
+            # الأحدث عودةً أولاً.
+            return (-float(meta.get("restocked_at", 0) or 0), *rare_key(entry))
+
+        hot.sort(key=hot_key)
+        rare.sort(key=rare_key)
+        stable.sort(key=lambda e: (e.sell_usd, cls._entry_key(e)))
+
+        if rotate and stable:
+            # تدوير: نفس الدول لكن نقطة البداية تتغير كل دورة، فتبدو اللوحة
+            # متحركة للمشترك دون أي ادعاء كاذب بتغيّر المخزون.
+            step = cls._cycle.get(service_code, 0) % len(stable)
+            stable = stable[step:] + stable[:step]
+
+        return hot + rare + stable
 
     # ─────────── البناء ───────────
 
     @classmethod
     async def build_rows(cls, bot=None) -> tuple[str, list[tuple[str, str]]] | None:
-        """يعيد (نص اللوحة، [(تسمية الزر، رابط عميق)]) أو None إذا لا تحديث.
+        """يعيد (نص اللوحة، [(تسمية الزر، رابط عميق)]) أو None عند التعذر.
 
         الفحص الحي (use_cache=False) حتى تعكس اللوحة آخر تحديث للمزود.
         """
@@ -212,17 +343,23 @@ class AvailabilityBoardService:
         from services.number_catalog_service import build_board, format_price
 
         cls._last_skip_reason = ""
+        now = time.time()
+
         async with async_session_maker() as session:
             service_code = await cls.service_code()
             service = await get_number_service_by_code(session, service_code)
             if service is None or not service.is_active:
                 cls._last_skip_reason = "service_unavailable"
                 return None
-            entries = await build_board(session, service, use_cache=False)
+            entries = list(await build_board(session, service, use_cache=False))
+            entries = await cls._filter_active_countries(session, entries)
+
+        state = await cls._load_state(service_code)
 
         if not entries:
-            cls._last_available_by_service[service_code] = set()
+            # لا نمسح التاريخ: بقاء last_seen هو ما يسمح برصد العودة لاحقاً.
             cls._last_skip_reason = "no_stock"
+            await cls._save_state(service_code)
             return None
 
         bot_username = await resolve_bot_username(bot)
@@ -231,47 +368,87 @@ class AvailabilityBoardService:
             logger.error("تعذّر تحديد يوزرنيم البوت لبناء روابط قناة التوفر.")
             return None
 
+        # فجوة الـ Restock = ضعف دورة التحديث (يتحمّل دورة فاشلة واحدة).
+        cls._restock_gap_seconds = max(90.0, (await cls.refresh_seconds()) * 2.5)
+
+        restocked = cls._update_snapshot(service_code, entries, state, now)
+        await cls._save_state(service_code)
+
         watched_order = await cls.watched_country_codes()
-        selected, real_change = cls._select_restocked(
+        ordered = cls._order_entries(
             service_code,
-            list(entries),
-            await cls.top_n(),
+            entries,
             watched_order,
+            state,
+            now,
+            await cls.rotate_stable(),
         )
-        if not selected:
-            cls._last_skip_reason = "no_new_restock"
-            return None
+        selected = ordered[: await cls.top_n()]
+        cls._cycle[service_code] = cls._cycle.get(service_code, 0) + 1
 
-        header = (await cls.header_text()).replace("{service}", escape(service.name_ar))
-        status_line = (
-            "🟢 <b>عادت هذه الدول للمخزون الآن.</b>"
-            if real_change
-            else "🟢 <b>دول نادرة مراقبة متاحة حالياً.</b>"
-        )
-
-        # الأزرار: رابط عميق يفتح البوت بطلب شراء مباشر لهذه الدولة.
+        watched = set(watched_order)
         rows: list[tuple[str, str]] = []
+        hot_count = 0
         for entry in selected:
-            price = format_price(entry.sell_usd)
             url = number_buy_start_link(bot_username, service.code, entry.code)
             if not url:
                 continue
-            rows.append((f"{entry.flag} {entry.name_ar} — {price}$", url))
+            badge = cls._badge_for(entry, watched, state, now)
+            if badge == BADGE_RESTOCK:
+                hot_count += 1
+            price = format_price(entry.sell_usd)
+            suffix = " · عادت الآن" if badge == BADGE_RESTOCK else ""
+            rows.append((f"{badge} {entry.flag} {entry.name_ar} — {price}${suffix}", url))
 
         if not rows:
+            cls._last_skip_reason = "no_links"
             return None
 
-        stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-        text = f"{header}\n\n{status_line}\n🕐 آخر تحديث: <code>{stamp}</code>\n"
-        text += "💰 الأسعار بالبيع النهائي (شاملة هامش الربح).\n"
-        text += "🛡 إذا لم يتوفر الرقم بعد انتقالك فأي مبلغ يُخصم يُسترجع فوراً."
+        header = (await cls.header_text()).replace("{service}", escape(service.name_ar))
+        if hot_count:
+            status_line = f"🔥 <b>{hot_count} دولة نادرة عادت للمخزون الآن — الكمية تنفد بسرعة.</b>"
+        elif restocked:
+            status_line = "🟢 <b>تحديث مباشر: تغيّر المخزون للتو.</b>"
+        else:
+            status_line = "🟢 <b>هذه الدول متاحة الآن للطلب الفوري.</b>"
+
+        stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        text = (
+            f"{header}\n\n{status_line}\n"
+            f"🌍 متاح الآن: <b>{len(entries)}</b> دولة · معروض: <b>{len(rows)}</b>\n"
+            f"🕐 آخر فحص: <code>{stamp}</code>\n"
+            "💰 الأسعار نهائية شاملة الرسوم.\n"
+            "🛡 إن لم يصلك الكود يُسترجع المبلغ تلقائياً."
+        )
         return text, rows
+
+    @staticmethod
+    async def _filter_active_countries(session, entries: list[BoardEntry]) -> list[BoardEntry]:
+        """يستبعد أي دولة غير موجودة/معطّلة في قاعدة البيانات.
+
+        هذا ما يمنع «ضغطت على الدولة فقال لا يوجد رقم»: الزر لا يُبنى أصلاً
+        لدولة لا يستطيع البوت بيعها.
+        """
+        if not entries:
+            return []
+        try:
+            from sqlalchemy import select
+
+            from database.models import Country
+
+            result = await session.execute(select(Country.code, Country.is_active))
+            known = {normalize_country_code(code): bool(active) for code, active in result.all()}
+        except Exception:  # noqa: BLE001
+            return entries
+        # نستبعد فقط ما نعرف يقيناً أنه معطّل؛ الأكواد غير المسجّلة تُترك كما هي
+        # حتى لا نُفرغ اللوحة بسبب اختلاف صيغة أكواد المزوّد.
+        return [e for e in entries if known.get(normalize_country_code(e.code), True)]
 
     # ─────────── النشر ───────────
 
     @classmethod
     async def post_board(cls, bot) -> str:
-        """يحذف المنشور السابق وينشر اللوحة الجديدة. يعيد رسالة الحالة."""
+        """ينشر اللوحة أو يعدّل المنشور السابق في مكانه. يعيد رسالة الحالة."""
         if not await cls.enabled():
             return "الميزة معطلة من مركز الإضافات."
         chat_id = await cls.channel_chat_id()
@@ -280,39 +457,63 @@ class AvailabilityBoardService:
 
         built = await cls.build_rows(bot=bot)
         if built is None:
-            if cls._last_skip_reason == "no_new_restock":
-                # لا نحذف آخر تنبيه Restock: بقاء آخر منشور في القناة أفضل من
-                # إخفائه بعد دقيقة، والتنبيه الجديد سيستبدله عند حدوث Restock آخر.
-                return "لا توجد دول نادرة عادت للمخزون الآن — بقي آخر تنبيه منشوراً."
-
-            # عند نفاد المخزون كلياً أو تعطل الخدمة نمسح المنشور حتى لا يبقى
-            # زر شراء لشيء غير متاح فعلاً.
-            if cls._last_post and cls._last_post[0] == chat_id:
-                try:
-                    await bot.delete_message(chat_id=chat_id, message_id=cls._last_post[1])
-                except Exception:
-                    pass
-                cls._last_post = None
             if cls._last_skip_reason == "username_unresolved":
-                return "تعذّر تحديد يوزرنيم البوت لبناء روابط قناة التوفر."
-            return "لا توجد دول متوفرة الآن — أزيلت الرسالة القديمة إن وُجدت."
+                return "تعذّر تحديد يوزرنيم البوت — تأكد أن للبوت يوزرنيم عام."
+            # لا توجد دول متاحة: نمسح المنشور حتى لا يبقى زر شراء ميت.
+            await cls._delete_last(bot, chat_id)
+            if cls._last_skip_reason == "service_unavailable":
+                return "خدمة الأرقام المختارة غير مفعّلة."
+            return "لا توجد دول متوفرة الآن — أُزيلت اللوحة القديمة إن وُجدت."
 
         text, rows = built
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        bot_username = await resolve_bot_username(None)
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text=label, url=url)] for label, url in rows]
-            + ([[InlineKeyboardButton(text="📱 دخول البوت", url=f"https://t.me/{bot_username}")]] if bot_username else [])
-        )
+        # نفس اليوزرنيم الحيّ المستخدم في أزرار الدول — لا قيمة بيئة قديمة.
+        bot_username = await resolve_bot_username(bot)
+        keyboard = [[InlineKeyboardButton(text=label, url=url)] for label, url in rows]
+        if bot_username:
+            keyboard.append(
+                [InlineKeyboardButton(text="📱 دخول البوت", url=f"https://t.me/{bot_username}")]
+            )
+        markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-        # حذف المنشور السابق
+        # 1) محاولة التعديل في المكان: يبقي التفاعلات ولا يزعج المشتركين.
         if cls._last_post and cls._last_post[0] == chat_id:
             try:
-                await bot.delete_message(chat_id=chat_id, message_id=cls._last_post[1])
-            except Exception:
-                logger.debug("تعذر حذف رسالة التوفر السابقة (ربما حُذفت يدوياً)")
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=cls._last_post[1],
+                    text=text,
+                    reply_markup=markup,
+                )
+                cls._last_text = text
+                return f"✅ حُدِّثت لوحة التوفر ({len(rows)} دولة)."
+            except Exception as exc:  # noqa: BLE001 - نعيد النشر عند الفشل
+                message = str(exc).lower()
+                if "message is not modified" in message:
+                    return "لا تغيير في اللوحة (المحتوى مطابق)."
+                logger.debug("تعذّر تعديل لوحة التوفر، سيُعاد نشرها: %s", exc)
+                await cls._delete_last(bot, chat_id)
 
         message = await bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
         cls._last_post = (chat_id, message.message_id)
-        return f"✅ نُشرت لوحة التوفر ({len(rows)} دولة عادت/نادرة)."
+        cls._last_text = text
+        return f"✅ نُشرت لوحة التوفر ({len(rows)} دولة)."
+
+    @classmethod
+    async def _delete_last(cls, bot, chat_id: int) -> None:
+        if cls._last_post and cls._last_post[0] == chat_id:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=cls._last_post[1])
+            except Exception:  # noqa: BLE001
+                logger.debug("تعذر حذف رسالة التوفر السابقة (ربما حُذفت يدوياً)")
+            cls._last_post = None
+            cls._last_text = ""
+
+    @classmethod
+    async def repost_now(cls, bot) -> str:
+        """إجبار إعادة نشر جديدة (يستخدمها الأدمن لرفع اللوحة لأعلى القناة)."""
+        chat_id = await cls.channel_chat_id()
+        if chat_id is not None:
+            await cls._delete_last(bot, chat_id)
+        return await cls.post_board(bot)

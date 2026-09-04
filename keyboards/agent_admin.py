@@ -9,8 +9,8 @@ def agent_admin_list_kb(agents, revoked) -> InlineKeyboardMarkup:
     rows = b.inline_keyboard
     rows.append(
         [
-            InlineKeyboardButton(text="🔑 إنشاء كود وكالة", callback_data="admin:agent_create"),
-            InlineKeyboardButton(text="📋 الأكواد المتوفرة", callback_data="admin:agent_codes"),
+            InlineKeyboardButton(text="🔑 إنشاء كود وكالة", callback_data="admin:agent_create", style="primary"),
+            InlineKeyboardButton(text="📋 الأكواد المتوفرة", callback_data="admin:agent_codes", style="primary"),
         ]
     )
     for profile in agents[:30]:
@@ -20,7 +20,7 @@ def agent_admin_list_kb(agents, revoked) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"🟢 {name} · خصم {profile.percent}%",
-                    callback_data=f"admin:agent_detail:{profile.user_id}",
+                    callback_data=f"admin:agent_detail:{profile.user_id}", style="primary",
                 )
             ]
         )
@@ -31,7 +31,7 @@ def agent_admin_list_kb(agents, revoked) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"🔴 {name} (مسلوب)",
-                    callback_data=f"admin:agent_detail:{profile.user_id}",
+                    callback_data=f"admin:agent_detail:{profile.user_id}", style="primary",
                 )
             ]
         )
@@ -54,7 +54,7 @@ def agent_codes_kb(codes) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=f"🚫 إلغاء {code.code[-5:]}",
-                    callback_data=f"admin:agent_void:{code.id}",
+                    callback_data=f"admin:agent_void:{code.id}", style="danger",
                 )
             ]
         )
@@ -70,17 +70,17 @@ def agent_detail_kb(profile) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="➕ زيادة نسبة الخصم (1%)",
-                    callback_data=f"admin:agent_pct:{uid}:+1",
+                    callback_data=f"admin:agent_pct:{uid}:+1", style="primary",
                 ),
                 InlineKeyboardButton(
                     text="➖ تقليل نسبة الخصم (1%)",
-                    callback_data=f"admin:agent_pct:{uid}:-1",
+                    callback_data=f"admin:agent_pct:{uid}:-1", style="primary",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text="🚫 إلغاء الوكالة", callback_data=f"admin:agent_revoke:{uid}"
-                )
+                    text="🚫 إلغاء الوكالة", callback_data=f"admin:agent_revoke:{uid}", 
+                style="danger")
             ],
             rows[0],
         ]

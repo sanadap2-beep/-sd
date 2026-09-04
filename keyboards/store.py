@@ -52,7 +52,7 @@ def store_home_kb(
             if entry.action == "num_hub":
                 b.button(
                     text=entry.label or I18nService.t("menu_numbers", language),
-                    callback_data="num_hub",
+                    callback_data="num_hub", style="success",
                 )
             elif entry.action == "webapp":
                 if webapp_url:
@@ -80,20 +80,20 @@ def store_home_kb(
             }.get(service.code.lower(), service_name)
         b.button(
             text=f"{service.emoji} {service_name}",
-            callback_data=f"num_svc:{service.code}",
+            callback_data=f"num_svc:{service.code}", style="success",
         )
 
     for category in categories or []:
         b.button(
             text=f"{category.emoji} {category.name_ar}",
-            callback_data=f"cat:{category.id}",
+            callback_data=f"cat:{category.id}", style="success",
         )
 
     for key in SECTION_LABELS:
-        b.button(text=section_label(key, language), callback_data=f"store:section:{key}")
+        b.button(text=section_label(key, language), callback_data=f"store:section:{key}", style="success")
 
-    b.button(text=I18nService.t("store_search", language), callback_data="menu:search")
-    b.button(text=I18nService.t("store_cart", language), callback_data="menu:cart")
+    b.button(text=I18nService.t("store_search", language), callback_data="menu:search", style="success")
+    b.button(text=I18nService.t("store_cart", language), callback_data="menu:cart", style="primary")
     b.button(
         text=I18nService.t("store_product_request", language),
         callback_data="menu:product_request",
@@ -119,7 +119,7 @@ def store_empty_section_kb(language: str = "ar") -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=I18nService.t("store_back", language),
-                    callback_data="store:home",
+                    callback_data="store:home", style="success",
                 )
             ],
             [
@@ -143,17 +143,17 @@ def store_products_kb(
         rows.append([
             InlineKeyboardButton(
                 text=f"🛒 {name} · {product.price_usd}$",
-                callback_data=f"prod:{product.id}",
+                callback_data=f"prod:{product.id}", style="success",
             )
         ])
     rows.append([
         InlineKeyboardButton(
             text=I18nService.t("store_back", language),
-            callback_data="store:home",
+            callback_data="store:home", style="success",
         ),
         InlineKeyboardButton(
             text=I18nService.t("store_cart", language),
-            callback_data="menu:cart",
+            callback_data="menu:cart", style="primary",
         ),
     ])
     return InlineKeyboardMarkup(inline_keyboard=rows)

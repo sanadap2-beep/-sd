@@ -39,6 +39,10 @@ def format_percent(value: Decimal | None) -> str:
 
 
 class MarginService:
+    # حدود الهامش متاحة كسمات صنف أيضاً (تستخدمها لوحة الأدمن للتحقق).
+    MIN_MARGIN: Decimal = MIN_MARGIN
+    MAX_MARGIN: Decimal = MAX_MARGIN
+
     # ─────────── الحل (التحديد) ───────────
 
     @staticmethod

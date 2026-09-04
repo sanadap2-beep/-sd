@@ -44,7 +44,7 @@ def providers_list_kb(
 
     b.button(
         text="➕ إضافة مزود جديد",
-        callback_data="admin:aprov_add",
+        callback_data="admin:aprov_add", style="success",
     )
     b.button(
         text="🔙 رجوع",
@@ -219,7 +219,7 @@ def provider_detail_kb(
 
     b.button(
         text="💰 تحديث الرصيد",
-        callback_data=(f"admin:aprov_balance:{provider.id}"),
+        callback_data=(f"admin:aprov_balance:{provider.id}"), style="primary",
     )
     b.button(
         text=(f"🔄 مزامنة الخدمات ({provider.total_services or 0})"),
@@ -257,7 +257,7 @@ def provider_detail_kb(
 
     b.button(
         text="🗑 حذف المزود",
-        callback_data=(f"admin:aprov_delete_confirm:{provider.id}"),
+        callback_data=(f"admin:aprov_delete_confirm:{provider.id}"), style="danger",
     )
     b.button(
         text="🔙 رجوع لقائمة المزودين",
@@ -279,7 +279,7 @@ def confirm_delete_provider_kb(
 
     b.button(
         text="⚠️ نعم، احذف نهائياً",
-        callback_data=(f"admin:aprov_delete:{provider_id}"),
+        callback_data=(f"admin:aprov_delete:{provider_id}"), style="danger",
     )
     b.button(
         text="🔙 لا، إلغاء",
@@ -376,7 +376,7 @@ def provider_service_detail_kb(
 
     b.button(
         text="➕ إنشاء منتج من هذه الخدمة",
-        callback_data=(f"admin:aprov_create_product:{service.id}"),
+        callback_data=(f"admin:aprov_create_product:{service.id}"), style="success",
     )
     b.button(
         text="📋 المنتجات المرتبطة",
@@ -526,19 +526,19 @@ CUSTOM_PROVIDER_CONFIG_PRESETS = {
 
 def custom_provider_presets_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne")
+    b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne", style="danger")
     b.button(
         text="✨ ggsoma — اشتراكات رقمية (رابط/كوبون/حساب)",
-        callback_data="admin:aprov_custom_preset:ggsoma",
+        callback_data="admin:aprov_custom_preset:ggsoma", style="danger",
     )
     b.button(
         text="🏬 متجر خارجي (Hyper Store — روابط/حسابات/ألعاب)",
-        callback_data="admin:aprov_custom_preset:hyper_store",
+        callback_data="admin:aprov_custom_preset:hyper_store", style="danger",
     )
     b.button(text="🧙 معالج ربط بدون JSON", callback_data="admin:aprov_custom_wizard")
-    b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest")
-    b.button(text="🔌 JSON بسيط", callback_data="admin:aprov_custom_preset:simple_json")
-    b.button(text="🔑 API Key بالرابط", callback_data="admin:aprov_custom_preset:query_key")
+    b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest", style="danger")
+    b.button(text="🔌 JSON بسيط", callback_data="admin:aprov_custom_preset:simple_json", style="danger")
+    b.button(text="🔑 API Key بالرابط", callback_data="admin:aprov_custom_preset:query_key", style="danger")
     b.button(text="✍️ أرسل JSON يدوي", callback_data="admin:aprov_custom_manual")
     b.button(text="🔙 رجوع", callback_data="admin:api_providers")
     b.adjust(1)
