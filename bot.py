@@ -631,10 +631,13 @@ async def main():
 
     # ── بناء أقسام الرشق الداخلية تلقائياً ──
     # ينشئ لكل تطبيق أقسامه (متابعون/لايكات/مشاهدات...) من الخدمات المسحوبة
-    # وينشر أرخص 5 خدمات بكل قسم. Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
+    # وينشر أرخص 10 خدمات بكل قسم (ويتجاهل الخدمات بلا سعر).
+    # Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
     try:
         async with async_session_maker() as session:
             if await SmmSectionsService.auto_build_enabled():
+                if await SmmSectionsService.upgrade_legacy_limit():
+                    logger.info("⬆️ رُفع حد النشر التلقائي لأقسام الرشق من 5 إلى 10.")
                 report = await SmmSectionsService.build(session)
                 logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
     except Exception:

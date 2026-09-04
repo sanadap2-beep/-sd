@@ -5,8 +5,11 @@
 - داخل كل تطبيق من تطبيقات قسم الرشق العشرة (إنستغرام، تيك توك، ...) تُنشأ
   تلقائياً أقسام داخلية حسب الخدمات المسحوبة من المزود: متابعون/لايكات/
   مشاهدات/تعليقات/...
-- يُنشر في كل قسم داخلي أول ``max_per_section`` خدمات (الأرخص حسب تكلفة
-  المزود) كمنتجات للبيع، بسعر = تكلفة المزود + هامش ربح.
+- يُنشر في كل قسم داخلي أرخص ``max_per_section`` خدمات (افتراضياً 10)
+  كمنتجات للبيع، بسعر = تكلفة المزود + هامش ربح.
+- الخدمات بلا سعر (rate_usd ≤ 0) لا تُنشر إطلاقاً: كتالوجات المزودين
+  تحوي أسطراً مثل «Server 1» أو عناوين أقسام تصل بسعر صفر، ونشرها
+  يُنتج منتجات مجانية في المتجر.
 
 الضمانات:
 - Idempotent: إعادة التشغيل لا تكرر ولا تحذف منتجات الأدمن اليدوية.
@@ -49,7 +52,10 @@ from services.smm_catalog import (
 logger = logging.getLogger(__name__)
 
 FEATURE_KEY = "smm_auto_sections"
-DEFAULT_MAX_PER_SECTION = 5
+DEFAULT_MAX_PER_SECTION = 10
+# القيمة القديمة (قبل الترقية إلى 10) — تُستخدم لترقية القواعد القديمة مرة واحدة.
+LEGACY_MAX_PER_SECTION = 5
+LIMIT_UPGRADE_SETTING = "smm_auto_sections_limit_upgraded_to_10"
 DEFAULT_MARGIN_PERCENT = Decimal("50")
 
 
@@ -58,6 +64,24 @@ def _kind_sort_index(kind_key: str) -> int:
         if kind.key == kind_key:
             return index
     return 100
+
+
+def is_sellable_service(service) -> bool:
+    """هل الخدمة المسحوبة قابلة للنشر كمنتج؟
+
+    كتالوجات مزودي الرشق مليئة بمداخل ليست خدمات فعلية: عناوين أقسام،
+    وأسطر «Server 1 / سيرفر 2»، وخدمات معطّلة مؤقتاً — وكلها تصل بسعر
+    صفر أو بلا سعر. نشرها يُنتج منتجات بسعر 0$ يشتريها الزبون مجاناً.
+
+    القاعدة: لا سعر (rate_usd ≤ 0) = لا نشر.
+    """
+    try:
+        rate = Decimal(str(getattr(service, "rate_usd", 0) or 0))
+    except Exception:
+        return False
+    if not rate.is_finite() or rate <= 0:
+        return False
+    return True
 
 
 class SmmSectionsService:
@@ -94,6 +118,37 @@ class SmmSectionsService:
         return value
 
     @classmethod
+    async def limit(cls) -> int:
+        """عدد الخدمات الأرخص المنشورة في كل قسم داخلي (للعرض في اللوحة)."""
+        return await cls._limit()
+
+    @classmethod
+    async def upgrade_legacy_limit(cls) -> bool:
+        """يرفع الحد المحفوظ من 5 (القديم) إلى 10 مرة واحدة فقط.
+
+        القواعد المُنشأة قبل هذا التحديث خزّنت ``max_per_section = 5`` في
+        إعدادات الميزة، فلا يكفي تغيير الافتراضي في السجل. نرفعها مرة
+        واحدة ونضع علامة في الإعدادات حتى لا نتجاوز اختيار الأدمن لاحقاً.
+        """
+        from database.engine import async_session_maker
+        from services.settings_service import SettingsService
+
+        try:
+            if await SettingsService.get_bool(LIMIT_UPGRADE_SETTING, False):
+                return False
+            current = await cls._limit()
+            async with async_session_maker() as session:
+                if current == LEGACY_MAX_PER_SECTION:
+                    await FeatureService.set_option(
+                        session, FEATURE_KEY, "max_per_section", DEFAULT_MAX_PER_SECTION
+                    )
+                await SettingsService.set(session, LIMIT_UPGRADE_SETTING, "true")
+            return current == LEGACY_MAX_PER_SECTION
+        except Exception:
+            logger.exception("تعذّرت ترقية حد «أرخص N» لأقسام الرشق")
+            return False
+
+    @classmethod
     async def build(cls, session, provider_id: int | None = None) -> dict:
         """ينفّذ البناء/التحديث الكامل ويعيد تقريراً بالأرقام.
 
@@ -112,6 +167,7 @@ class SmmSectionsService:
             "products_deactivated": 0,
             "reordered": 0,
             "skipped_existing": 0,
+            "skipped_unpriced": 0,
             "errors": 0,
         }
         touched_apps: set[int] = set()
@@ -167,6 +223,11 @@ class SmmSectionsService:
         for service in result.scalars().all():
             provider: ApiProvider | None = service.api_provider
             if provider is None or not provider.is_active:
+                continue
+            if not is_sellable_service(service):
+                # خدمات بلا سعر (سطر «سيرفر 1»، عناوين أقسام، خدمات موقوفة)
+                # لا تُنشر أبداً حتى لا يظهر منتج بسعر 0$ في المتجر.
+                report["skipped_unpriced"] += 1
                 continue
             platform_key, kind_key = PulledServicesService.classify(service)
             if platform_key in ("other",) or kind_key in ("other",):

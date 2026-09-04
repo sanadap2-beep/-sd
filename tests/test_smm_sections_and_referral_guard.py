@@ -95,9 +95,13 @@ async def test_builder_creates_sections_and_publishes_cheapest():
     async with async_session_maker() as session:
         provider = await _add_provider(session)
 
-        # إنستغرام: 6 خدمات متابعين (ننشر 5 فقط) + خدمتا لايكات.
+        # إنستغرام: 12 خدمة متابعين (ننشر أرخص 10 فقط) + خدمتا لايكات.
         followers = []
-        for index, rate in enumerate(("0.90", "0.70", "0.60", "0.80", "0.50", "1.00")):
+        rates = (
+            "0.90", "0.70", "0.60", "0.80", "0.50", "1.00",
+            "0.95", "0.75", "0.65", "0.85", "0.55", "1.10",
+        )
+        for index, rate in enumerate(rates):
             followers.append(
                 await _add_service(
                     session,
@@ -143,10 +147,10 @@ async def test_builder_creates_sections_and_publishes_cheapest():
         assert report["sections_created"] >= 2
         assert report["apps"] >= 1
 
-        # 5 متابعين + لايكتان فقط، مرتبة من الأرخص، كلها تلقائية.
+        # أرخص 10 متابعين + لايكتان فقط، مرتبة من الأرخص، كلها تلقائية.
         followers_products = await _products_in(session, by_kind["followers"].id)
         likes_products = await _products_in(session, by_kind["likes"].id)
-        assert len(followers_products) == 5
+        assert len(followers_products) == 10
         assert len(likes_products) == 2
         prices = [product.price_usd for product in followers_products]
         assert prices == sorted(prices)
@@ -158,9 +162,10 @@ async def test_builder_creates_sections_and_publishes_cheapest():
         )
         assert all(product.is_auto_published for product in followers_products)
         assert all(product.status == ProductStatus.ACTIVE for product in followers_products)
-        # لم يُنشر السادس الأغلى من المتابعين.
+        # لم يُنشر الأغلى (1.00 و1.10) خارج أرخص 10.
         refs = {p.provider_service_ref_id for p in followers_products}
-        assert followers[-1].id not in refs
+        assert followers[-1].id not in refs  # 1.10
+        assert followers[5].id not in refs  # 1.00
         assert followers[2].id in refs  # الأرخص 0.50 موجود
         assert all(p.provider_service_id for p in likes_products)
 
@@ -168,7 +173,8 @@ async def test_builder_creates_sections_and_publishes_cheapest():
 async def test_builder_is_idempotent_and_prunes_auto_products():
     async with async_session_maker() as session:
         provider = await _add_provider(session)
-        for index, rate in enumerate(("1.0", "0.9", "0.8", "0.7", "0.6", "0.5")):
+        rates = ("1.0", "0.9", "0.8", "0.7", "0.6", "0.5", "1.1", "1.2", "1.3", "1.4")
+        for index, rate in enumerate(rates):
             await _add_service(
                 session,
                 provider,
@@ -210,9 +216,9 @@ async def test_builder_is_idempotent_and_prunes_auto_products():
             }
             products = await _products_in(session2, sections["views"].id)
             active = [p for p in products if p.status == ProductStatus.ACTIVE]
-            assert len(active) == 5
+            assert len(active) == 10
             assert cheap.id in {p.provider_service_ref_id for p in active}
-            # الأغلى (1.0) خرج من أول 5 وعُطّل تلقائياً (بقي في قاعدة البيانات).
+            # الأغلى (1.4) خرج من أرخص 10 وعُطّل تلقائياً (بقي في القاعدة).
             deactivated = [p for p in products if p.status == ProductStatus.INACTIVE]
             assert len(deactivated) >= 1
             assert all(p.is_auto_published for p in deactivated)
@@ -402,3 +408,102 @@ async def test_referral_guard_penalty_bans_joiner_and_referrer():
             ).scalars().all()
         )
         assert events and events[0].user_id == joiner.id
+
+
+# ═══════════════ الخدمات بلا سعر + حد أرخص 10 ═══════════════
+
+
+async def test_default_limit_is_ten():
+    """الافتراضي الجديد: أرخص 10 خدمات في كل قسم داخلي (بدل 5)."""
+    from services.smm_sections_service import DEFAULT_MAX_PER_SECTION
+
+    assert DEFAULT_MAX_PER_SECTION == 10
+    assert await SmmSectionsService.limit() == 10
+
+
+async def test_unpriced_services_are_never_published():
+    """خدمات بسعر 0$ («سيرفر 1»، عناوين أقسام) لا تُنشر أبداً."""
+    async with async_session_maker() as session:
+        provider = await _add_provider(session)
+        await _add_service(
+            session,
+            provider,
+            name="Instagram Followers Server 1",
+            category="Instagram Followers",
+            rate="0",
+            external_id="ig-srv-1",
+        )
+        await _add_service(
+            session,
+            provider,
+            name="سيرفر 2 انستغرام متابعين",
+            category="Instagram Followers",
+            rate="0.00",
+            external_id="ig-srv-2",
+        )
+        real = await _add_service(
+            session,
+            provider,
+            name="Instagram Followers Real",
+            category="Instagram Followers",
+            rate="0.45",
+            external_id="ig-real",
+        )
+
+        report = await SmmSectionsService.build(session)
+        assert report["skipped_unpriced"] >= 2
+
+        smm_cat = await _smm_category(session)
+        instagram = None
+        for app in await DynamicService.get_active_root_sub_categories(session, smm_cat.id):
+            if app.name_ar == "إنستغرام":
+                instagram = app
+        sections = {
+            s.kind_key: s
+            for s in await DynamicService.get_active_child_sections(session, instagram.id)
+        }
+        products = await _products_in(session, sections["followers"].id)
+
+    assert [p.provider_service_ref_id for p in products] == [real.id]
+    assert all(p.price_usd > 0 for p in products)
+
+
+async def test_is_sellable_service_filter():
+    from services.smm_sections_service import is_sellable_service
+
+    class _S:
+        def __init__(self, rate):
+            self.rate_usd = rate
+
+    assert is_sellable_service(_S(Decimal("0.01"))) is True
+    assert is_sellable_service(_S(Decimal("0"))) is False
+    assert is_sellable_service(_S(None)) is False
+    assert is_sellable_service(_S("-1")) is False
+
+
+async def test_legacy_limit_upgrade_runs_once():
+    """قاعدة قديمة محفوظ فيها 5 تُرفَع مرة واحدة إلى 10 ثم لا تُلمس."""
+    from database.models import FeatureFlag
+    from services.feature_service import FeatureService
+    from services.settings_service import SettingsService
+    from services.smm_sections_service import FEATURE_KEY
+
+    async with async_session_maker() as session:
+        await FeatureService.set_option(session, FEATURE_KEY, "max_per_section", 5)
+    assert await SmmSectionsService.limit() == 5
+
+    assert await SmmSectionsService.upgrade_legacy_limit() is True
+    assert await SmmSectionsService.limit() == 10
+
+    # الأدمن اختار قيمة خاصة بعد الترقية → لا تُلمس مجدداً.
+    async with async_session_maker() as session:
+        await FeatureService.set_option(session, FEATURE_KEY, "max_per_section", 3)
+    assert await SmmSectionsService.upgrade_legacy_limit() is False
+    assert await SmmSectionsService.limit() == 3
+
+    async with async_session_maker() as session:
+        flag = await session.get(FeatureFlag, FEATURE_KEY)
+        assert flag is not None
+    assert await SettingsService.get_bool(
+        "smm_auto_sections_limit_upgraded_to_10", False
+    )

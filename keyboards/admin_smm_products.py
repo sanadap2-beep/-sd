@@ -87,6 +87,7 @@ def smm_sections_kb(
     rows,
     *,
     direct_products: int,
+    unpriced: int = 0,
 ) -> InlineKeyboardMarkup:
     """أقسام التطبيق الفرعية + منتجات التطبيق المباشرة + أدوات جماعية."""
     b = InlineKeyboardBuilder()
@@ -107,6 +108,12 @@ def smm_sections_kb(
     )
     b.button(text="🟢 تفعيل كل منتجات التطبيق", callback_data=f"smmp:on:{app_id}", style="success")
     b.button(text="⚪ تعطيل كل منتجات التطبيق", callback_data=f"smmp:off:{app_id}", style="success")
+    if unpriced:
+        b.button(
+            text=f"🧼 حذف المنتجات بلا سعر ({unpriced})",
+            callback_data=f"smmp:zero_delete:{app_id}",
+            style="danger",
+        )
     b.button(text="🔄 تحديث", callback_data=f"smmp:app:{app_id}", style="success")
     b.button(text="🔙 التطبيقات", callback_data=f"smmp:cat:{category_id}:1")
     b.adjust(1)
@@ -124,6 +131,7 @@ def smm_products_kb(
     pages: int,
     parent_id: int | None,
     category_id: int,
+    unpriced: int = 0,
 ) -> InlineKeyboardMarkup:
     """لكل منتج صفّان من الأزرار: (تعطيل/تفعيل) + (حذف)."""
     b = InlineKeyboardBuilder()
@@ -155,13 +163,19 @@ def smm_products_kb(
     )
     b.button(text="🟢 تفعيل كل منتجات القسم", callback_data=f"smmp:on:{sub_id}", style="success")
     b.button(text="⚪ تعطيل كل منتجات القسم", callback_data=f"smmp:off:{sub_id}", style="success")
+    if unpriced:
+        b.button(
+            text=f"🧼 حذف المنتجات بلا سعر ({unpriced})",
+            callback_data=f"smmp:zero_delete:{sub_id}",
+            style="danger",
+        )
     b.button(
         text="🧹 حذف كل منتجات القسم",
         callback_data=f"smmp:sec_delete:{sub_id}",
         style="danger",
     )
     b.button(text="🔄 تحديث", callback_data=f"smmp:sec:{sub_id}:{page}", style="success")
-    layout.extend([1, 2, 1, 1])
+    layout.extend([1, 2] + ([1] if unpriced else []) + [1, 1])
 
     if parent_id:
         b.button(text="🔙 أقسام التطبيق", callback_data=f"smmp:app:{parent_id}")
@@ -196,6 +210,22 @@ def confirm_purge_section_kb(sub_id: int) -> InlineKeyboardMarkup:
         style="danger",
     )
     b.button(text="↩️ تراجع", callback_data=f"smmp:sec:{sub_id}:0", style="success")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def confirm_delete_unpriced_kb(sub_id: int, *, is_app: bool) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="🧼 نعم، احذف المنتجات بلا سعر",
+        callback_data=f"smmp:zero_delete_go:{sub_id}",
+        style="danger",
+    )
+    b.button(
+        text="↩️ تراجع",
+        callback_data=(f"smmp:app:{sub_id}" if is_app else f"smmp:sec:{sub_id}:0"),
+        style="success",
+    )
     b.adjust(1)
     return b.as_markup()
 

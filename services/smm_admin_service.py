@@ -226,7 +226,11 @@ class SmmAdminService:
         page: int = 0,
         per_page: int = PRODUCTS_PER_PAGE,
     ) -> tuple[list[Product], int, int]:
-        """منتجات القسم المباشرة: (منتجات الصفحة، الإجمالي، عدد الصفحات)."""
+        """منتجات القسم المباشرة: (منتجات الصفحة، الإجمالي، عدد الصفحات).
+
+        تُحمَّل بيانات المزود وخدمته معها حتى تُعرض تكلفة المزود وآيدي
+        الخدمة عنده بجانب سعرنا في البوت.
+        """
         total = int(
             (
                 await session.execute(
@@ -241,12 +245,97 @@ class SmmAdminService:
         page = max(0, min(page, pages - 1))
         result = await session.execute(
             select(Product)
+            .options(
+                selectinload(Product.api_provider),
+                selectinload(Product.provider_service),
+            )
             .where(Product.sub_category_id == sub_id)
             .order_by(Product.sort_order, Product.price_usd, Product.id)
             .offset(page * per_page)
             .limit(per_page)
         )
         return list(result.scalars().all()), total, pages
+
+    # ─────────── المنتجات بلا سعر (خدمات «سيرفر» الصفرية) ───────────
+
+    @classmethod
+    async def unpriced_count(
+        cls, session, sub_id: int, *, include_children: bool = True
+    ) -> int:
+        """عدد المنتجات بلا سعر بيع (0$) — خدمات المزود غير المسعّرة."""
+        ids = await cls._tree_ids(session, sub_id, include_children=include_children)
+        if not ids:
+            return 0
+        result = await session.execute(
+            select(func.count(Product.id)).where(
+                Product.sub_category_id.in_(ids),
+                Product.price_usd <= 0,
+            )
+        )
+        return int(result.scalar_one() or 0)
+
+    @classmethod
+    async def delete_unpriced(
+        cls, session, sub_id: int, *, include_children: bool = True
+    ) -> int:
+        """يحذف المنتجات بلا سعر بيع (مخلّفات سحب قديم لخدمات صفرية)."""
+        ids = await cls._tree_ids(session, sub_id, include_children=include_children)
+        if not ids:
+            return 0
+        result = await session.execute(
+            select(Product).where(
+                Product.sub_category_id.in_(ids),
+                Product.price_usd <= 0,
+            )
+        )
+        deleted = 0
+        for product in result.scalars().all():
+            await session.delete(product)
+            deleted += 1
+        try:
+            await session.commit()
+        except Exception:
+            logger.exception("فشل حذف منتجات الرشق بلا سعر")
+            await session.rollback()
+            return 0
+        return deleted
+
+    @staticmethod
+    def provider_info(product: Product) -> dict:
+        """معلومات المنتج عند المزود: الاسم، آيدي الخدمة، سعر المزود، الربح."""
+        service = getattr(product, "provider_service", None)
+        provider = getattr(product, "api_provider", None)
+        cost = Decimal(str(product.cost_price_usd or 0))
+        # سعر المزود اللحظي إن توفّر (قد يتغيّر بعد آخر مزامنة).
+        live_cost = None
+        if service is not None:
+            try:
+                live_cost = Decimal(str(service.rate_usd or 0))
+            except Exception:
+                live_cost = None
+        sell = Decimal(str(product.price_usd or 0))
+        profit = sell - cost
+        margin = None
+        if cost > 0:
+            margin = ((sell / cost - Decimal("1")) * Decimal("100")).quantize(
+                Decimal("0.01")
+            )
+        return {
+            "provider_name": getattr(provider, "name", None),
+            "service_id": product.provider_service_id
+            or (getattr(service, "external_service_id", None)),
+            "cost": cost,
+            "live_cost": live_cost,
+            "sell": sell,
+            "profit": profit,
+            "margin": margin,
+            "min_quantity": product.min_quantity,
+            "max_quantity": product.max_quantity,
+            "stale_cost": (
+                live_cost is not None and live_cost > 0 and live_cost != cost
+            ),
+            "unpriced": sell <= 0 or cost <= 0,
+        }
 
     # ─────────────── عمليات على منتج واحد ───────────────
 

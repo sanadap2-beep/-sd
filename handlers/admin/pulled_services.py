@@ -54,7 +54,7 @@ def _platforms_kb(rows: list[tuple[str, str, str, int]]):
         style="primary",
     )
     b.button(
-        text="🚀 إنشاء أقسام الرشق تلقائياً (أرخص 5 لكل نوع)",
+        text="🚀 إنشاء أقسام الرشق تلقائياً (أرخص 10 لكل نوع)",
         callback_data="ps:build",
     )
     b.button(
@@ -155,7 +155,7 @@ def _sections_dest_kb(
 def _no_sections_dest_kb(service_id: int):
     b = InlineKeyboardBuilder()
     b.button(
-        text="🚀 أنشئ أقسام الرشق تلقائياً (أرخص 5 لكل نوع)",
+        text="🚀 أنشئ أقسام الرشق تلقائياً (أرخص 10 لكل نوع)",
         callback_data="ps:build",
     )
     b.button(
@@ -271,7 +271,7 @@ async def _show_platforms(callback: CallbackQuery, session) -> None:
         "اختر المنصة ثم النوع (لايكات / مشاهدات / متابعون…).\n"
         "الترتيب داخل كل نوع: الأرخص ← الأغلى.\n\n"
         "🚀 <b>البناء التلقائي</b> ينشئ لكل تطبيق أقسامه الداخلية "
-        "(متابعون/لايكات/مشاهدات...) وينشر أرخص 5 خدمات في كل نوع، "
+        "(متابعون/لايكات/مشاهدات...) وينشر أرخص 10 خدمات في كل نوع، "
         "وتستطيع بعده نشر أي خدمة يدوياً بسعرك الخاص داخل قسمها.\\n\\n"
         "🔎 <b>تبحث عن خدمة بعينها؟</b> استخدم زر البحث واكتب اسمها "
         "أو آيديها عند المزود بدل التصفّح.",
@@ -303,7 +303,7 @@ def _provider_detail_kb(provider_id: int) -> InlineKeyboardMarkup:
     b.button(text="🔎 بحث في خدمات هذا المزود", callback_data=f"ps:psr:{provider_id}")
     b.button(text="📃 كل خدمات المزود (الأرخص ← الأغلى)", callback_data=f"ps:plist:{provider_id}:0")
     b.button(
-        text="🚀 نشر أرخص 5 في كل نوع (قسم الرشق)",
+        text="🚀 نشر أرخص 10 في كل نوع (قسم الرشق)",
         callback_data=f"ps:pbuild:{provider_id}",
         style="primary",
     )
@@ -409,7 +409,7 @@ async def pulled_providers_home(callback: CallbackQuery, session, state: FSMCont
         lines.append(f"• {provider.name} — {svc_count} خدمة / {prod_count} منتج")
     lines.append(
         "\nمن شاشة المزود تستطيع: البحث في خدماته، رؤية كتالوجه كاملاً، "
-        "نشر أرخص 5 بكل نوع، مزامنته كقسم، أو مسح كل منتجاته ثم إعادة سحبها."
+        "نشر أرخص 10 بكل نوع، مزامنته كقسم، أو مسح كل منتجاته ثم إعادة سحبها."
     )
     await callback.message.edit_text("\n".join(lines), reply_markup=_providers_kb(rows))
 
@@ -511,6 +511,7 @@ async def pulled_provider_build(callback: CallbackQuery, session, state: FSMCont
         await callback.answer("المزود غير موجود.", show_alert=True)
         return
     await callback.answer(f"🚀 جارٍ بناء كتالوج {provider.name}...")
+    await SmmSectionsService.upgrade_legacy_limit()
     report = await SmmSectionsService.build(session, provider_id=provider_id)
     lines = [
         f"🚀 <b>تم بناء كتالوج «{provider.name}»</b>\n",
@@ -519,7 +520,8 @@ async def pulled_provider_build(callback: CallbackQuery, session, state: FSMCont
         f"📦 منتجات جديدة منشورة: <b>{report['products_created']}</b>",
         f"🔄 أعيد ترتيبها: <b>{report['reordered']}</b>",
         f"♻️ أعيد تفعيلها: <b>{report['products_reactivated']}</b>",
-        f"⏸ عُطّلت (خارج أرخص 5): <b>{report['products_deactivated']}</b>",
+        f"⏸ عُطّلت (خارج الأرخص): <b>{report['products_deactivated']}</b>",
+        f"🚫 خدمات بلا سعر تُجوهلت: <b>{report['skipped_unpriced']}</b>",
     ]
     if report["errors"]:
         lines.append(f"\n⚠️ أخطاء جزئية: <b>{report['errors']}</b>")
@@ -799,9 +801,11 @@ async def pulled_search_page(callback: CallbackQuery, session, state: FSMContext
 
 @router.callback_query(F.data == "ps:build")
 async def pulled_build_sections(callback: CallbackQuery, session, state: FSMContext):
-    """🚀 البناء التلقائي: أقسام داخلية لكل تطبيق + أول 5 خدمات أرخص بكل نوع."""
+    """🚀 البناء التلقائي: أقسام داخلية لكل تطبيق + أرخص 10 خدمات بكل نوع."""
     await state.clear()
     await callback.answer("🚀 جارٍ الإنشاء والتحديث...")
+    await SmmSectionsService.upgrade_legacy_limit()
+    limit = await SmmSectionsService.limit()
     report = await SmmSectionsService.build(session)
     lines = [
         "🚀 <b>تم تنفيذ البناء التلقائي لأقسام الرشق</b>\n",
@@ -810,13 +814,18 @@ async def pulled_build_sections(callback: CallbackQuery, session, state: FSMCont
         f"📦 منتجات جديدة منشورة: <b>{report['products_created']}</b>",
         f"🔄 منتجات أُعيد ترتيبها: <b>{report['reordered']}</b>",
         f"♻️ منتجات أُعيد تفعيلها: <b>{report['products_reactivated']}</b>",
-        f"⏸ منتجات تلقائية خارجة عن أول 5 عُطّلت: <b>{report['products_deactivated']}</b>",
+        f"⏸ منتجات تلقائية خارجة عن أرخص {limit} عُطّلت: "
+        f"<b>{report['products_deactivated']}</b>",
         f"⏭ خدمات منشورة مسبقاً (لم تتكرر): <b>{report['skipped_existing']}</b>",
+        f"🚫 خدمات بلا سعر تُجوهلت (سيرفر/عناوين): "
+        f"<b>{report['skipped_unpriced']}</b>",
     ]
     if report["errors"]:
         lines.append(f"\n⚠️ أخطاء جزئية: <b>{report['errors']}</b> (راجع السجل)")
     lines.append(
-        "\nالسعر = تكلفة المزود + هامش الربح المحدد، والترتيب من الأرخص للأغلى.\n"
+        f"\nيُنشر أرخص <b>{limit}</b> خدمة في كل قسم داخلي، والسعر = تكلفة "
+        "المزود + هامش الربح المحدد، والترتيب من الأرخص للأغلى.\n"
+        "الخدمات بلا سعر (0$) لا تُنشر إطلاقاً.\n"
         "إعادة الضغط لا تكرر المنتجات ولا تمس منتجاتك اليدوية."
     )
     await callback.message.edit_text("\n".join(lines), reply_markup=_build_report_kb())
@@ -1097,7 +1106,7 @@ async def pulled_publish_start(callback: CallbackQuery, session, state: FSMConte
                 f"{p_emoji} <b>{p_label}</b> ← {k_emoji} {k_label}\n\n"
                 "⚠️ <b>لا توجد أقسام داخلية بعد</b> في هذا التطبيق.\n"
                 "ننصح بإنشائها تلقائياً: سيُنشئ البوت قسماً لهذا النوع "
-                f"(«{k_label}») وينشر أرخص 5 خدمات فيه، ثم تعود وتنشر هذه الخدمة "
+                f"(«{k_label}») وينشر أرخص 10 خدمات فيه، ثم تعود وتنشر هذه الخدمة "
                 "بسعرك الخاص داخل القسم.\n\n"
                 f"الخدمة: {svc_display}",
                 reply_markup=_no_sections_dest_kb(service_id),

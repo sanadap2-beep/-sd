@@ -31,6 +31,7 @@ from filters.admin_filter import IsAdmin
 from keyboards.admin import admin_back_kb
 from keyboards.admin_smm_products import (
     confirm_delete_product_kb,
+    confirm_delete_unpriced_kb,
     confirm_purge_section_kb,
     margin_cancel_kb,
     smm_apps_kb,
@@ -146,13 +147,17 @@ async def _sections_screen(session, app_id: int) -> tuple[str, object] | None:
     sections = await SmmAdminService.sections_overview(session, app_id)
     margin_text = await SmmAdminService.effective_margin_text(session, app)
 
+    unpriced = await SmmAdminService.unpriced_count(session, app_id)
     text = (
         f"📱 <b>{escape(stats.label)}</b> — أقسام التطبيق\n\n"
         f"🗂 عدد الأقسام الفرعية: <b>{len(sections)}</b>\n"
         f"📦 منتجات التطبيق كلها: <b>{stats.total}</b> "
         f"(🟢 {stats.active} | ⚪ {stats.inactive})\n"
-        f"💵 نسبة الربح الحالية: <b>{escape(margin_text)}</b>\n\n"
+        f"💵 نسبة الربح الحالية: <b>{escape(margin_text)}</b>\n"
     )
+    if unpriced:
+        text += f"⚠️ منتجات بلا سعر: <b>{unpriced}</b> (خدمات «سيرفر» غير مسعّرة)\n"
+    text += "\n"
     if not sections and not stats.direct_total:
         text += "⚠️ لا توجد أقسام فرعية ولا منتجات داخل هذا التطبيق."
     else:
@@ -163,6 +168,7 @@ async def _sections_screen(session, app_id: int) -> tuple[str, object] | None:
         app.category_id,
         sections,
         direct_products=stats.direct_total,
+        unpriced=unpriced,
     )
 
 
@@ -188,6 +194,11 @@ async def _products_screen(session, sub_id: int, page: int) -> tuple[str, object
         f"(🟢 {stats.direct_active} | ⚪ {max(0, total - stats.direct_active)})\n"
         f"💵 نسبة الربح: <b>{escape(margin_text)}</b>\n"
     )
+    unpriced = await SmmAdminService.unpriced_count(
+        session, sub_id, include_children=False
+    )
+    if unpriced:
+        text += f"⚠️ منتجات بلا سعر: <b>{unpriced}</b> (خدمات «سيرفر» غير مسعّرة)\n"
     if pages > 1:
         text += f"📄 الصفحة <b>{page + 1}</b> من <b>{pages}</b>\n"
     text += "\n"
@@ -198,12 +209,35 @@ async def _products_screen(session, sub_id: int, page: int) -> tuple[str, object
         lines = []
         for product in products:
             mark = "🟢" if product.status == ProductStatus.ACTIVE else "⚪"
-            cost = _fmt(product.cost_price_usd)
-            lines.append(
-                f"{mark} <b>{escape(product.name_ar[:44])}</b>\n"
-                f"   💵 البيع: {_fmt(product.price_usd)}$ · التكلفة: {cost}$"
+            info = SmmAdminService.provider_info(product)
+            head = f"{mark} <b>{escape(product.name_ar[:44])}</b>"
+            if info["unpriced"]:
+                head += " ⚠️"
+            money = (
+                f"   🏪 عندنا: <b>{_fmt(info['sell'])}$</b> · "
+                f"🏭 المزود: <b>{_fmt(info['cost'])}$</b>"
             )
-        text += "\n".join(lines)
+            if info["margin"] is not None:
+                money += f" · ربح {_fmt(info['profit'])}$ ({_fmt(info['margin'])}%)"
+            provider_line = "   🔌 " + (
+                escape(str(info["provider_name"]))
+                if info["provider_name"]
+                else "بدون مزود (يدوي)"
+            )
+            if info["service_id"]:
+                provider_line += f" · خدمة #{escape(str(info['service_id']))}"
+            if product.requires_quantity:
+                provider_line += f" · كمية {product.min_quantity}–{product.max_quantity}"
+            block = f"{head}\n{money}\n{provider_line}"
+            if info["stale_cost"]:
+                block += (
+                    f"\n   ⚠️ سعر المزود الآن {_fmt(info['live_cost'])}$ "
+                    "(أعد ضبط نسبة الربح للتحديث)"
+                )
+            elif info["unpriced"]:
+                block += "\n   ⚠️ خدمة بلا سعر عند المزود — يُنصح بحذفها."
+            lines.append(block)
+        text += "\n\n".join(lines)
         text += (
             "\n\n👆 اضغط اسم المنتج لتعطيله/تفعيله، و🗑 لحذفه نهائياً.\n"
             "💵 «نسبة الربح» تُطبَّق فوراً على كل منتجات هذا القسم."
@@ -216,6 +250,7 @@ async def _products_screen(session, sub_id: int, page: int) -> tuple[str, object
         pages=pages,
         parent_id=sub.parent_sub_category_id,
         category_id=sub.category_id,
+        unpriced=unpriced,
     )
 
 
@@ -488,6 +523,67 @@ async def smm_purge_go(callback: CallbackQuery, session, db_user=None):
 
     await callback.answer(f"🧹 حُذف {deleted} منتجاً.")
     screen = await _products_screen(session, sub_id, 0)
+    if screen:
+        await _safe_edit(callback.message, screen[0], screen[1])
+
+
+# ══════════════ حذف المنتجات بلا سعر ══════════════
+
+
+@router.callback_query(F.data.startswith("smmp:zero_delete:"))
+async def smm_delete_unpriced_ask(callback: CallbackQuery, session):
+    sub_id = int(callback.data.split(":")[2])
+    stats = await SmmAdminService.node_stats(session, sub_id)
+    if stats is None:
+        await callback.answer("⚠️ القسم غير موجود.", show_alert=True)
+        return
+    is_app = stats.sub.parent_sub_category_id is None
+    count = await SmmAdminService.unpriced_count(session, sub_id)
+    if not count:
+        await callback.answer("✅ لا توجد منتجات بلا سعر هنا.", show_alert=True)
+        return
+    await callback.answer()
+    await _safe_edit(
+        callback.message,
+        f"🧼 <b>تنظيف المنتجات بلا سعر — {escape(stats.label)}</b>\n\n"
+        f"سيُحذف <b>{count}</b> منتجاً سعرها <b>0$</b>.\n"
+        "هذه غالباً أسطر «سيرفر 1 / Server 2» أو عناوين أقسام سحبناها من "
+        "المزود بلا تسعير، وبيعها بسعر صفر خسارة.\n\n"
+        "⚠️ الحذف نهائي — والسحب التلقائي الجديد لن يعيدها.",
+        confirm_delete_unpriced_kb(sub_id, is_app=is_app),
+    )
+
+
+@router.callback_query(F.data.startswith("smmp:zero_delete_go:"))
+async def smm_delete_unpriced_go(callback: CallbackQuery, session, db_user=None):
+    sub_id = int(callback.data.split(":")[2])
+    stats = await SmmAdminService.node_stats(session, sub_id)
+    if stats is None:
+        await callback.answer("⚠️ القسم غير موجود.", show_alert=True)
+        return
+
+    deleted = await SmmAdminService.delete_unpriced(session, sub_id)
+    if db_user is not None:
+        await AuditService.log(
+            admin_id=db_user.id,
+            action=AuditAction.DELETE,
+            entity_type="subcategory",
+            entity_id=sub_id,
+            entity_name=stats.sub.name_ar,
+            new_value={"deleted_unpriced": deleted},
+            description=(
+                f"حذف المنتجات بلا سعر من {stats.sub.name_ar} ({deleted} منتج)"
+            ),
+            session=session,
+        )
+
+    await callback.answer(f"🧼 حُذف {deleted} منتجاً بلا سعر.")
+    is_app = stats.sub.parent_sub_category_id is None
+    screen = (
+        await _sections_screen(session, sub_id)
+        if is_app
+        else await _products_screen(session, sub_id, 0)
+    )
     if screen:
         await _safe_edit(callback.message, screen[0], screen[1])
 

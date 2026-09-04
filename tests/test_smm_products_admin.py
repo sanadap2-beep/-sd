@@ -575,3 +575,169 @@ async def test_handler_bulk_disable_then_purge_section():
         stats = await SmmAdminService.node_stats(session, ids["followers_id"])
         assert stats.total == 0
         assert stats.sub is not None
+
+
+# ══════════════ معلومات المزود + المنتجات بلا سعر ══════════════
+
+
+async def _seed_with_provider() -> dict:
+    """قسم رشق فيه منتج مرتبط بمزود حقيقي + منتج بلا سعر."""
+    from database.models import (
+        ApiProvider,
+        ApiProviderType,
+        ProviderService,
+        ProviderServiceStatus,
+    )
+
+    ids = await _seed()
+    async with async_session_maker() as session:
+        provider = ApiProvider(
+            name="SmmKing",
+            type=ApiProviderType.SMM,
+            api_url="https://smmking.test/api",
+            api_key="k",
+            is_active=True,
+        )
+        session.add(provider)
+        await session.flush()
+
+        service = ProviderService(
+            api_provider_id=provider.id,
+            external_service_id="7788",
+            name="Instagram Followers Real",
+            category="Instagram Followers",
+            rate=Decimal("1.00"),
+            rate_usd=Decimal("1.00"),
+            min_quantity=100,
+            max_quantity=10000,
+            requires_quantity=True,
+            status=ProviderServiceStatus.ACTIVE,
+        )
+        session.add(service)
+        await session.flush()
+
+        linked = Product(
+            sub_category_id=ids["likes_id"],
+            api_provider_id=provider.id,
+            provider_service_ref_id=service.id,
+            provider_service_id="7788",
+            name_ar="متابعون حقيقي إنستغرام",
+            price_usd=Decimal("1.50"),
+            cost_price_usd=Decimal("1.00"),
+            status=ProductStatus.ACTIVE,
+            fulfillment_type=ProductFulfillmentType.API,
+            min_quantity=100,
+            max_quantity=10000,
+            requires_quantity=True,
+        )
+        zero = Product(
+            sub_category_id=ids["likes_id"],
+            api_provider_id=provider.id,
+            name_ar="سيرفر 1",
+            price_usd=Decimal("0"),
+            cost_price_usd=Decimal("0"),
+            status=ProductStatus.ACTIVE,
+            fulfillment_type=ProductFulfillmentType.API,
+        )
+        session.add_all([linked, zero])
+        await session.commit()
+        ids["provider_id"] = provider.id
+        ids["service_id"] = service.id
+        ids["linked_id"] = linked.id
+        ids["zero_id"] = zero.id
+    return ids
+
+
+async def test_provider_info_exposes_both_prices():
+    ids = await _seed_with_provider()
+    async with async_session_maker() as session:
+        rows, _total, _pages = await SmmAdminService.products_page(
+            session, ids["likes_id"], per_page=50
+        )
+        product = next(row for row in rows if row.id == ids["linked_id"])
+        info = SmmAdminService.provider_info(product)
+
+    assert info["provider_name"] == "SmmKing"
+    assert info["service_id"] == "7788"
+    assert info["cost"] == Decimal("1.00")  # سعره عند المزود
+    assert info["sell"] == Decimal("1.50")  # سعره عندنا بالبوت
+    assert info["profit"] == Decimal("0.50")
+    assert info["margin"] == Decimal("50.00")
+    assert info["unpriced"] is False
+
+
+async def test_provider_info_flags_stale_and_unpriced():
+    ids = await _seed_with_provider()
+    async with async_session_maker() as session:
+        # تغيّر سعر المزود بعد آخر مزامنة
+        from database.models import ProviderService
+
+        service = await session.get(ProviderService, ids["service_id"])
+        service.rate_usd = Decimal("1.20")
+        await session.commit()
+
+        rows, _total, _pages = await SmmAdminService.products_page(
+            session, ids["likes_id"], per_page=50
+        )
+        linked = next(row for row in rows if row.id == ids["linked_id"])
+        zero = next(row for row in rows if row.id == ids["zero_id"])
+        stale_info = SmmAdminService.provider_info(linked)
+        zero_info = SmmAdminService.provider_info(zero)
+
+    assert stale_info["stale_cost"] is True
+    assert stale_info["live_cost"] == Decimal("1.20")
+    assert zero_info["unpriced"] is True
+
+
+async def test_products_screen_shows_provider_and_bot_prices():
+    from handlers.admin import smm_products as handler
+
+    ids = await _seed_with_provider()
+    async with async_session_maker() as session:
+        screen = await handler._products_screen(session, ids["likes_id"], 0)
+
+    text = screen[0]
+    assert "🏭 المزود" in text
+    assert "🏪 عندنا" in text
+    assert "SmmKing" in text
+    assert "خدمة #7788" in text
+    assert "منتجات بلا سعر" in text  # تحذير المنتج الصفري
+
+
+async def test_delete_unpriced_removes_only_zero_priced():
+    from handlers.admin import smm_products as handler
+
+    ids = await _seed_with_provider()
+    async with async_session_maker() as session:
+        assert await SmmAdminService.unpriced_count(session, ids["likes_id"]) == 1
+
+        ask = _FakeCallback(f"smmp:zero_delete:{ids['likes_id']}")
+        await handler.smm_delete_unpriced_ask(ask, session)
+        assert f"smmp:zero_delete_go:{ids['likes_id']}" in _callbacks(
+            ask.message.markups[-1]
+        )
+
+        go = _FakeCallback(f"smmp:zero_delete_go:{ids['likes_id']}")
+        await handler.smm_delete_unpriced_go(go, session)
+
+    async with async_session_maker() as session:
+        assert await session.get(Product, ids["zero_id"]) is None
+        assert await session.get(Product, ids["linked_id"]) is not None
+
+
+def test_products_keyboard_shows_cleanup_button_when_needed():
+    product = Product(
+        name_ar="سيرفر 1",
+        price_usd=Decimal("0"),
+        cost_price_usd=Decimal("0"),
+        status=ProductStatus.ACTIVE,
+    )
+    product.id = 9
+    with_junk = smm_products_kb(
+        11, [product], page=0, pages=1, parent_id=7, category_id=3, unpriced=2
+    )
+    clean = smm_products_kb(
+        11, [product], page=0, pages=1, parent_id=7, category_id=3, unpriced=0
+    )
+    assert "smmp:zero_delete:11" in _data(with_junk)
+    assert "smmp:zero_delete:11" not in _data(clean)
