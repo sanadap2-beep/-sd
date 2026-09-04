@@ -21,7 +21,7 @@ import logging
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import selectinload
 
 from database.models import (
@@ -94,11 +94,15 @@ class SmmSectionsService:
         return value
 
     @classmethod
-    async def build(cls, session) -> dict:
+    async def build(cls, session, provider_id: int | None = None) -> dict:
         """ينفّذ البناء/التحديث الكامل ويعيد تقريراً بالأرقام.
 
         آمن للتكرار: يُنشئ الناقص فقط، ويعطّل المنتجات التلقائية الخارجة
         من أول N أرخص، ولا يمسّ منتجات نشرها الأدمن يدوياً.
+
+        ``provider_id`` لتشغيل البناء لمزود واحد فقط (من شاشة «الخدمات
+        المسحوبة حسب المزود»). عند تمريره يُلمس فقط كتالوج ذلك المزود —
+        لا تُعطَّل منتجات مزود آخر، ولا تُسحب خدمات أخرى.
         """
         report: dict = {
             "apps": 0,
@@ -155,6 +159,9 @@ class SmmSectionsService:
             select(ProviderService)
             .options(selectinload(ProviderService.api_provider))
             .where(ProviderService.status == ProviderServiceStatus.ACTIVE)
+            .where(
+                ProviderService.api_provider_id == provider_id if provider_id else true()
+            )
         )
         grouped: dict[tuple[str, str], list[ProviderService]] = defaultdict(list)
         for service in result.scalars().all():
@@ -321,6 +328,11 @@ class SmmSectionsService:
                             select(Product).where(
                                 Product.sub_category_id == section.id,
                                 Product.is_auto_published.is_(True),
+                                (
+                                    Product.api_provider_id == provider_id
+                                    if provider_id
+                                    else (Product.api_provider_id.is_not(None))
+                                ),
                             )
                         )
                     ).scalars().all()

@@ -103,6 +103,20 @@ async def products_list(callback: CallbackQuery, session):
 # ══════════════ إضافة منتج ══════════════
 
 
+# توافق زرّي «الأقسام» القديمين: أزرار كانت تنشرها لوحة الأقسام
+# (admin:prod_list / admin:prod_wizard_start) ولا يوجد لها معالجات، فكانت
+# تظهر في السجل كأزرار «غير معالجة». نوجّهها إلى المسارين الفعليين.
+@router.callback_query(F.data.startswith("admin:prod_list:"))
+async def old_prod_list(callback: CallbackQuery, session):
+    sub_id = int(callback.data.split(":")[2])
+    await products_list(callback, session)
+
+@router.callback_query(F.data.startswith("admin:prod_wizard_start:"))
+async def old_prod_wizard_start(callback: CallbackQuery, state: FSMContext):
+    sub_id = int(callback.data.split(":")[2])
+    await prod_add_start(callback, state)
+
+
 @router.callback_query(F.data.startswith("admin:prod_add:"))
 async def prod_add_start(callback: CallbackQuery, state: FSMContext):
     sub_id = int(callback.data.split(":")[2])
@@ -509,7 +523,7 @@ async def prod_view(callback: CallbackQuery, session):
         session, product
     )
 
-    await callback.message.edit_text(
+    view_text = (
         f"📦 <b>{product.name_ar}</b>\n"
         f"🆔 ID: <code>{product.id}</code> | ربط زر: <code>prod:{product.id}</code>\n\n"
         f"الحالة: {status}\n"
@@ -522,12 +536,19 @@ async def prod_view(callback: CallbackQuery, session):
         f"⏱️ الوقت التقريبي: {product.estimated_time or '—'}\n"
         f"📥 متطلبات: {req_text}\n"
         f"🛒 إجمالي المبيعات: {product.total_sold}\n"
-        f"🔢 الترتيب: {product.sort_order}",
-        reply_markup=admin_product_detail_kb(
-            product,
-            sub_cat.id if sub_cat else 0,
-        ),
+        f"🔢 الترتيب: {product.sort_order}"
     )
+    view_kb = admin_product_detail_kb(
+        product,
+        sub_cat.id if sub_cat else 0,
+    )
+    # الرسالة قد تكون كثيرة التعديل بسبب طولها/انتهاء صلاحيتها، أو تكون
+    # رسالة مستخدم لا يملك البوت صلاحية تعديلها. نرسل رسالة جديدة حين يرفض
+    # تيليجرام التعديل — هذا يزيل «message can't be edited» من سجلات الأدمن.
+    try:
+        await callback.message.edit_text(view_text, reply_markup=view_kb)
+    except Exception:
+        await callback.message.answer(view_text, reply_markup=view_kb)
 
 
 # ══════════════ فحص جاهزية المنتج ══════════════

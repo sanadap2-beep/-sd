@@ -312,7 +312,12 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
 @router.message(GamesOrderStates.waiting_player_id)
 async def player_id_received(message: Message, state: FSMContext, session, db_user: User):
     data = await state.get_data()
-    product_id = data['product_id']
+    product_id = data.get('product_id')
+    if not product_id:
+        # حالة فاقدة (جلسة قديمة / إعادة تشغيل) لا تُسقط البوت بخطأ KeyError.
+        await message.answer(I18nService.t('ux_games_386_19', _auto_lang(locals())))
+        await state.clear()
+        return
     product = await DynamicService.get_product(session, product_id)
     if not product:
         await message.answer(I18nService.t('ux_games_386_19', _auto_lang(locals())))
@@ -335,7 +340,11 @@ async def smm_link_received(message: Message, state: FSMContext, session):
         await message.answer(I18nService.t('ux_games_425_24', _auto_lang(locals())))
         return
     data = await state.get_data()
-    product_id = data['product_id']
+    product_id = data.get('product_id')
+    if not product_id:
+        await message.answer(I18nService.t('ux_games_433_25', _auto_lang(locals())))
+        await state.clear()
+        return
     product = await DynamicService.get_product(session, product_id)
     if not product:
         await message.answer(I18nService.t('ux_games_433_25', _auto_lang(locals())))
@@ -358,7 +367,11 @@ async def smm_quantity_received(message: Message, state: FSMContext, session):
         await message.answer(I18nService.t('ux_games_469_31', _auto_lang(locals())))
         return
     data = await state.get_data()
-    product_id = data['product_id']
+    product_id = data.get('product_id')
+    if not product_id:
+        await message.answer(I18nService.t('ux_games_477_32', _auto_lang(locals())))
+        await state.clear()
+        return
     product = await DynamicService.get_product(session, product_id)
     if not product:
         await message.answer(I18nService.t('ux_games_477_32', _auto_lang(locals())))
