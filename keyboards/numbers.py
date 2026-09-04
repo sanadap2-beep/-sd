@@ -183,8 +183,10 @@ def countries_price_kb(
         nav_buttons_count += 1
 
     if server_id and server_label:
+        # ``server_label`` يصل جاهزاً بالإيموجي («🖥 سيرفر 2» أو «🟢 🖥 سيرفر 2»)
+        # فلا نضيف إيموجي ثانياً حتى لا يتكرر على الزر.
         b.button(
-            text=f"🖥 {server_label} · تغيير السيرفر",
+            text=f"{server_label} · تغيير السيرفر",
             callback_data=f"num_server:{service_code}",
             style="success",
         )

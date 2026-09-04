@@ -643,13 +643,22 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def admin_nsvc_servers_kb(service_id: int, servers) -> InlineKeyboardMarkup:
-    """قائمة سيرفرات خدمة أرقام (كل سيرفر = مزود مستقل)."""
+def admin_nsvc_servers_kb(service_id: int, servers, public_names=None) -> InlineKeyboardMarkup:
+    """قائمة سيرفرات خدمة أرقام.
+
+    الأدمن وحده يرى المزود الحقيقي بجانب الاسم المحايد الذي يراه المستخدم:
+    ``🟢 سيرفر 2 · herosms`` — والنقطة الخضراء تعني «معلَّم كشغّال».
+    """
+    from services.number_server_service import public_server_name
+
     b = InlineKeyboardBuilder()
-    for server in servers:
-        status = "🟢" if server.is_active else "⚪"
+    public_names = public_names or {}
+    for index, server in enumerate(servers, start=1):
+        state = "🟢" if server.is_active else "⚪"
+        working = " 🟢شغّال" if getattr(server, "is_working", False) else ""
+        shown = public_names.get(server.id) or public_server_name(index)
         b.button(
-            text=f"{status} {server.emoji} {server.name_ar}",
+            text=f"{state} {shown}{working} · {server.provider}",
             callback_data=f"admin:nsvc_server:{server.id}",
         )
     b.button(text="➕ إضافة سيرفر", callback_data=f"admin:nsvc_server_add:{service_id}", style="success")
@@ -658,6 +667,11 @@ def admin_nsvc_servers_kb(service_id: int, servers) -> InlineKeyboardMarkup:
         callback_data=f"admin:nsvc_server_auto:{service_id}",
         style="success",
     )
+    b.button(
+        text="🔢 إعادة ترقيم الأسماء (سيرفر 1، 2، 3...)",
+        callback_data=f"admin:nsvc_server_renumber:{service_id}",
+        style="primary",
+    )
     b.button(text="🔙 رجوع", callback_data=f"admin:nsvc_view:{service_id}")
     b.adjust(1)
     return b.as_markup()
@@ -665,12 +679,22 @@ def admin_nsvc_servers_kb(service_id: int, servers) -> InlineKeyboardMarkup:
 
 def admin_nsvc_server_detail_kb(service_id: int, server) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    if getattr(server, "is_working", False):
+        b.button(
+            text="⚫ إزالة النقطة الخضراء (لا يعمل)",
+            callback_data=f"admin:nsvc_server_working:{server.id}",
+            style="danger",
+        )
+    else:
+        b.button(
+            text="🟢 علّمه كسيرفر يعمل الآن",
+            callback_data=f"admin:nsvc_server_working:{server.id}",
+            style="success",
+        )
     if server.is_active:
         b.button(text="⚪ تعطيل السيرفر", callback_data=f"admin:nsvc_server_toggle:{server.id}")
     else:
         b.button(text="🟢 تفعيل السيرفر", callback_data=f"admin:nsvc_server_toggle:{server.id}")
-    b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_server_edit_name:{server.id}")
-    b.button(text="🎨 تعديل الإيموجي", callback_data=f"admin:nsvc_server_edit_emoji:{server.id}")
     b.button(text="🔁 تغيير المزود", callback_data=f"admin:nsvc_server_edit_provider:{server.id}")
     b.button(text="💰 نسبة الربح", callback_data=f"admin:nsvc_server_edit_margin:{server.id}", style="primary")
     b.button(text="🗑 حذف السيرفر", callback_data=f"admin:nsvc_server_delete:{server.id}", style="danger")

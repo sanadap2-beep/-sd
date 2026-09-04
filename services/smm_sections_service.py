@@ -71,17 +71,22 @@ def is_sellable_service(service) -> bool:
 
     كتالوجات مزودي الرشق مليئة بمداخل ليست خدمات فعلية: عناوين أقسام،
     وأسطر «Server 1 / سيرفر 2»، وخدمات معطّلة مؤقتاً — وكلها تصل بسعر
-    صفر أو بلا سعر. نشرها يُنتج منتجات بسعر 0$ يشتريها الزبون مجاناً.
+    صفر أو شبه صفر. نشرها يُنتج منتجات بسعر 0$ يشتريها الزبون مجاناً.
 
-    القاعدة: لا سعر (rate_usd ≤ 0) = لا نشر.
+    القاعدتان:
+    1. لا سعر (rate_usd ≤ 0) = لا نشر.
+    2. اسمها فيه «سيرفر/Server» وسعرها شبه صفر = سطر كتالوج لا خدمة = لا نشر.
     """
+    from services.junk_products_service import is_junk_service
+
     try:
         rate = Decimal(str(getattr(service, "rate_usd", 0) or 0))
     except Exception:
         return False
     if not rate.is_finite() or rate <= 0:
         return False
-    return True
+    # «سيرفر N» بسعر شبه صفر ليست خدمة قابلة للبيع مهما بدت مسعّرة.
+    return not is_junk_service(service)
 
 
 class SmmSectionsService:

@@ -523,6 +523,10 @@ class NumberServer(Base):
     margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 🟢 النقطة الخضراء: الأدمن يعلّم بها السيرفر الذي يعمل فعلياً الآن.
+    # مستقلة تماماً عن is_active (التفعيل/التعطيل): السيرفر قد يكون مفعّلاً
+    # لكن غير معلَّم كشغّال. تظهر النقطة للمستخدم أمام «سيرفر 2» مثلاً.
+    is_working: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
