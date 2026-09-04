@@ -171,7 +171,7 @@ async def test_sync_publishes_catalog_with_margin_and_stock(monkeypatch):
         capcut = await _products_in(session, sections["CapCut"].id)
 
         by_name = {p.name_ar: p for p in gemini}
-        pro = by_name["Gemini Pro — 30 days"]
+        pro = by_name["جيميناي برو — 30 أيام"]
         # هامش 23%: 12.5 × 1.23 = 15.375 → 15.38
         assert pro.price_usd == Decimal("15.38")
         assert pro.cost_price_usd == Decimal("12.50")
@@ -180,7 +180,7 @@ async def test_sync_publishes_catalog_with_margin_and_stock(monkeypatch):
         assert pro.provider_service_id == "gemini-pro-monthly"
         assert pro.display_type.value == "fixed_total"
 
-        basic = by_name["Gemini Basic — 30 days"]
+        basic = by_name["جيميناي أساسي — 30 أيام"]
         assert basic.price_usd == Decimal("8.61")  # 7 × 1.23 = 8.61
         assert basic.sort_order == 2
 
@@ -220,7 +220,7 @@ async def test_resync_is_idempotent_and_reprices_auto_products(monkeypatch):
         pro = [
             p
             for p in await _products_in(session, sections["Gemini"].id)
-            if p.name_ar == "Gemini Pro — 30 days"
+            if p.name_ar == "جيميناي برو — 30 أيام"
         ][0]
         assert pro.price_usd == Decimal("15.99")  # 13 × 1.23
 
@@ -271,9 +271,9 @@ async def test_sync_toggles_availability_and_keeps_manual_products(monkeypatch):
     async with async_session_maker() as session:
         sections = await _sections(session)
         gemini = await _products_in(session, sections["Gemini"].id)
-        auto_basic = next(p for p in gemini if p.name_ar == "Gemini Basic — 30 days")
+        auto_basic = next(p for p in gemini if p.name_ar == "جيميناي أساسي — 30 أيام")
         manual_now = next(p for p in gemini if p.name_ar == "عرضي الخاص لـ Gemini Basic")
-        pro = next(p for p in gemini if p.name_ar == "Gemini Pro — 30 days")
+        pro = next(p for p in gemini if p.name_ar == "جيميناي برو — 30 أيام")
         assert pro.status == ProductStatus.INACTIVE
         # منتجنا التلقائي أُعيد تسعيره بالهامش (13 × 1.23 = 15.99)
         assert auto_basic.price_usd == Decimal("15.99")

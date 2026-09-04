@@ -1,5 +1,5 @@
 """
-تعريب أسماء الخدمات المسحوبة من المزودين (رشق/اشتراكات/خدمات API).
+تعريب أسماء الخدمات المسحوبة من المزودين (رشق/اشتراكات/خدمات API/متاجر).
 
 الخدمات تصل بالإنجليزية غالباً (مثل "TikTok Real Followers 1000").
 هنا نبني اسماً عربياً سليماً:
@@ -7,6 +7,9 @@
   المرجعي services.smm_catalog.
 - بقية الكلمات المألوفة تُترجم (real/fast/hd/...) والباقي (أرقام وغير
   معروف) يبقى كما هو.
+- أسماء المتاجر العامة (مثل Hyper Store: "Free Fire Diamonds 100"،
+  "Netflix Premium 1 Month"، "Steam Wallet USD") تُترجم عبر سجل العلامات
+  التجارية والكلمات الشائعة؛ إن لم يقع أي تغيير تبقى الكلمة الأصلية.
 - الأسماء التي تحوي حروفاً عربية تُترك كما هي.
 لا يُمس أي شيء لدى المزود — التعريب للعرض والبيع فقط.
 """
@@ -24,6 +27,139 @@ from services.smm_catalog import (
 )
 
 _ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+
+# عبارات/علامات تجارية شائعة في أسماء منتجات المتاجر (مثل Hyper Store)
+# → نقل عربي. تُطابَق أطول عبارة أولاً (free fire max قبل free fire).
+_STORE_BRAND_AR: dict[str, str] = {
+    # ألعاب
+    "free fire max": "فري فاير ماكس",
+    "free fire": "فري فاير",
+    "freefire": "فري فاير",
+    "pubg mobile": "ببجي موبايل",
+    "pubg": "ببجي",
+    "mobile legends": "موبايل ليجندز",
+    "mlbb": "موبايل ليجندز",
+    "honor of kings": "هونر أوف كينجز",
+    "clash of clans": "كلاش أوف كلانس",
+    "clash royale": "كلاش رويال",
+    "candy crush saga": "كاندي كرش",
+    "candy crush": "كاندي كرش",
+    "minecraft": "ماينكرافت",
+    "roblox": "روبلوكس",
+    "garena": "جورينا",
+    "steam": "ستيم",
+    "fortnite": "فورتنايت",
+    "valorant": "فاليورانت",
+    "counter strike": "كاونتر سترايك",
+    "call of duty": "كول أوف ديوتي",
+    "cod mobile": "كود موبايل",
+    "league of legends": "ليج أوف ليجندز",
+    "world of tanks": "وورلد أوف تانكس",
+    "world of warcraft": "وورلد أوف ووركرافت",
+    "grand theft auto": "جيتا",
+    "gta sa": "جيتا",
+    "gta 5": "جيتا 5",
+    "gta": "جيتا",
+    "dota 2": "دوتا 2",
+    "dota": "دوتا",
+    "cs go": "كاونتر سترايك",
+    "fifa": "فيفا",
+    "rocket league": "روكيت ليج",
+    "brawl stars": "براول ستارز",
+    "clash squad": "كلاش سكواد",
+    "call of duty": "كول أوف ديوتي",
+    # اشتراكات/تطبيقات
+    "discord nitro": "ديسكورد نيترو",
+    "chatgpt plus": "شات جي بي تي بلس",
+    "chatgpt": "شات جي بي تي",
+    "gemini pro": "جيميناي برو",
+    "gemini": "جيميناي",
+    "capcut": "كابكات",
+    "claude": "كلود",
+    "midjourney": "ميد جورني",
+    "canva": "كانفا",
+    "figma": "فيجما",
+    "adobe": "أدوبي",
+    "photoshop": "فوتوشوب",
+    "premiere": "بريمير",
+    "notion": "نوشن",
+    "suno": "سونو",
+    "eleven labs": "إليفن لابز",
+    "gift cards": "بطاقات هدية",
+    "gift card": "بطاقة هدية",
+    "google play": "جوجل بلاي",
+    "google one": "جوجل ون",
+    "apple card": "أبل كارد",
+    "paypal": "باي بال",
+    "mastercard": "ماستر كارد",
+    "visa": "فيزا",
+    "netflix": "نتفليكس",
+    "spotify": "سبوتيفاي",
+    "youtube": "يوتيوب",
+    "shazam": "شازام",
+    "deezer": "ديزر",
+    "soundcloud": "ساوند كلاود",
+    "audible": "أودبل",
+    "kindle": "كيندل",
+    "hulu": "هولو",
+    "disney plus": "ديزني بلس",
+    "disney": "ديزني",
+    "hotstar": "هوت ستار",
+    "cricket": "كريكت",
+    "twitch": "تويتش",
+    "discord": "ديسكورد",
+    "xbox": "إكس بوكس",
+    "playstation": "بلايستيشن",
+    "nintendo": "نينتندو",
+    "switch": "سويتش",
+    "nitro": "نيترو",
+    "google": "جوجل",
+    "apple": "أبل",
+    "icloud": "آيكلاود",
+    "iphone": "آيفون",
+    "airpods": "إيربودز",
+    "samsung": "سامسونج",
+    "vivo": "فيفو",
+    "oppo": "أوبو",
+    "realme": "ريلمي",
+    "xiaomi": "شاومي",
+    "redmi": "ريدمي",
+    "oneplus": "ون بلس",
+    "honor": "هونر",
+    "amazon": "أمازون",
+    "ebay": "إيباي",
+    "shopee": "شوبي",
+    "lazada": "لازادا",
+    "aliexpress": "علي إكسبرس",
+    "temu": "تيمو",
+    "etsy": "إيتسي",
+    "binance": "بينانس",
+    "coinbase": "كوين بيس",
+    # مشغلو اتصال
+    "vodafone": "فودافون",
+    "etisalat": "اتصالات",
+    "stc": "إس تي سي",
+    "zain": "زين",
+    "mobinil": "موبينيل",
+    "airtel": "أيرتل",
+    "jio": "جيو",
+    "orange": "أورانج",
+    # منصات (احتياط إن لم تتعرف كـ SMM app)
+    "tiktok": "تيك توك",
+    "instagram": "إنستغرام",
+    "facebook": "فيسبوك",
+    "whatsapp": "واتساب",
+    "telegram": "تيليجرام",
+}
+
+# ترتيب مطابقة العبارات: الأطول (عدد كلمات ثم طول) أولاً.
+_STORE_BRAND_ITEMS: list[tuple[str, str]] = sorted(
+    _STORE_BRAND_AR.items(), key=lambda kv: (len(kv[0].split()), len(kv[0])), reverse=True
+)
+_STORE_BRAND_RES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b" + r"\s+".join(map(re.escape, brand.split())) + r"\b", re.IGNORECASE), arab)
+    for brand, arab in _STORE_BRAND_ITEMS
+]
 
 # كلمات مألوفة في أسماء خدمات الرشق → العربية
 _QUALIFIER_AR = {
@@ -101,8 +237,159 @@ _QUALIFIER_AR = {
     "points": "نقاط",
 }
 
+# كلمات متاجر عامة (ألعاب/اشتراكات/شحن/بطاقات) غير مغطاة في _QUALIFIER_AR.
+# تُستخدم في المسار العام (بلا منصة/نوع SMM معروف) وفي تعريب التصنيفات.
+_STORE_WORD_AR: dict[str, str] = {
+    # شحن وأرصدة
+    "top": "أفضل",
+    "recharge": "شحن",
+    "recharging": "شحن",
+    "wallet": "محفظة",
+    "balance": "رصيد",
+    "balances": "أرصدة",
+    "cash": "نقدي",
+    "credit": "رصيد",
+    "airtime": "رصيد هاتف",
+    "voucher": "قسيمة",
+    "vouchers": "قسائم",
+    "usd": "دولار",
+    "usdt": "تيثر",
+    "crypto": "كريبتو",
+    # بطاقات وهدايا
+    "card": "بطاقة",
+    "cards": "بطاقات",
+    "gift": "هدية",
+    "gifts": "هدايا",
+    "code": "كود",
+    "codes": "أكواد",
+    "coupon": "كوبون",
+    "coupons": "كوبونات",
+    # اشتراكات ومدد
+    "sub": "اشتراك",
+    "subs": "اشتراكات",
+    "subscription": "اشتراك",
+    "subscriptions": "اشتراكات",
+    "vip": "VIP",
+    "month": "شهر",
+    "months": "أشهر",
+    "week": "أسبوع",
+    "weeks": "أسابيع",
+    "day": "يوم",
+    "days": "أيام",
+    "hour": "ساعة",
+    "hours": "ساعات",
+    "year": "سنة",
+    "years": "سنوات",
+    # ألعاب
+    "server": "سيرفر",
+    "servers": "سيرفرات",
+    "rank": "رانك",
+    "boost": "بوست",
+    "level": "مستوى",
+    "levels": "مستويات",
+    "gold": "ذهب",
+    "silver": "فضة",
+    "bronze": "برونز",
+    "gem": "جوهرة",
+    "gems": "جواهر",
+    "robux": "روباكس",
+    "skell": "سكيل",
+    "skells": "سكيلات",
+    "token": "توكن",
+    "tokens": "توكنز",
+    # تواصل ورسائل
+    "otp": "تأكيد",
+    "verification": "توثيق",
+    "verify": "توثيق",
+    "message": "رسالة",
+    "messages": "رسائل",
+    "sms": "رسالة",
+    "call": "مكالمة",
+    "calls": "مكالمات",
+    "number": "رقم",
+    "numbers": "أرقام",
+    "phone": "هاتف",
+    "data": "بيانات",
+    "internet": "إنترنت",
+    "wifi": "واي فاي",
+    "streaming": "بث",
+    "stream": "بث",
+    "photo": "صورة",
+    "photos": "صور",
+    "video": "فيديو",
+    "videos": "فيديوهات",
+    "music": "موسيقى",
+    "song": "أغنية",
+    "songs": "أغاني",
+    "movie": "فيلم",
+    "movies": "أفلام",
+    "prime": "برايم",
+    "store": "متجر",
+    "play": "بلاي",
+}
+
+# تصنيفات المتاجر الشائعة → العربية.
+_CATEGORY_AR: dict[str, str] = {
+    "social media": "سوشيال ميديا",
+    "social": "سوشيال",
+    "gaming": "ألعاب",
+    "games": "ألعاب",
+    "game": "ألعاب",
+    "e-commerce": "تجارة إلكترونية",
+    "ecommerce": "تجارة إلكترونية",
+    "shopping": "تسوق",
+    "entertainment": "ترفيه",
+    "subscriptions": "اشتراكات",
+    "subscription": "اشتراكات",
+    "top up": "شحن رصيد",
+    "topup": "شحن رصيد",
+    "recharge": "شحن رصيد",
+    "gift cards": "بطاقات هدية",
+    "gift card": "بطاقات هدية",
+    "streaming": "بث",
+    "music": "موسيقى",
+    "movies": "أفلام",
+    "tv": "تلفزيون",
+    "accounts": "حسابات",
+    "account": "حسابات",
+    "vpn": "فبن",
+    "otp": "رموز التحقق",
+    "crypto": "عملات رقمية",
+    "finance": "تمويل",
+    "finance & business": "تمويل وأعمال",
+    "business": "أعمال",
+    "software": "برامج",
+    "apps": "تطبيقات",
+    "applications": "تطبيقات",
+    "website": "مواقع",
+    "domain": "دومين",
+    "hosting": "استضافة",
+    "email": "بريد إلكتروني",
+    "phone": "هاتف",
+    "mobile": "موبايل",
+    "internet": "إنترنت",
+    "lottery": "يانصيب",
+    "sports": "رياضة",
+    "travel": "سفر",
+    "tickets": "تذاكر",
+    "movie tickets": "تذاكر أفلام",
+    "bills": "فواتير",
+    "utilities": "فواتير",
+    "books": "كتب",
+    "education": "تعليم",
+    "marketing": "تسويق",
+    "design": "تصميم",
+    "development": "تطوير",
+    "fashion": "أزياء",
+    "food": "طعام",
+    "beauty": "تجميل",
+    "health": "صحة",
+    "auto": "سيارات",
+    "home": "منزل",
+}
+
 # ترتيب بناء الاسم: النوع ثم البقية ثم المنصة
-_STOPWORDS = {"and", "with", "the", "a", "an", "for", "in", "of", "on", "to", "-", "_", "/", "&"}
+_STOPWORDS = {"and", "with", "the", "a", "an", "for", "in", "of", "on", "to", "up", "per", "each", "no", "or", "-", "_", "/", "&"}
 
 
 def is_arabic(text: str) -> bool:
@@ -170,10 +457,12 @@ def arabicize_service_name(
         or classify_smm_kind(haystack)
     )
 
-    # اسم بلا منصة/نوع معروف (مثل "Gemini Pro — 30 days") → نتركه كما هو:
-    # الترجمة كلمة-كلمة لأسماء غير معروفة تفسد أسماء المنتجات/الباقات.
+    # اسم بلا منصة/نوع SMM معروف (منتجات المتاجر العامة مثل "Free Fire
+    # Diamonds 100" أو "Netflix Premium 1 Month") → ترجمة متاجر عامة:
+    # علامات تجارية + كلمات مألوفة. إن لم يقع أي تغيير تُترك الكلمة
+    # الأصلية كما هي (نحمي أسماء الباقات غير المعروفة).
     if app is None and kind is None:
-        return raw[:200]
+        return _arabicize_store_name(raw)
 
     # نحذف مسميات المنصة والنوع من النص قبل ترجمة ما تبقى
     strip_terms: list[str] = []
@@ -208,6 +497,70 @@ def arabicize_service_name(
 
     # (app or kind) مضمون الوجود هنا، فلا يكون الناتج فارغاً
     return " ".join(p for p in parts if p).strip()[:200]
+
+
+def _arabicize_store_name(raw: str) -> str:
+    """ترجمة أسماء منتجات المتاجر العامة (بلا منصة/نوع SMM معروف).
+
+    - العبارات التجارية تُنقل (free fire → فري فاير، أطول عبارة أولاً).
+    - الكلمات المألوفة تُترجم (diamonds → ماسات، month → شهر...).
+    - الأرقام وغير المعروف يبقى كما هو وفي مكانه.
+    - إن لم يقع أي تغيير تُعاد الكلمة الأصلية — نحمي أسماء الباقات
+      غير المعروفة من ترجمة تفسدها.
+    """
+    text = " ".join(raw.split())
+    changed = False
+    for pattern, arab in _STORE_BRAND_RES:
+        new_text, count = pattern.subn(arab, text)
+        if count:
+            text = new_text
+            changed = True
+    out: list[str] = []
+    for word in text.split(" "):
+        if not word:
+            continue
+        folded = normalize_label(word)
+        arab = _STORE_WORD_AR.get(folded) or _QUALIFIER_AR.get(folded)
+        if arab is not None:
+            out.append(arab)
+            changed = True
+        elif word.lower() not in _STOPWORDS:
+            out.append(word)
+    if not changed:
+        return raw
+    return " ".join(p for p in out if p).strip()[:200]
+
+
+def display_category_name(category: str | None) -> str:
+    """التصنيف بالعربية: جدول تصنيفات شائعة، وإلا ترجمة كلمات مألوفة."""
+    raw = str(category or "").strip()
+    if not raw:
+        return ""
+    if is_arabic(raw):
+        return raw
+    folded = normalize_label(raw)
+    for key, arab in _CATEGORY_AR.items():
+        if normalize_label(key) == folded:
+            return arab
+    translated = _arabicize_store_name(raw)
+    return translated if translated != raw else raw
+
+
+def service_name_ar(service) -> str:
+    """الاسم العربي لخدمة مزود محفوظة.
+
+    يستخدم ``name_ar`` المحفوظ وقت السحب (كل الخدمات المسحوبة بعد
+    الترقية تُعرَّب في لحظة السحب)، وللسجلات القديمة التي ما زالت بلا
+    اسم عربي يبنى التعريب على الطايرة من الاسم الأصلي.
+    """
+    stored = str(getattr(service, "name_ar", None) or "").strip()
+    if stored:
+        return stored[:200]
+    return display_service_name(
+        str(getattr(service, "name", None) or ""),
+        getattr(service, "category", None),
+        getattr(service, "service_type", None),
+    )
 
 
 def display_service_name(

@@ -80,14 +80,12 @@ def _kinds_kb(platform_key: str, rows: list[tuple[str, str, str, int]]):
 
 
 def _services_kb(platform_key: str, kind_key: str, services, page: int, total: int):
-    from services.service_localization_service import display_service_name
+    from services.service_localization_service import service_name_ar
 
     b = InlineKeyboardBuilder()
     for service in services:
         rate = service.rate_usd or 0
-        name = display_service_name(
-            service.name, service.category, service.service_type
-        )[:36]
+        name = service_name_ar(service)[:36]
         b.button(
             text=f"{rate}$ · {name}",
             callback_data=f"ps:sv:{service.id}",
@@ -166,14 +164,12 @@ def _build_report_kb():
 
 def _search_results_kb(services, page: int, total: int):
     """نتائج البحث: الخدمة تفتح تفاصيلها مباشرة (نشر/سعر)."""
-    from services.service_localization_service import display_service_name
+    from services.service_localization_service import service_name_ar
 
     b = InlineKeyboardBuilder()
     for service in services:
         rate = service.rate_usd or 0
-        name = display_service_name(
-            service.name, service.category, service.service_type
-        )[:36]
+        name = service_name_ar(service)[:36]
         b.button(text=f"{rate}$ · {name}", callback_data=f"ps:sv:{service.id}")
     nav = []
     if page > 0:
@@ -643,14 +639,17 @@ async def pulled_service_view(callback: CallbackQuery, session, state: FSMContex
     p_emoji, p_label = platform_meta(platform_key)
     k_emoji, k_label = kind_meta(kind_key)
 
-    from services.service_localization_service import display_service_name, is_arabic
-
-    display_name = display_service_name(
-        service.name, service.category, service.service_type
+    from services.service_localization_service import (
+        display_category_name,
+        is_arabic,
+        service_name_ar,
     )
+
+    display_name = service_name_ar(service)
     name_lines = f"الاسم: {display_name}\n"
     if not is_arabic(service.name or "") and display_name != (service.name or ""):
         name_lines += f"<i>أصلي: {service.name}</i>\n"
+    category_ar = display_category_name(service.category) or "—"
 
     await callback.answer()
     await callback.message.edit_text(
@@ -662,7 +661,7 @@ async def pulled_service_view(callback: CallbackQuery, session, state: FSMContex
         f"🆔 آيدي الخدمة: <code>{service.external_service_id}</code>\n"
         f"💰 تكلفة المزود: <b>{service.rate_usd}$</b> / 1000\n"
         f"📊 الكمية: {service.min_quantity} — {service.max_quantity}\n"
-        f"📂 التصنيف: {service.category or '—'}\n\n"
+        f"📂 التصنيف: {category_ar}\n\n"
         "لن تظهر في البوت حتى تنشرها داخل قسم (والأفضل داخل قسم داخلي "
         "لتطبيقها) وتضع سعر البيع (لكل 1000).",
         reply_markup=_service_detail_kb(service.id, platform_key, kind_key, 0),
@@ -682,11 +681,9 @@ async def pulled_publish_start(callback: CallbackQuery, session, state: FSMConte
         return
     platform_key, kind_key = PulledServicesService.classify(service)
 
-    from services.service_localization_service import display_service_name
+    from services.service_localization_service import service_name_ar
 
-    svc_display = display_service_name(
-        service.name, service.category, service.service_type
-    )
+    svc_display = service_name_ar(service)
     await state.clear()
     await callback.answer()
 
@@ -715,7 +712,7 @@ async def pulled_publish_start(callback: CallbackQuery, session, state: FSMConte
                 "ننصح بإنشائها تلقائياً: سيُنشئ البوت قسماً لهذا النوع "
                 f"(«{k_label}») وينشر أرخص 5 خدمات فيه، ثم تعود وتنشر هذه الخدمة "
                 "بسعرك الخاص داخل القسم.\n\n"
-                f"الخدمة: {service.name}",
+                f"الخدمة: {svc_display}",
                 reply_markup=_no_sections_dest_kb(service_id),
             )
             return
@@ -759,9 +756,11 @@ async def _show_subs(callback, session, state, service_id: int, page: int) -> No
             reply_markup=_service_detail_kb(service_id, *PulledServicesService.classify(service), 0),
         )
         return
+    from services.service_localization_service import service_name_ar
+
     await callback.message.edit_text(
         "📂 <b>اختر القسم الذي سيظهر فيه المنتج</b>\n\n"
-        f"الخدمة: {service.name}\n"
+        f"الخدمة: {service_name_ar(service)}\n"
         "بعد الاختيار سيُطلب منك سعر البيع لكل 1000.",
         reply_markup=_subs_kb(service_id, subs, page),
     )
@@ -782,11 +781,9 @@ async def pulled_sub_picked(callback: CallbackQuery, session, state: FSMContext)
     await state.update_data(ps_service_id=service_id, ps_sub_id=sub_id)
     await state.set_state(AdminPulledServicesStates.waiting_sell_price)
     await callback.answer()
-    from services.service_localization_service import display_service_name
+    from services.service_localization_service import service_name_ar
 
-    svc_display = display_service_name(
-        service.name, service.category, service.service_type
-    )
+    svc_display = service_name_ar(service)
     await callback.message.edit_text(
         "💰 <b>سعر البيع لكل 1000</b>\n\n"
         f"الخدمة: {svc_display}\n"

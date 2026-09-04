@@ -151,10 +151,18 @@ class PulledServicesService:
 
     @staticmethod
     def _search_haystack(service: ProviderService, provider_name: str = "") -> str:
-        """الحقول التي يُبحث فيها: الاسم، التصنيف، النوع، آيدي الخدمة، اسم المزود."""
+        """الحقول التي يُبحث فيها: الاسم (الأصلي + العربي)، التصنيف، النوع،
+        آيدي الخدمة، اسم المزود — فيجد الأدمن الخدمة بالعربية أو الإنجليزي."""
+        from services.service_localization_service import (
+            display_category_name,
+            service_name_ar,
+        )
+
         fields = (
             service.name or "",
+            service_name_ar(service),
             service.category or "",
+            display_category_name(service.category),
             service.service_type or "",
             str(service.external_service_id or ""),
             service.description or "",
@@ -268,13 +276,11 @@ class PulledServicesService:
         name_ar: str | None = None,
     ):
         """Create a storefront product from a pulled service. Hidden until this call."""
-        from services.service_localization_service import display_service_name
+        from services.service_localization_service import service_name_ar
 
-        # الاسم بالعربية دائماً: ما أرسله الأدمن إن أرسل، وإلا تعريب
-        # اسم المزود تلقائياً (المنصة + النوع + الكلمات المألوفة).
-        default_name = display_service_name(
-            service.name, service.category, service.service_type
-        )
+        # الاسم بالعربية دائماً: ما أرسله الأدمن إن أرسل، وإلا الاسم
+        # العربي المحفوظ وقت السحب (تعريب المنصة + النوع + الكلمات).
+        default_name = service_name_ar(service)
         product = await DynamicService.create_product(
             session=session,
             sub_category_id=sub_category_id,
@@ -321,7 +327,7 @@ class PulledServicesService:
         """
         from database.models import Category, CategoryType
         from services.margin_service import MarginService
-        from services.service_localization_service import display_service_name
+        from services.service_localization_service import service_name_ar
 
         report = {
             "category": None,
@@ -386,9 +392,7 @@ class PulledServicesService:
             )
             existing = existing_result.scalars().first()
 
-            name_ar = display_service_name(
-                service.name, service.category, service.service_type
-            )[:128] or "خدمة"
+            name_ar = service_name_ar(service)[:128] or "خدمة"
             rate = Decimal(str(service.rate_usd or 0))
             sell = (rate * (Decimal("100") + margin) / Decimal("100")).quantize(
                 Decimal("0.0001"), rounding=ROUND_HALF_UP

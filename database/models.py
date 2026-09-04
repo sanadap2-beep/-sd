@@ -902,6 +902,9 @@ class ProviderService(Base):
 
     external_service_id: Mapped[str] = mapped_column(String(64), index=True)
     name: Mapped[str] = mapped_column(String(500))
+    # الاسم العربي المُعرَّب عند السحب (للعرض والبيع والبحث).
+    # الاسم الأصلي يبقى في ``name`` ولا يُمسّ شيء لدى المزود.
+    name_ar: Mapped[str | None] = mapped_column(String(500), nullable=True)
     category: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     service_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

@@ -368,6 +368,63 @@ async def test_rotation_can_be_disabled(monkeypatch):
     assert [u for _, u in rows1] == [u for _, u in rows2]
 
 
+async def test_watched_countries_rotate_like_the_rest(monkeypatch):
+    """الدول النادرة (المراقبة) لم تعد مثبّتة بالترتيب نفسه كل دورة.
+
+    كان هذا هو جوهر شكوى «نفس أول ١٠ دول»: القائمة المراقبة تغطي الدول
+    الكبرى، فكانت تملأ أول الخانات دائماً بالترتيب نفسه ولا يؤثر التدوير
+    عليها أبداً.
+    """
+    import services.number_catalog_service as ncs
+
+    await _configure(top_n=10, watched_country_codes="ae,sa,us,gb,qa,kw,bh,om,jo,eg", rotate_stable=True)
+
+    codes = ["ae", "sa", "us", "gb", "qa", "kw", "bh", "om", "jo", "eg"]
+    entries = [
+        BoardEntry(code, f"دولة {code}", "🌍", Decimal("0.1"), Decimal(str(0.2 + i)), True)
+        for i, code in enumerate(codes)
+    ]
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return list(entries)
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    _t1, rows1 = await AvailabilityBoardService.build_rows()
+    _t2, rows2 = await AvailabilityBoardService.build_rows()
+    urls1 = [url for _, url in rows1]
+    urls2 = [url for _, url in rows2]
+    assert urls1 != urls2, "ترتيب الدول المراقبة يتجمّد على ما يبدو"
+    assert sorted(urls1) == sorted(urls2)  # نفس الدول
+    assert len(urls1) == 10
+
+
+async def test_visible_window_changes_when_more_than_top_n(monkeypatch):
+    """عندما يتجاوز المتاح عدد الدول المعروضة، تتبدل دول النافذة كل دورة."""
+    import services.number_catalog_service as ncs
+
+    await _configure(top_n=5, watched_country_codes="ae,sa", rotate_stable=True)
+
+    entries = [
+        BoardEntry(f"cc{i}", f"دولة {i}", "🌍", Decimal("0.1"), Decimal(str(0.2 + i)))
+        for i in range(12)
+    ]
+
+    async def fake_build_board(session, service, manager=None, use_cache=True):
+        return list(entries)
+
+    monkeypatch.setattr(ncs, "build_board", fake_build_board)
+    AvailabilityBoardService.reset_state()
+
+    _t1, rows1 = await AvailabilityBoardService.build_rows()
+    _t2, rows2 = await AvailabilityBoardService.build_rows()
+    set1 = {url.rsplit("__", 1)[1] for _, url in rows1}
+    set2 = {url.rsplit("__", 1)[1] for _, url in rows2}
+    assert set1 != set2, "دول النافذة المعروضة لا تتبدل بين الدورات"
+    assert len(set1) == 5 and len(set2) == 5
+
+
 async def test_restock_badge_survives_restart(monkeypatch):
     """الحالة محفوظة في قاعدة البيانات: إعادة التشغيل لا تفقد تاريخ التوفر."""
     import services.number_catalog_service as ncs

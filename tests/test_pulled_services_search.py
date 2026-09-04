@@ -79,6 +79,22 @@ async def test_search_by_name_is_case_insensitive_and_partial():
     assert services[0].api_provider_id == provider_a
 
 
+async def test_search_finds_english_service_by_its_arabic_name():
+    """الدول/المنتجات الإنجليزية يُعثر عليها بالاسم العربي المُعرَّب.
+
+    «PUBG Mobile UC 1000» تُعرَّب إلى «ببجي موبايل UC 1000»، فالبحث عن
+    «ببجي» يجب أن يجدها حتى لو الاسم المحفوظ بالإنجليزية.
+    """
+    provider_a, _provider_b = await _seed()
+
+    async with async_session_maker() as session:
+        services, total = await PulledServicesService.search_services(session, "ببجي")
+
+    assert total == 1
+    assert services[0].external_service_id == "9002"
+    assert services[0].api_provider_id == provider_a
+
+
 async def test_search_by_provider_service_id():
     await _seed()
 

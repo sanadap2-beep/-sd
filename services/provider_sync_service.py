@@ -31,6 +31,7 @@ from database.models import (
 from protocols.base import ProtocolError
 from protocols.factory import ProtocolFactory
 from services.currency_service import CurrencyService
+from services.service_localization_service import display_service_name
 
 logger = logging.getLogger(__name__)
 
@@ -208,12 +209,20 @@ class ProviderSyncService:
                         ensure_ascii=False,
                     )[:5000]
 
+                    # التعريب وقت السحب: كل خدمة مسحوبة تملك اسماً عربياً
+                    # محفوظاً (للعرض والبيع والبحث)، والاسم الأصلي الإنجليزي
+                    # يبقى في name كما وصل من المزود.
+                    name_ar = display_service_name(
+                        service.name, service.category, service.service_type
+                    )
+
                     existing = existing_services.get(service.external_id)
 
                     if existing:
                         was_deleted = existing.status == ProviderServiceStatus.DELETED_FROM_PROVIDER
 
                         existing.name = service.name
+                        existing.name_ar = name_ar
                         existing.category = service.category
                         existing.service_type = service.service_type
                         existing.rate = service.rate
@@ -239,6 +248,7 @@ class ProviderSyncService:
                             api_provider_id=provider_id,
                             external_service_id=(service.external_id),
                             name=service.name,
+                            name_ar=name_ar,
                             category=service.category,
                             service_type=service.service_type,
                             rate=service.rate,
