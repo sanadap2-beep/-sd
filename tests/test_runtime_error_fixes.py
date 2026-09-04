@@ -236,3 +236,144 @@ async def test_admin_sub_categories_list_no_lazy_io():
 
         # العلاقة محمّلة مسبقاً بالفعل (لا IO معلق)
         assert len(subs[0].products) == 2
+
+# ══════════════ زر «تم تصليح الخطأ» مع إشعارات الأخطاء ══════════════
+
+
+class _FakeBotWithMarkup:
+    """Bot وهمي يلتقط نص الإبلاغ ولوحة الأزرار المرفقة به."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send_message(self, chat_id, text, **kwargs):
+        self.sent.append({"chat_id": chat_id, "text": text, **kwargs})
+
+
+def _callbacks_of(markup) -> list[str]:
+    return [b.callback_data for row in markup.inline_keyboard for b in row]
+
+
+@pytest.mark.asyncio
+async def test_middleware_error_report_carries_fixed_button(monkeypatch):
+    """إشعار الخطأ يصل للأدمن ومعه زر «تم تصليح الخطأ» الذي يحذفه."""
+    import middlewares.error_middleware as em
+
+    monkeypatch.setattr(em.settings, "ADMIN_NOTIFY_CHAT_ID", -1001)
+
+    bot = _FakeBotWithMarkup()
+    callback, _ = _make_callback_query()
+    middleware = ErrorReportingMiddleware()
+
+    async def handler(event, data):
+        raise RuntimeError("boom")
+
+    await middleware(handler, callback, {"bot": bot})
+
+    assert len(bot.sent) == 1
+    markup = bot.sent[0].get("reply_markup")
+    assert markup is not None
+    assert em.ERROR_FIXED_CALLBACK in _callbacks_of(markup)
+    labels = [b.text for row in markup.inline_keyboard for b in row]
+    assert any("تم تصليح الخطأ" in (t or "") for t in labels)
+
+
+@pytest.mark.asyncio
+async def test_background_error_report_carries_fixed_button(monkeypatch):
+    """إشعار أخطاء المهام الخلفية يحمل الزر أيضاً."""
+    import middlewares.error_middleware as em
+
+    monkeypatch.setattr(em.settings, "ADMIN_NOTIFY_CHAT_ID", -1001)
+
+    bot = _FakeBotWithMarkup()
+    try:
+        raise ValueError("background boom")
+    except ValueError as exc:
+        await em.report_exception_to_admin(bot, exc, source="test_task")
+
+    assert len(bot.sent) == 1
+    assert em.ERROR_FIXED_CALLBACK in _callbacks_of(bot.sent[0]["reply_markup"])
+
+
+class _FakeMessage:
+    def __init__(self, fail_delete: bool = False):
+        self.deleted = 0
+        self._fail_delete = fail_delete
+
+    async def delete(self):
+        from aiogram.exceptions import TelegramBadRequest
+
+        if self._fail_delete:
+            raise TelegramBadRequest(method="", message="Bad Request: message to delete not found")
+        self.deleted += 1
+        return True
+
+
+def _make_fixed_callback(message) -> tuple[CallbackQuery, list]:
+    answered: list[dict] = []
+    callback = CallbackQuery(
+        id="fixed-query",
+        from_user=AiogramUser(id=1, is_bot=False, first_name="Admin", username="owner"),
+        chat_instance="test-instance",
+        data="err:fixed",
+    )
+    object.__setattr__(callback, "message", message)
+
+    async def _record_answer(text=None, show_alert=False, **kwargs):
+        answered.append({"text": text, "show_alert": show_alert})
+
+    object.__setattr__(callback, "answer", _record_answer)
+    return callback, answered
+
+
+@pytest.mark.asyncio
+async def test_fixed_button_deletes_error_notification():
+    """ضغط «تم تصليح الخطأ» يحذف إشعار الخطأ تلقائياً."""
+    from handlers.error_reports import dismiss_error_report
+
+    message = _FakeMessage()
+    callback, answered = _make_fixed_callback(message)
+
+    await dismiss_error_report(callback)
+
+    assert message.deleted == 1
+    assert answered and "حذف" in (answered[0]["text"] or "")
+
+
+@pytest.mark.asyncio
+async def test_fixed_button_tolerates_already_deleted_message():
+    """لو حُذف الإشعار يدوياً قبل الضغط لا ينفجر الخطأ."""
+    from handlers.error_reports import dismiss_error_report
+
+    message = _FakeMessage(fail_delete=True)
+    callback, answered = _make_fixed_callback(message)
+
+    await dismiss_error_report(callback)  # لا يرفع استثناء
+
+    assert message.deleted == 0
+    assert answered and answered[0]["show_alert"] is True
+
+
+@pytest.mark.asyncio
+async def test_fixed_button_allowed_for_admins_only():
+    """الزر يعمل للأدمن (قاعدة بيانات أو ADMIN_IDS) ويرفض الغرباء."""
+    from aiogram.types import CallbackQuery, User as AiogramUser
+
+    from config import settings
+    from handlers.error_reports import CanDismissErrorReport
+
+    def _event(user_id: int) -> CallbackQuery:
+        return CallbackQuery(
+            id="q",
+            from_user=AiogramUser(id=user_id, is_bot=False, first_name="U"),
+            chat_instance="ci",
+            data="err:fixed",
+        )
+
+    admin_filter = CanDismissErrorReport()
+    db_admin = type("U", (), {"is_admin": True})()
+    stranger = type("U", (), {"is_admin": False})()
+
+    assert await admin_filter(_event(1), db_user=db_admin) is True
+    assert await admin_filter(_event(1), db_user=stranger) is True  # ADMIN_IDS من conftest = "1"
+    assert await admin_filter(_event(999), db_user=None) is False  # غريب تماماً

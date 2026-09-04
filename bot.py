@@ -61,6 +61,7 @@ from handlers import (
 )
 from handlers.deposit_methods import router as deposit_methods_router
 from handlers.games import router as games_router
+from handlers.error_reports import router as error_reports_router
 from handlers.admin import (
     panel as admin_panel,
     broadcast as admin_broadcast,
@@ -259,6 +260,9 @@ def register_routers():
     dp.include_router(admin_sponsored_ads.router)
     dp.include_router(admin_special_offers.router)
     dp.include_router(admin_live_feed.router)
+
+    # أزرار إشعارات الأخطاء (زر «تم تصليح الخطأ») — قبل fallback ليصل إليها الضغط أولاً.
+    dp.include_router(error_reports_router)
 
     # آخر Router دائماً: يلتقط أي زر غير مربوط بدل أن يسكت البوت.
     dp.include_router(fallback.router)

@@ -706,24 +706,60 @@ SCOPE_LABELS = {
 # (100 زر كحد أقصى للوحة كاملة) لتفادي «reply markup is too long».
 SSVC_TARGETS_PER_PAGE = 40
 
+# أقصى عدد سيرفرات لكل صفحة في قائمة السيرفرات العامة (نفس السبب).
+STORE_SERVERS_PER_PAGE = 30
 
-def admin_store_servers_kb(servers, scope_counts=None) -> InlineKeyboardMarkup:
-    """قائمة كل السيرفرات العامة مع عددها حسب النطاق."""
+# أقصى طول لنص الزر — الأسماء الطويلة جداً تضخّم الـ reply markup
+# وقد تتجاوز حد تيليجرام حتى مع عدد أزرار صغير.
+_MAX_BUTTON_TEXT = 48
+
+
+def _clip_label(text: str, limit: int = _MAX_BUTTON_TEXT) -> str:
+    """يقصّ نص الزر الطويل حتى لا يتضخم الـ reply markup فوق حد تيليجرام."""
+    text = " ".join(str(text).split())  # توحيد الأسطر والمسافات
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def admin_store_servers_kb(servers, scope_counts=None, page: int = 0) -> InlineKeyboardMarkup:
+    """قائمة كل السيرفرات العامة مع عددها حسب النطاق (مع ترقيم صفحات).
+
+    الترقيم ضروري: عند إنشاء سيرفر لكل قسم فرعي مثلاً يتجاوز العدد
+    حد أزرار تيليجرام (100 زر) فتفشل الرسالة بخطأ
+    «Bad Request: reply markup is too long».
+    """
     b = InlineKeyboardBuilder()
-    for server in servers:
+    total = len(servers)
+    total_pages = max(1, (total + STORE_SERVERS_PER_PAGE - 1) // STORE_SERVERS_PER_PAGE)
+    page = max(0, min(int(page), total_pages - 1))
+    start = page * STORE_SERVERS_PER_PAGE
+    for server in servers[start : start + STORE_SERVERS_PER_PAGE]:
         status = "🟢" if server.is_active else "⚪"
         kind = "🔌" if server.provider_kind == "api" else "📱"
         b.button(
-            text=f"{status} {kind} {server.emoji} {server.name_ar}",
+            text=_clip_label(f"{status} {kind} {server.emoji} {server.name_ar}"),
             callback_data=f"admin:ssvc_server:{server.id}",
         )
+    rows = [1] * min(len(servers) - start, STORE_SERVERS_PER_PAGE)
+    nav = []
+    if page > 0:
+        b.button(text="◀️ السابق", callback_data=f"admin:store_servers:p:{page - 1}")
+        nav.append(1)
+    if page < total_pages - 1:
+        b.button(text="التالي ▶️", callback_data=f"admin:store_servers:p:{page + 1}")
+        nav.append(1)
+    if nav:
+        rows.append(len(nav))
     b.button(
         text="➕ إضافة سيرفر عام",
         callback_data="admin:ssvc_add",
         style="success",
     )
+    rows.append(1)
     b.button(text="🔙 رجوع", callback_data="admin:main")
-    b.adjust(1)
+    rows.append(1)
+    b.adjust(*rows)
     return b.as_markup()
 
 
@@ -773,7 +809,7 @@ def admin_ssvc_target_kb(scope: str, targets, page: int = 0) -> InlineKeyboardMa
         emoji = getattr(target, "emoji", "📦")
         name = getattr(target, "name_ar", str(target))
         b.button(
-            text=f"{emoji} {name}",
+            text=_clip_label(f"{emoji} {name}"),
             callback_data=f"admin:ssvc_target:{scope}:{target.id}",
             style="success",
         )

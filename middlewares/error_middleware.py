@@ -13,12 +13,32 @@ import traceback
 
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from config import settings
 from services.error_diagnosis_service import diagnose
 
 logger = logging.getLogger(__name__)
+
+# زر «تم تصليح الخطأ» المرفق بكل إشعار خطأ يذهب للأدمن:
+# بضغطه يُحذف إشعار الخطأ فوراً (معالج الحذف في handlers/error_reports.py).
+ERROR_FIXED_CALLBACK = "err:fixed"
+
+
+def error_report_kb() -> InlineKeyboardMarkup:
+    """لوحة أزرار إشعار الخطأ: زر واحد لحذف الإشعار بعد معالجته."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ تم تصليح الخطأ",
+                    callback_data=ERROR_FIXED_CALLBACK,
+                    style="success",
+                )
+            ]
+        ]
+    )
+
 
 # أخطاء تيليجرام "الحميدة": لا تستدعي إزعاج الأدمن ولا تُظهر تحذيراً للمستخدم.
 # - message is not modified: ضغط المستخدم على نفس الزر والمحتوى لم يتغير.
@@ -69,7 +89,12 @@ async def report_exception_to_admin(bot, exc: BaseException, *, source: str = "b
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-2500:]
     body = format_admin_error_report(exc, event_name=source, tb=tb)
     try:
-        await bot.send_message(settings.ADMIN_NOTIFY_CHAT_ID, body, parse_mode="HTML")
+        await bot.send_message(
+            settings.ADMIN_NOTIFY_CHAT_ID,
+            body,
+            parse_mode="HTML",
+            reply_markup=error_report_kb(),
+        )
     except Exception:
         logger.exception("Failed to report %s error to admin channel", source)
 
@@ -129,7 +154,10 @@ class ErrorReportingMiddleware(BaseMiddleware):
             if bot and settings.ADMIN_NOTIFY_CHAT_ID:
                 try:
                     await bot.send_message(
-                        settings.ADMIN_NOTIFY_CHAT_ID, admin_text, parse_mode="HTML"
+                        settings.ADMIN_NOTIFY_CHAT_ID,
+                        admin_text,
+                        parse_mode="HTML",
+                        reply_markup=error_report_kb(),
                     )
                 except Exception:
                     logger.exception("Failed to report handler error to admin channel")
