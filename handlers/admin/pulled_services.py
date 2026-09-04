@@ -443,7 +443,7 @@ async def pulled_provider_detail(callback: CallbackQuery, session, state: FSMCon
         f"🆔 ID: <code>{provider.id}</code>\n"
         f"📥 الخدمات المسحوبة: <b>{svc_count}</b>\n"
         f"📦 المنتجات المنشورة: <b>{prod_count}</b>\n"
-        f"🧩 البروتوكول: {provider.protocol.value if provider.protocol else '—'}\n"
+        f"🧩 البروتوكول: {provider.protocol_type.value if provider.protocol_type else '—'}\n"
         f"🏷 النوع: {provider.type.value if provider.type else '—'}\n\n"
         "اختر عملاً واحداً — مسح كل المنتجات ثم إعادة السحب صارت بضغطتين.",
         reply_markup=_provider_detail_kb(provider.id),
