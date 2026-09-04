@@ -76,6 +76,7 @@ from handlers.admin import (
     support as admin_support,
     categories as admin_categories,
     products as admin_products,
+    smm_products as admin_smm_products,
     api_providers as admin_api_providers,
     audit as admin_audit,
     health as admin_health,
@@ -224,6 +225,7 @@ def register_routers():
     dp.include_router(admin_support.router)
     dp.include_router(admin_categories.router)
     dp.include_router(admin_products.router)
+    dp.include_router(admin_smm_products.router)
     dp.include_router(admin_api_providers.router)
     dp.include_router(admin_pulled_services.router)
     dp.include_router(admin_partner_catalog.router)
@@ -629,10 +631,13 @@ async def main():
 
     # ── بناء أقسام الرشق الداخلية تلقائياً ──
     # ينشئ لكل تطبيق أقسامه (متابعون/لايكات/مشاهدات...) من الخدمات المسحوبة
-    # وينشر أرخص 5 خدمات بكل قسم. Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
+    # وينشر أرخص 10 خدمات بكل قسم (ويتجاهل الخدمات بلا سعر).
+    # Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
     try:
         async with async_session_maker() as session:
             if await SmmSectionsService.auto_build_enabled():
+                if await SmmSectionsService.upgrade_legacy_limit():
+                    logger.info("⬆️ رُفع حد النشر التلقائي لأقسام الرشق من 5 إلى 10.")
                 report = await SmmSectionsService.build(session)
                 logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
     except Exception:
