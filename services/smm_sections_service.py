@@ -38,7 +38,6 @@ from database.models import (
 )
 from services.feature_service import FeatureService
 from services.pulled_services_service import PulledServicesService
-from services.service_localization_service import display_service_name
 from services.smm_catalog import (
     SMM_KIND_SPECS,
     SHORT_TO_PLATFORM,
@@ -279,13 +278,12 @@ class SmmSectionsService:
                         * (Decimal("100") + margin)
                         / Decimal("100")
                     ).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
-                    # الاسم بالعربية دائماً: تعريب اسم المزود تلقائياً
-                    # (إن كان إنجليزياً) — "TikTok Real Followers 1000"
-                    # يصبح "متابعون حقيقي تيك توك (1000)".
-                    raw_name = (service.name or "").strip()
-                    product_name = display_service_name(
-                        raw_name, service.category, service.service_type
-                    )[:128]
+                    # الاسم بالعربية دائماً: الاسم العربي المحفوظ وقت السحب
+                    # (وللسجلات القديمة تعريب على الطايرة) — "TikTok Real
+                    # Followers 1000" يصبح "متابعون حقيقي تيك توك (1000)".
+                    from services.service_localization_service import service_name_ar
+
+                    product_name = service_name_ar(service)[:128]
                     if not product_name:
                         _, label = kind_meta(kind_key)
                         product_name = f"{label} {app_sub.name_ar}"[:128]

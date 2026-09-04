@@ -263,11 +263,18 @@ class SubscriptionsSyncService:
         service = result.scalar_one_or_none()
         raw = svc.raw or {}
         in_stock = bool(raw.get("in_stock", True))
+
+        # التعريب وقت السحب (اسم عربي محفوظ، والأصلي يبقى في name).
+        from services.service_localization_service import display_service_name
+
+        name_ar = display_service_name(svc.name, svc.category, svc.service_type)
+
         if service is None:
             service = ProviderService(
                 api_provider_id=provider.id,
                 external_service_id=svc.external_id[:64],
                 name=svc.name,
+                name_ar=name_ar,
                 category=(svc.category or None),
                 service_type=svc.service_type,
                 rate=svc.rate,
@@ -290,6 +297,7 @@ class SubscriptionsSyncService:
             return service
 
         service.name = svc.name
+        service.name_ar = name_ar
         service.category = svc.category or None
         service.service_type = svc.service_type
         service.rate = svc.rate
@@ -325,13 +333,11 @@ class SubscriptionsSyncService:
             return None
 
         if product is None:
-            # الاسم بالعربية دائماً (تعريب تلقائي إن كان اسم المزود إنجليزياً)
-            from services.service_localization_service import display_service_name
+            # الاسم بالعربية دائماً: المحفوظ وقت السحب، أو تعريب تلقائي
+            # إن كان اسم المزود إنجليزياً (سجلات قديمة بلا اسم عربي).
+            from services.service_localization_service import service_name_ar
 
-            name = (
-                display_service_name(svc.name, svc.category, svc.service_type)[:128]
-                or "اشتراك رقمي"
-            )
+            name = service_name_ar(svc)[:128] or "اشتراك رقمي"
             product = Product(
                 sub_category_id=section.id,
                 api_provider_id=provider.id,

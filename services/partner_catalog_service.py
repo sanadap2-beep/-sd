@@ -171,8 +171,12 @@ class PartnerCatalogService:
         )
         row = result.scalar_one_or_none()
         rate = Decimal(str(proto.rate or 0))
+        # التعريب وقت السحب: اسم عربي محفوظ، والأصلي يبقى في name.
         payload = {
             "name": (proto.name or "خدمة")[:500],
+            "name_ar": display_service_name(
+                proto.name or "", proto.category, proto.service_type
+            ),
             "category": (proto.category or proto.service_type or "")[:255] or None,
             "service_type": (proto.service_type or "")[:64] or None,
             "rate": rate,
