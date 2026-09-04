@@ -701,6 +701,10 @@ SCOPE_LABELS = {
     "global": "🌐 عام (كل الأقسام)",
 }
 
+# أقصى عدد أزرار لكل صفحة في اختيار الهدف — يبقيه أقل بكثير من حد تليجرام
+# (100 زر كحد أقصى للوحة كاملة) لتفادي «reply markup is too long».
+SSVC_TARGETS_PER_PAGE = 40
+
 
 def admin_store_servers_kb(servers, scope_counts=None) -> InlineKeyboardMarkup:
     """قائمة كل السيرفرات العامة مع عددها حسب النطاق."""
@@ -741,21 +745,30 @@ def admin_store_server_detail_kb(server) -> InlineKeyboardMarkup:
 def admin_ssvc_scope_kb() -> InlineKeyboardMarkup:
     """اختيار نطاق السيرفر: أي قسم سيُربط به.
 
-    «خدمة الأرقام» لها نظام سيرفرات مخصص (أنظر إدارة خدمات الأرقام)
-    لذلك لا نعرضه هنا حتى لا يُنشئ الأدمن سيرفراً لا يظهر.
+    «خدمة الأرقام» معروضة هنا أيضاً، فيستطيع الأدمن ربط سيرفر عام
+    بخدمة أرقام محددة (بالإضافة إلى نظام سيرفرات الأرقام المخصص).
     """
     b = InlineKeyboardBuilder()
-    for key in ("category", "subcategory", "global"):
+    for key in ("category", "subcategory", "number_service", "global"):
         b.button(text=SCOPE_LABELS[key], callback_data=f"admin:ssvc_scope:{key}", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:store_servers")
     b.adjust(1)
     return b.as_markup()
 
 
-def admin_ssvc_target_kb(scope: str, targets) -> InlineKeyboardMarkup:
-    """اختيار القسم المستهدف من القائمة المحددة."""
+def admin_ssvc_target_kb(scope: str, targets, page: int = 0) -> InlineKeyboardMarkup:
+    """اختيار القسم المستهدف من القائمة المحددة (مع ترقيم صفحات).
+
+    ترقيم الصفحات ضروري لأن عدد الأقسام الفرعية مثلاً قد يكون كبيراً
+    فيتجاوز حد أزرار تليجرام وتظهر رسالة «reply markup is too long».
+    """
     b = InlineKeyboardBuilder()
-    for target in targets:
+    total = len(targets)
+    total_pages = max(1, (total + SSVC_TARGETS_PER_PAGE - 1) // SSVC_TARGETS_PER_PAGE)
+    page = max(0, min(int(page), total_pages - 1))
+    start = page * SSVC_TARGETS_PER_PAGE
+    chunk = targets[start : start + SSVC_TARGETS_PER_PAGE]
+    for target in chunk:
         emoji = getattr(target, "emoji", "📦")
         name = getattr(target, "name_ar", str(target))
         b.button(
@@ -763,8 +776,19 @@ def admin_ssvc_target_kb(scope: str, targets) -> InlineKeyboardMarkup:
             callback_data=f"admin:ssvc_target:{scope}:{target.id}",
             style="success",
         )
+    rows = [1] * len(chunk)
+    nav = []
+    if page > 0:
+        b.button(text="◀️ السابق", callback_data=f"admin:ssvc_scope:{scope}:{page - 1}")
+        nav.append(1)
+    if page < total_pages - 1:
+        b.button(text="التالي ▶️", callback_data=f"admin:ssvc_scope:{scope}:{page + 1}")
+        nav.append(1)
+    if nav:
+        rows.append(len(nav))
     b.button(text="🔙 النطاق", callback_data="admin:ssvc_add")
-    b.adjust(1)
+    rows.append(1)
+    b.adjust(*rows)
     return b.as_markup()
 
 

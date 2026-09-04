@@ -87,7 +87,16 @@ async def ssvc_add_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin:ssvc_scope:"))
 async def ssvc_scope_selected(callback: CallbackQuery, session, state: FSMContext):
-    scope = callback.data.rsplit(":", 1)[1]
+    parts = callback.data.split(":")
+    # admin:ssvc_scope:{scope} أو admin:ssvc_scope:{scope}:{page}
+    if len(parts) < 3:
+        await callback.answer("⚠️ نطاق غير معروف.", show_alert=True)
+        return
+    scope = parts[2]
+    try:
+        page = int(parts[3]) if len(parts) > 3 else 0
+    except ValueError:
+        page = 0
     if scope not in SCOPE_LABELS:
         await callback.answer("⚠️ نطاق غير معروف.", show_alert=True)
         return
@@ -111,7 +120,7 @@ async def ssvc_scope_selected(callback: CallbackQuery, session, state: FSMContex
         return
     await callback.message.edit_text(
         f"{SCOPE_LABELS[scope]}\n\nاختر العنصر الذي تريد ربط السيرفر به:",
-        reply_markup=admin_ssvc_target_kb(scope, targets),
+        reply_markup=admin_ssvc_target_kb(scope, targets, page),
     )
     await callback.answer()
 
