@@ -21,7 +21,14 @@
    تُبنى من نفس اليوزرنيم الحيّ المُتحقَّق منه، ولا تُنشر اللوحة أصلاً إذا
    تعذّر التحقق منه.
 
-4. **ضغط دولة ثم «لا يوجد رقم»**: قبل النشر يُتحقَّق من أن الدولة موجودة
+4. **القناة «ما بتوصل»**: التعديل في مكان الرسالة لا يُصدر إشعاراً في
+   Telegram، والرسالة تبقى مدفونة تحت أي منشور أحدث. الآن تُعاد اللوحة
+   كرسالة جديدة دورياً (``auto_repost`` كل ``repost_every_cycles`` دورة،
+   افتراضياً 10 دورات ≈ 10 دقائق)، فيصل المشتركين إشعار فعلي وتبقى
+   اللوحة ظاهرة بأعلى القناة. واختيارياً ``repost_on_restock`` يرسل
+   رسالة جديدة فور رجوع أي دولة نادرة.
+
+5. **ضغط دولة ثم «لا يوجد رقم»**: قبل النشر يُتحقَّق من أن الدولة موجودة
    ومفعّلة في قاعدة البيانات (``is_active``)، فلا يظهر زر لدولة معطّلة.
    والدول التي نفدت للتو تُعرَض تلقائياً كـ «نفدت» بدل رابط شراء ميت.
 """
@@ -66,6 +73,10 @@ class AvailabilityBoardService:
     _availability_state: dict[str, dict[str, dict[str, float]]] = {}
     # service_code -> عدّاد الدورات (لتدوير ترتيب الدول الثابتة).
     _cycle: dict[str, int] = {}
+    # service_code -> عدد الدورات منذ آخر «رسالة جديدة» (لإعادة النشر الدوري).
+    _cycles_since_post: dict[str, int] = {}
+    # عدد الدول التي عادت للمخزون في آخر دورة (للإشعار الفوري).
+    _last_restock_count: int = 0
     _state_loaded: set[str] = set()
     _last_skip_reason: str = ""
     _last_text: str = ""
@@ -117,6 +128,31 @@ class AvailabilityBoardService:
         return await FeatureService.config_bool(FEATURE_KEY, "always_publish", True)
 
     @staticmethod
+    async def auto_repost() -> bool:
+        """«إعادة النشر التلقائي»: كل عدد محدد من الدورات تُنشر اللوحة
+        كرسالة جديدة بدل تعديل القديمة.
+
+        Telegram لا يُصدر إشعاراً عند تعديل رسالة، والرسالة المُعدَّلة تبقى
+        مدفونة تحت أي منشور أحدث. إعادة النشر الدورية تُبقي اللوحة في أعلى
+        القناة وتُشعر المشتركين بها فعلاً.
+        """
+        return await FeatureService.config_bool(FEATURE_KEY, "auto_repost", True)
+
+    @staticmethod
+    async def repost_every_cycles() -> int:
+        """كم دورة تحديث بين كل إعادة نشر (رسالة جديدة)."""
+        try:
+            value = int(await FeatureService.config(FEATURE_KEY, "repost_every_cycles", 10))
+        except (TypeError, ValueError):
+            value = 10
+        return max(1, min(value, 240))
+
+    @staticmethod
+    async def repost_on_restock() -> bool:
+        """إشعار فوري (رسالة جديدة) لحظة رجوع دولة نادرة للمخزون."""
+        return await FeatureService.config_bool(FEATURE_KEY, "repost_on_restock", False)
+
+    @staticmethod
     async def header_text() -> str:
         return str(
             await FeatureService.config(
@@ -160,6 +196,8 @@ class AvailabilityBoardService:
         cls._last_post = None
         cls._availability_state.clear()
         cls._cycle.clear()
+        cls._cycles_since_post.clear()
+        cls._last_restock_count = 0
         cls._state_loaded.clear()
         cls._last_skip_reason = ""
         cls._last_text = ""
@@ -343,6 +381,7 @@ class AvailabilityBoardService:
         from services.number_catalog_service import build_board, format_price
 
         cls._last_skip_reason = ""
+        cls._last_restock_count = 0
         now = time.time()
 
         async with async_session_maker() as session:
@@ -372,6 +411,7 @@ class AvailabilityBoardService:
         cls._restock_gap_seconds = max(90.0, (await cls.refresh_seconds()) * 2.5)
 
         restocked = cls._update_snapshot(service_code, entries, state, now)
+        cls._last_restock_count = len(restocked)
         await cls._save_state(service_code)
 
         watched_order = await cls.watched_country_codes()
@@ -466,6 +506,7 @@ class AvailabilityBoardService:
             return "لا توجد دول متوفرة الآن — أُزيلت اللوحة القديمة إن وُجدت."
 
         text, rows = built
+        service_code = await cls.service_code()
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         # نفس اليوزرنيم الحيّ المستخدم في أزرار الدول — لا قيمة بيئة قديمة.
@@ -477,7 +518,22 @@ class AvailabilityBoardService:
             )
         markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-        # 1) محاولة التعديل في المكان: يبقي التفاعلات ولا يزعج المشتركين.
+        # 1) القرار: تعديل في المكان أم «رسالة جديدة» تُصدر إشعاراً؟
+        #    Telegram لا يُشعر المشتركين بتعديل رسالة، والرسالة المُعدَّلة
+        #    تبقى مدفونة تحت أي منشور أحدث في القناة. لذلك تُعاد اللوحة
+        #    كرسالة جديدة كل عدد محدد من الدورات (auto_repost)،
+        #    أو فوراً عند رجوع دولة نادرة إن فعّل الأدمن ذلك.
+        cycles = cls._cycles_since_post.get(service_code, 0)
+        needs_new_post = cls._last_post is None or (
+            await cls.auto_repost() and (cycles + 1) >= (await cls.repost_every_cycles())
+        )
+        if not needs_new_post and await cls.repost_on_restock() and cls._last_restock_count:
+            needs_new_post = True
+
+        if needs_new_post:
+            await cls._delete_last(bot, chat_id)
+
+        # 2) محاولة التعديل في المكان: يبقي التفاعلات ولا يزعج المشتركين.
         if cls._last_post and cls._last_post[0] == chat_id:
             try:
                 await bot.edit_message_text(
@@ -487,10 +543,12 @@ class AvailabilityBoardService:
                     reply_markup=markup,
                 )
                 cls._last_text = text
+                cls._cycles_since_post[service_code] = cycles + 1
                 return f"✅ حُدِّثت لوحة التوفر ({len(rows)} دولة)."
             except Exception as exc:  # noqa: BLE001 - نعيد النشر عند الفشل
                 message = str(exc).lower()
                 if "message is not modified" in message:
+                    cls._cycles_since_post[service_code] = cycles + 1
                     return "لا تغيير في اللوحة (المحتوى مطابق)."
                 logger.debug("تعذّر تعديل لوحة التوفر، سيُعاد نشرها: %s", exc)
                 await cls._delete_last(bot, chat_id)
@@ -498,6 +556,7 @@ class AvailabilityBoardService:
         message = await bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
         cls._last_post = (chat_id, message.message_id)
         cls._last_text = text
+        cls._cycles_since_post[service_code] = 0
         return f"✅ نُشرت لوحة التوفر ({len(rows)} دولة)."
 
     @classmethod

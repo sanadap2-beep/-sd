@@ -6,6 +6,8 @@ one into a subcategory they created, with an explicit selling price.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -33,6 +35,25 @@ from services.smm_catalog import (
 )
 
 SERVICES_PER_PAGE = 8
+# عدد نتائج البحث في الصفحة الواحدة.
+SEARCH_PER_PAGE = 8
+
+# التشكيل والتطويل والحروف المبدّلة في العربية (تُوحَّد قبل المقارنة).
+_AR_MARKS_RE = re.compile(r"[ً-ْٰـ]")
+_AR_LETTER_FOLDS = (
+    ("أ", "ا"),
+    ("إ", "ا"),
+    ("آ", "ا"),
+    ("ٱ", "ا"),
+    ("ى", "ي"),
+    ("ی", "ي"),
+    ("ة", "ه"),
+    ("ؤ", "و"),
+    ("ئ", "ي"),
+)
+_SPACES_RE = re.compile(r"\s+")
+# فواصل الكلمات في استعلام البحث: مسافة، فاصلة، فاصلة عربية، فاصلة منقوطة، شرطة.
+_SEARCH_SPLIT_RE = re.compile(r"[\s,;،؛]+")
 
 
 class PulledServicesService:
@@ -99,6 +120,85 @@ class PulledServicesService:
         page = max(0, page)
         start = page * per_page
         return matched[start : start + per_page], total
+
+    # ─────────── البحث عن خدمة محددة ───────────
+
+    @staticmethod
+    def normalize_search_text(raw: str) -> str:
+        """تطبيع نص البحث: أحرف صغيرة، بلا تشكيل/تطويل، وتوحيد الألف والياء والتاء.
+
+        حتى يجد الأدمن «تيك توك متابعين» وهو يكتب «تيك توك» أو «تيك‌توك».
+        """
+        text = unicodedata.normalize("NFKC", (raw or "").lower())
+        text = _AR_MARKS_RE.sub("", text)
+        for source, target in _AR_LETTER_FOLDS:
+            text = text.replace(source, target)
+        return _SPACES_RE.sub(" ", text).strip()
+
+    @classmethod
+    def search_terms(cls, raw: str) -> list[str]:
+        """يقسّم استعلام البحث إلى كلمات (AND): كلها يجب أن توجد في الخدمة."""
+        normalized = cls.normalize_search_text(raw or "")
+        if not normalized:
+            return []
+        parts = _SEARCH_SPLIT_RE.split(normalized)
+        terms: list[str] = []
+        for part in parts:
+            term = part.strip()
+            if term and term not in terms:
+                terms.append(term)
+        return terms
+
+    @staticmethod
+    def _search_haystack(service: ProviderService, provider_name: str = "") -> str:
+        """الحقول التي يُبحث فيها: الاسم، التصنيف، النوع، آيدي الخدمة، اسم المزود."""
+        fields = (
+            service.name or "",
+            service.category or "",
+            service.service_type or "",
+            str(service.external_service_id or ""),
+            service.description or "",
+            provider_name or "",
+        )
+        return PulledServicesService.normalize_search_text(" ".join(fields))
+
+    @classmethod
+    async def search_services(
+        cls,
+        session,
+        query: str,
+        provider_id: int | None = None,
+        limit: int | None = None,
+    ) -> tuple[list[ProviderService], int]:
+        """يبحث في كل الخدمات المسحوبة ويعيدها مرتبة من الأرخص للأغلى.
+
+        - المطابقة على: اسم الخدمة، التصنيف، النوع، آيدي الخدمة عند المزود،
+          اسم المزود.
+        - يدعم أكثر من كلمة (كل الكلمات يجب أن توجد = AND).
+        - ``provider_id`` يحصر البحث في مزود واحد.
+        - يعيد ``(الخدمات، العدد الكلي)``.
+        """
+        terms = cls.search_terms(query)
+        if not terms:
+            return [], 0
+
+        services = await cls.load_active(session)
+        matched: list[ProviderService] = []
+        for service in services:
+            if provider_id is not None and service.api_provider_id != provider_id:
+                continue
+            provider = getattr(service, "api_provider", None)
+            haystack = cls._search_haystack(
+                service, getattr(provider, "name", "") if provider is not None else ""
+            )
+            if all(term in haystack for term in terms):
+                matched.append(service)
+
+        matched.sort(key=lambda s: (Decimal(str(s.rate_usd or 0)), s.id))
+        total = len(matched)
+        if limit is not None and limit >= 0:
+            matched = matched[:limit]
+        return matched, total
 
     @staticmethod
     async def destination_subcategories(session) -> list[SubCategory]:

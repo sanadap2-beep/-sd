@@ -575,7 +575,11 @@ def admin_number_services_kb(services) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def admin_nsvc_avail_kb(rotate_stable: bool = True) -> InlineKeyboardMarkup:
+def admin_nsvc_avail_kb(
+    rotate_stable: bool = True,
+    auto_repost: bool = True,
+    restock_push: bool = False,
+) -> InlineKeyboardMarkup:
     """أزرار ضبط قناة التوفر المتقطع."""
     b = InlineKeyboardBuilder()
     b.button(text="📡 ضبط قناة التوفر", callback_data="admin:nsvc_avail_channel")
@@ -585,6 +589,18 @@ def admin_nsvc_avail_kb(rotate_stable: bool = True) -> InlineKeyboardMarkup:
     b.button(
         text=("🔀 الترتيب الدوّار: مفعّل" if rotate_stable else "⏸ الترتيب الدوّار: معطّل"),
         callback_data="admin:nsvc_avail_rotate",
+    )
+    b.button(
+        text=("🔔 إعادة النشر التلقائي: مفعّل" if auto_repost else "🔕 إعادة النشر التلقائي: معطّل"),
+        callback_data="admin:nsvc_avail_autorepost",
+    )
+    b.button(
+        text="⏱ كل كم دورة إعادة النشر",
+        callback_data="admin:nsvc_avail_repostevery",
+    )
+    b.button(
+        text=("🔥 إشعار فوري عند الرجوع: مفعّل" if restock_push else "🔥 إشعار فوري عند الرجوع: معطّل"),
+        callback_data="admin:nsvc_avail_restockpush",
     )
     b.button(text="🚀 تحديث اللوحة الآن", callback_data="admin:nsvc_avail_post", style="success")
     b.button(text="🔝 إعادة نشرها كرسالة جديدة", callback_data="admin:nsvc_avail_repost", style="success")

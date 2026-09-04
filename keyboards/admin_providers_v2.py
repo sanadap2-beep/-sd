@@ -526,19 +526,21 @@ CUSTOM_PROVIDER_CONFIG_PRESETS = {
 
 def custom_provider_presets_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne", style="danger")
+    # القوالب أزرار إنشاء → خضراء (success). كانت تُصبغ حمراء بسبب مطابقة
+    # نمط "reset" لكلمة "preset" داخل الـ codemod (أُصلح الحدّ هناك أيضاً).
+    b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne", style="success")
     b.button(
         text="✨ ggsoma — اشتراكات رقمية (رابط/كوبون/حساب)",
-        callback_data="admin:aprov_custom_preset:ggsoma", style="danger",
+        callback_data="admin:aprov_custom_preset:ggsoma", style="success",
     )
     b.button(
         text="🏬 متجر خارجي (Hyper Store — روابط/حسابات/ألعاب)",
-        callback_data="admin:aprov_custom_preset:hyper_store", style="danger",
+        callback_data="admin:aprov_custom_preset:hyper_store", style="success",
     )
     b.button(text="🧙 معالج ربط بدون JSON", callback_data="admin:aprov_custom_wizard")
-    b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest", style="danger")
-    b.button(text="🔌 JSON بسيط", callback_data="admin:aprov_custom_preset:simple_json", style="danger")
-    b.button(text="🔑 API Key بالرابط", callback_data="admin:aprov_custom_preset:query_key", style="danger")
+    b.button(text="🛍 متجر/منتجات REST", callback_data="admin:aprov_custom_preset:store_rest", style="success")
+    b.button(text="🔌 JSON بسيط", callback_data="admin:aprov_custom_preset:simple_json", style="success")
+    b.button(text="🔑 API Key بالرابط", callback_data="admin:aprov_custom_preset:query_key", style="success")
     b.button(text="✍️ أرسل JSON يدوي", callback_data="admin:aprov_custom_manual")
     b.button(text="🔙 رجوع", callback_data="admin:api_providers")
     b.adjust(1)

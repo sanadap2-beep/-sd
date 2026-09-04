@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 
 import libcst as cst
 import libcst.matchers as m
@@ -37,6 +38,28 @@ NAV_PATTERNS = (
     r"^nav:",
     r"page",
 )
+
+# ── ضبط حدود الكلمات ──
+# بدون هذا الحارس التقط نمط "reset" كلمة "preset" فصُبغت أزرار قوالب
+# إنشاء المزود (admin:aprov_custom_preset:*) بالأحمر بدل الأخضر، مع أنها
+# أزرار إنشاء لا حذف. أي نمط يبدأ بحرف يجب أن يبدأ عند حدّ كلمة حقيقي
+# (بداية النص، أو بعد ":" / "_" / "-") وإلا يُعتبر جزءاً من كلمة أطول.
+_WORD_PREFIX = r"(?<![A-Za-z0-9])"
+
+
+def _bounded(pattern: str) -> str:
+    """يمنع مطابقة النمط داخل كلمة أطول: ``reset`` لا يطابق ``preset``.
+
+    الحارس يستثني فقط الحروف والأرقام قبل النمط — لا الشرطة السفلية ولا
+    النقطتين، لأن ``admin:order_refund`` و``num_cancel`` فواصلها الحقيقية
+    هي ``:`` و``_`` ويجب أن تبقى مطابقة.
+
+    الأنماط المثبّتة أصلاً (تبدأ بـ ^ أو : أو _ أو -) تُترك كما هي.
+    """
+    if pattern.startswith(("^", ":", "_", "-", r"\b")):
+        return pattern
+    return _WORD_PREFIX + pattern
+
 
 DANGER_PATTERNS = (
     r"terms",
@@ -103,8 +126,16 @@ SUCCESS_PATTERNS = (
     r":add",
     r"create",
     r"enable",
+    # «preset» = زر إنشاء بقوالب جاهزة، وليس حذفاً (قريب من "reset").
+    r"preset",
     r"^admin:main$",
 )
+
+# الأنماط بعد ضبط الحدود: تُبنى مرة واحدة عند الاستيراد.
+NAV_PATTERNS = tuple(_bounded(p) for p in NAV_PATTERNS)
+DANGER_PATTERNS = tuple(_bounded(p) for p in DANGER_PATTERNS)
+PRIMARY_PATTERNS = tuple(_bounded(p) for p in PRIMARY_PATTERNS)
+SUCCESS_PATTERNS = tuple(_bounded(p) for p in SUCCESS_PATTERNS)
 
 
 NAV_TEXT_MARKERS = ("🔙", "🏠", "◀", "▶", "⬅", "➡", "⏮", "⏭", "«", "»", "رجوع", "عودة", "السابق", "التالي", "back", "next", "prev", "home")
@@ -116,6 +147,7 @@ def is_nav_text(text: str) -> bool:
 
 
 def classify(callback: str, text_hint: str = "") -> str | None:
+    """يصنّف callback_data إلى لون زر، أو None لترك الزر بالنمط الافتراضي."""
     if text_hint and is_nav_text(text_hint):
         return None
     cb = callback.strip().lower()
@@ -211,7 +243,74 @@ class StyleAdder(cst.CSTTransformer):
         return updated.with_changes(args=new_args)
 
 
+class StyleAuditor(cst.CSTTransformer):
+    """يفحص ألوان الأزرار الحالية ويبلّغ عن أي لون لا يطابق التصنيف.
+
+    يلتقط حالتين:
+    - زر ملوّن بلون يخالف التصنيف (مثل زر «preset» المصبوغ أحمر).
+    - زر بلا لون بينما يستحق لوناً (يفوته الـ codemod لسبب ما).
+    """
+
+    def __init__(self) -> None:
+        self.mismatches: list[tuple[str, str, str]] = []
+
+    def _record(self, callback: str, current: str, expected: str | None) -> None:
+        if expected is None and current:
+            return  # الأزرار الملونة يدوياً بلا قاعدة تُترك كما هي.
+        if current != (expected or ""):
+            self.mismatches.append((callback, current or "-", expected or "-"))
+
+    def leave_Call(self, original: cst.Call, updated: cst.Call) -> cst.Call:
+        func = updated.func
+        is_button = (
+            m.matches(func, m.Attribute(attr=m.Name("button")))
+            or m.matches(func, m.Name("InlineKeyboardButton"))
+        )
+        if not is_button:
+            return updated
+
+        kwargs = {arg.keyword.value: arg for arg in updated.args if arg.keyword is not None}
+        cb_arg = kwargs.get("callback_data")
+        if cb_arg is None:
+            return updated
+
+        callback = _literal_callback(cb_arg.value)
+        if callback is None:
+            return updated
+
+        text_arg = kwargs.get("text")
+        text_hint = _literal_callback(text_arg.value) if text_arg is not None else ""
+        expected = classify(callback, text_hint or "")
+
+        style_arg = kwargs.get("style")
+        current = ""
+        if style_arg is not None:
+            current = _literal_callback(style_arg.value) or ""
+        self._record(callback, current, expected)
+        return updated
+
+
+def audit() -> int:
+    """يعيد عدد الأزرار التي لا يطابق لونها التصنيف (0 = لا ملاحظات)."""
+    total = 0
+    for path in sorted(KEYBOARDS.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = cst.parse_module(source)
+        auditor = StyleAuditor()
+        tree.visit(auditor)
+        if auditor.mismatches:
+            total += len(auditor.mismatches)
+            print(f"{path.name}:")
+            for callback, current, expected in auditor.mismatches:
+                print(f"  {callback!r}: الحالي={current} المتوقع={expected}")
+    print(f"total mismatches: {total}")
+    return total
+
+
 def main() -> None:
+    if "--check" in sys.argv:
+        raise SystemExit(1 if audit() else 0)
+
     total = 0
     for path in sorted(KEYBOARDS.glob("*.py")):
         source = path.read_text(encoding="utf-8")

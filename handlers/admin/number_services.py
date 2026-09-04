@@ -239,6 +239,9 @@ async def _avail_status_text() -> str:
     refresh = await AvailabilityBoardService.refresh_seconds()
     watched = await AvailabilityBoardService.watched_country_codes_text()
     rotate = await AvailabilityBoardService.rotate_stable()
+    auto_repost = await AvailabilityBoardService.auto_repost()
+    repost_every = await AvailabilityBoardService.repost_every_cycles()
+    restock_push = await AvailabilityBoardService.repost_on_restock()
     channel = f"<code>{chat_id}</code>" if chat_id else "⚪ لم تُضبط"
     status = "🟢 مفعّلة" if enabled else "⚪ معطّلة (من مركز الإضافات)"
     from services.bot_identity import resolve_bot_username
@@ -257,6 +260,10 @@ async def _avail_status_text() -> str:
         f"عدد الدول: <b>{top_n}</b>\n"
         f"التحديث: كل <b>{refresh}</b> ثانية\n"
         f"الترتيب الدوّار: <b>{'مفعّل' if rotate else 'معطّل'}</b>\n"
+        f"🔔 إعادة النشر التلقائي: <b>{'مفعّل' if auto_repost else 'معطّل'}</b>"
+        f" — رسالة جديدة كل <b>{repost_every}</b> دورة"
+        f" (≈{round(repost_every * refresh / 60, 1)} دقيقة)\\n"
+        f"🔥 إشعار فوري عند رجوع دولة نادرة: <b>{'مفعّل' if restock_push else 'معطّل'}</b>\\n"
         f"الدول المراقبة: <code>{watched}</code>"
     )
 
@@ -264,10 +271,17 @@ async def _avail_status_text() -> str:
 @router.callback_query(F.data == "admin:nsvc_avail")
 async def nsvc_avail_home(callback: CallbackQuery):
     text = await _avail_status_text()
-    await callback.message.edit_text(
-        text, reply_markup=admin_nsvc_avail_kb(await AvailabilityBoardService.rotate_stable())
-    )
+    await callback.message.edit_text(text, reply_markup=await _avail_kb())
     await callback.answer()
+
+
+async def _avail_kb():
+    """أزرار القناة بحالتها الحالية (بدل تمرير القيم يدوياً في كل مكان)."""
+    return admin_nsvc_avail_kb(
+        await AvailabilityBoardService.rotate_stable(),
+        await AvailabilityBoardService.auto_repost(),
+        await AvailabilityBoardService.repost_on_restock(),
+    )
 
 
 @router.callback_query(F.data == "admin:nsvc_avail_channel")
@@ -415,6 +429,62 @@ async def nsvc_avail_repost(callback: CallbackQuery, bot):
     await callback.message.edit_text(
         f"{text}\n\n<b>نتيجة إعادة النشر:</b>\n{result}",
         reply_markup=admin_nsvc_avail_kb(await AvailabilityBoardService.rotate_stable()),
+    )
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_autorepost")
+async def nsvc_avail_autorepost(callback: CallbackQuery, session):
+    """:🔔 إعادة النشر التلقائي: كل N دورة تُنشر اللوحة كرسالة جديدة.
+
+    فتظهر في أعلى القناة ويصل المشتركين إشعار فعلي (تعديل الرسالة
+    لا يُصدر إشعاراً في Telegram)."""
+    current = await AvailabilityBoardService.auto_repost()
+    await FeatureService.set_option(session, AVAIL_FEATURE, "auto_repost", not current)
+    await callback.answer("✅ تم التبديل.")
+    await nsvc_avail_home(callback)
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_restockpush")
+async def nsvc_avail_restock_push(callback: CallbackQuery, session):
+    """إشعار فوري (رسالة جديدة) لحظة رجوع دولة نادرة للمخزون."""
+    current = await AvailabilityBoardService.repost_on_restock()
+    await FeatureService.set_option(session, AVAIL_FEATURE, "repost_on_restock", not current)
+    await callback.answer("✅ تم التبديل.")
+    await nsvc_avail_home(callback)
+
+
+@router.callback_query(F.data == "admin:nsvc_avail_repostevery")
+async def nsvc_avail_repost_every_start(callback: CallbackQuery, state: FSMContext):
+    current = await AvailabilityBoardService.repost_every_cycles()
+    refresh = await AvailabilityBoardService.refresh_seconds()
+    await callback.message.edit_text(
+        "⏱ <b>كل كم دورة تُعاد اللوحة كرسالة جديدة؟</b>\\n\\n"
+        f"الحالي: <b>{current}</b> دورة ≈ {round(current * refresh / 60, 1)} دقيقة\\n"
+        f"(دورة التحديث = {refresh} ثانية)\\n\\n"
+        "أرسل رقماً بين 1 و240.\\n"
+        "رقم أصغر = إشعارات أكثر للقناة · رقم أكبر = أهدأ.",
+        reply_markup=await _avail_kb(),
+    )
+    await state.set_state(AdminNumberServiceStates.waiting_availability_repost_every)
+    await callback.answer()
+
+
+@router.message(AdminNumberServiceStates.waiting_availability_repost_every)
+async def nsvc_avail_repost_every_received(message: Message, state: FSMContext, session):
+    raw = (message.text or "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        await message.answer("⚠️ أرسل رقماً فقط.")
+        return
+    if not (1 <= value <= 240):
+        await message.answer("⚠️ القيمة بين 1 و240.")
+        return
+    await FeatureService.set_option(session, AVAIL_FEATURE, "repost_every_cycles", value)
+    await state.clear()
+    await message.answer(
+        f"✅ ستُعاد اللوحة كرسالة جديدة كل <b>{value}</b> دورة.",
+        reply_markup=await _avail_kb(),
     )
 
 

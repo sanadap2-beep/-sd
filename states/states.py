@@ -259,6 +259,7 @@ class AdminProductStates(StatesGroup):
 
 class AdminPulledServicesStates(StatesGroup):
     waiting_sell_price = State()
+    waiting_search = State()
 
 
 class AdminPartnerPickStates(StatesGroup):
@@ -329,6 +330,7 @@ class AdminNumberServiceStates(StatesGroup):
     waiting_availability_channel = State()
     waiting_availability_topn = State()
     waiting_availability_watchlist = State()
+    waiting_availability_repost_every = State()
 
 
 class AdminMaintenanceStates(StatesGroup):
