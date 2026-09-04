@@ -530,3 +530,9 @@ class AdminMarginStates(StatesGroup):
     waiting_category_margin = State()
     waiting_sub_margin = State()
     waiting_product_margin = State()
+
+
+class AdminSmmProductsStates(StatesGroup):
+    """منتجات قسم الرشق: انتظار نسبة الربح للقسم/التطبيق المحدد."""
+
+    waiting_margin = State()
