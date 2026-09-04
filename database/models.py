@@ -496,6 +496,35 @@ class NumberService(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class NumberServer(Base):
+    """سيرفر/مزود ديناميكي ضمن خدمة أرقام.
+
+    المفهوم:
+    - يمكن أن تحوي خدمة الأرقام الواحدة (مثل WhatsApp) عدة سيرفرات؛
+      كل سيرفر مربوط بمزود مختلف (5sim / HeroSMS / SMS-Activate / SMSHub ...).
+    - قبل أن يرى المستخدم الدول، يختار السيرفر (المزود) الذي يريد الشراء منه.
+    - الأدمن يتحكم بالكامل: إضافة، تعطيل، إعادة ترتيب، حذف، وبحث لكل سيرفر.
+    - نفس النمط قابل للتعميم لاحقاً على أقسام الرشق والألعاب (سيرفر لكل متجر/مزود).
+    """
+
+    __tablename__ = "number_servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    number_service_id: Mapped[int] = mapped_column(
+        ForeignKey("number_services.id", ondelete="CASCADE"), index=True
+    )
+    # provider يحمل قيمة ProviderName التي يقرأها ProviderManager،
+    # وسيُفسَّر لاحقاً كمفتاح عام لأي مزود (رقم/رشق/ألعاب).
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    name_ar: Mapped[str] = mapped_column(String(96))
+    emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class MandatoryChannel(Base):
     __tablename__ = "mandatory_channels"
 

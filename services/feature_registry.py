@@ -311,6 +311,16 @@ FEATURES: tuple[FeatureSpec, ...] = (
         min_success_rate=55,
     ),
     _spec(
+        "number_server_selection",
+        "السيرفرات/المزودين المتعددين",
+        "Number Servers / Providers",
+        "الأرقام",
+        "كل خدمة أرقام تحوي أكثر من سيرفر (مزود). قبل اختيار الدولة يختار "
+        "المستخدم السيرفر الذي يناسبه، والأدمن يدير السيرفرات بالكامل.",
+        True,
+        auto_create_per_provider=True,
+    ),
+    _spec(
         "number_portability",
         "قابلية نقل الرقم",
         "Number Portability",

@@ -91,8 +91,12 @@ class BulkNumberService:
         service: NumberService,
         country: Country,
         quantity: int,
+        strict_provider=None,
     ) -> dict:
-        """يعرض التكلفة قبل التنفيذ حتى يوافق المستخدم على رقم واضح."""
+        """يعرض التكلفة قبل التنفيذ حتى يوافق المستخدم على رقم واضح.
+
+        ``strict_provider``: عند اختيار «سيرفر» محدد يحسب السعر من مزوده فقط.
+        """
         if not await BulkNumberService.enabled():
             raise BulkError("الشراء بالجملة موقوف حالياً.")
         if quantity < 2:
@@ -101,7 +105,12 @@ class BulkNumberService:
         if quantity > limit:
             raise BulkError(f"الحد الأقصى للدفعة الواحدة {limit} رقم.")
 
-        prices = await provider_manager.get_cheapest_price(service, country, session)
+        if strict_provider is None:
+            prices = await provider_manager.get_cheapest_price(service, country, session)
+        else:
+            prices = await provider_manager.get_cheapest_price(
+                service, country, session, only_provider=strict_provider
+            )
         if not prices:
             raise BulkError("لا توجد أرقام متاحة لهذه الخدمة والدولة.")
 
@@ -135,14 +144,21 @@ class BulkNumberService:
         quantity: int,
         timeout_minutes: int = 5,
         discount_percent: Decimal | None = None,
+        strict_provider=None,
     ) -> dict:
         """
         ينفذ الدفعة. يرجع ملخصاً بالناجح والفاشل والمبالغ.
 
         ``discount_percent``: خصم إضافي على الإجمالي (مثل خصم الوكيل)
         يُطبق بعد خصم الجملة وقبل الخصم من الرصيد.
+        ``strict_provider``: عند اختيار «سيرفر» محدد لا يشتري من غيره.
         """
-        estimate = await BulkNumberService.quote(session, service, country, quantity)
+        if strict_provider is None:
+            estimate = await BulkNumberService.quote(session, service, country, quantity)
+        else:
+            estimate = await BulkNumberService.quote(
+                session, service, country, quantity, strict_provider=strict_provider
+            )
         total = estimate["total_usd"]
         if discount_percent is not None and discount_percent > 0:
             total = (
@@ -176,7 +192,11 @@ class BulkNumberService:
                     # لا نمرر session هنا: SQLAlchemy AsyncSession غير آمنة
                     # للاستخدام المتوازي. فحص حالة المزودين يتم في quote()،
                     # أما عمليات الشبكة نفسها فتعمل بلا جلسة مشتركة.
-                    return index, await provider_manager.buy_number(service, country)
+                    if strict_provider is None:
+                        return index, await provider_manager.buy_number(service, country)
+                    return index, await provider_manager.buy_number(
+                        service, country, strict_provider=strict_provider
+                    )
                 except Exception as exc:  # noqa: BLE001 - فشل رقم لا يسقط الدفعة
                     logger.debug("فشل شراء رقم %s في الدفعة: %s", index, exc)
                     return index, None

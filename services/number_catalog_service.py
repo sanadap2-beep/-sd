@@ -113,6 +113,7 @@ async def _fetch_cost(
     service,
     country,
     use_provider_cache: bool = True,
+    only_provider=None,
 ) -> tuple[object, Decimal] | None:
     """جلب أرخص تكلفة متوفرة لدولة معينة مع التأكد من وجود أرقام."""
     try:
@@ -122,9 +123,10 @@ async def _fetch_cost(
                 country,
                 session=None,
                 use_cache=use_provider_cache,
+                only_provider=only_provider,
             )
         except TypeError as exc:
-            if "use_cache" not in str(exc):
+            if "only_provider" not in str(exc) and "use_cache" not in str(exc):
                 raise
             prices = await manager.get_cheapest_price(service, country, session=None)
     except Exception:
@@ -141,7 +143,7 @@ async def _fetch_cost(
     return provider, cost
 
 
-async def build_board(session, service, manager=None, use_cache: bool = True) -> list[BoardEntry]:
+async def build_board(session, service, manager=None, use_cache: bool = True, server: object | None = None, only_provider=None) -> list[BoardEntry]:
     """
     بناء لوحة الأسعار لخدمة الأرقام:
     - جلب أسعار التكلفة الحية.
@@ -150,15 +152,28 @@ async def build_board(session, service, manager=None, use_cache: bool = True) ->
 
     ``use_cache=False`` يجبر الجلب المباشر ويتجاوز كاش اللوحة وكاش أسعار
     المزودين (تستخدمه قناة التوفر الحية حتى ترصد عودة المخزون فوراً).
+
+    ``server``/``only_provider``: عند تخصيص لوحة لسيرفر (مزود) معين، تُجلب
+    أسعار ذلك المزود فقط ولا يظهر المزودون الآخرون.
     """
     from providers.manager import provider_manager as default_manager
 
     manager = manager or default_manager
+    if only_provider is None and server is not None:
+        from database.models import ProviderName as _PN
+
+        candidate = getattr(server, "provider", None)
+        if candidate:
+            try:
+                only_provider = _PN(candidate)
+            except ValueError:
+                only_provider = None
 
     # 1. فحص الكاش المؤقت
     if use_cache:
+        cache_key = service.code if only_provider is None else f"{service.code}:{only_provider.value}"
         async with _CACHE_LOCK:
-            cached = _BOARD_CACHE.get(service.code)
+            cached = _BOARD_CACHE.get(cache_key)
             if cached and cached[0] > monotonic():
                 return list(cached[1])
 
@@ -178,6 +193,7 @@ async def build_board(session, service, manager=None, use_cache: bool = True) ->
                 service,
                 country,
                 use_provider_cache=use_cache,
+                only_provider=only_provider,
             )
             if fetched is not None:
                 costs[country.code] = fetched
@@ -221,6 +237,7 @@ async def build_board(session, service, manager=None, use_cache: bool = True) ->
 
     # 6. حفظ النتيجة في الكاش
     async with _CACHE_LOCK:
-        _BOARD_CACHE[service.code] = (monotonic() + BOARD_TTL_SECONDS, list(entries))
+        cache_key = service.code if only_provider is None else f"{service.code}:{only_provider.value}"
+        _BOARD_CACHE[cache_key] = (monotonic() + BOARD_TTL_SECONDS, list(entries))
 
     return entries

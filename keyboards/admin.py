@@ -629,10 +629,64 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
         b.button(text="⚪ تعطيل", callback_data=f"admin:nsvc_toggle:{service.id}")
     else:
         b.button(text="🟢 تفعيل", callback_data=f"admin:nsvc_toggle:{service.id}")
+    b.button(
+        text="⚙️ السيرفرات/المزودين التابعين",
+        callback_data=f"admin:nsvc_servers:{service.id}",
+        style="primary",
+    )
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_edit_name:{service.id}")
     b.button(text="🗑 حذف", callback_data=f"admin:nsvc_delete:{service.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:number_services")
     b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_servers_kb(service_id: int, servers) -> InlineKeyboardMarkup:
+    """قائمة سيرفرات خدمة أرقام (كل سيرفر = مزود مستقل)."""
+    b = InlineKeyboardBuilder()
+    for server in servers:
+        status = "🟢" if server.is_active else "⚪"
+        b.button(
+            text=f"{status} {server.emoji} {server.name_ar}",
+            callback_data=f"admin:nsvc_server:{server.id}",
+        )
+    b.button(text="➕ إضافة سيرفر", callback_data=f"admin:nsvc_server_add:{service_id}", style="success")
+    b.button(
+        text="🤖 إنشاء سيرفر لكل مزود مضبوط تلقائياً",
+        callback_data=f"admin:nsvc_server_auto:{service_id}",
+        style="success",
+    )
+    b.button(text="🔙 رجوع", callback_data=f"admin:nsvc_view:{service_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_server_detail_kb(service_id: int, server) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    if server.is_active:
+        b.button(text="⚪ تعطيل السيرفر", callback_data=f"admin:nsvc_server_toggle:{server.id}")
+    else:
+        b.button(text="🟢 تفعيل السيرفر", callback_data=f"admin:nsvc_server_toggle:{server.id}")
+    b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_server_edit_name:{server.id}")
+    b.button(text="🎨 تعديل الإيموجي", callback_data=f"admin:nsvc_server_edit_emoji:{server.id}")
+    b.button(text="🔁 تغيير المزود", callback_data=f"admin:nsvc_server_edit_provider:{server.id}")
+    b.button(text="🗑 حذف السيرفر", callback_data=f"admin:nsvc_server_delete:{server.id}", style="danger")
+    b.button(text="🔙 السيرفرات", callback_data=f"admin:nsvc_servers:{service_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_nsvc_choose_provider_kb(service_id: int, server_id: int | None = None, show_back: bool = True) -> InlineKeyboardMarkup:
+    """اختيار المزود المرتبط بالسيرفر."""
+    from database.models import ProviderName
+
+    b = InlineKeyboardBuilder()
+    for provider in ProviderName:
+        b.button(text=f"{provider.value}", callback_data=f"admin:nsvc_server_provider:{server_id or 0}:{provider.value}")
+    if show_back:
+        back = f"admin:nsvc_server:{server_id}" if server_id else f"admin:nsvc_servers:{service_id}"
+        b.button(text="🔙 رجوع", callback_data=back)
+    b.adjust(2)
     return b.as_markup()
 
 

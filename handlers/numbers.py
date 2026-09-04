@@ -21,11 +21,13 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, func
 
 from database.models import (
     Country,
     NumberOrder,
+    NumberServer,
     NumberService,
     OrderStatus,
     ProviderName,
@@ -39,6 +41,7 @@ from providers.countries import (
     get_country_by_code,
     get_number_service_by_code,
 )
+from services.number_server_service import NumberServerService, server_label
 from services.pricing_service import PricingService
 from services.currency_service import CurrencyService
 from services.i18n_service import I18nService
@@ -138,6 +141,48 @@ async def numbers_hub(callback: CallbackQuery, session, db_user=None):
     await callback.answer()
 
 
+# ══════════════ اختيار السيرفر/المزود (قبل الدول) ══════════════
+
+SERVER_SELECTION_FEATURE = "number_server_selection"
+
+
+async def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for server in servers:
+        b.button(
+            text=f"{server.emoji} {server.name_ar}",
+            callback_data=f"num_server_pick:{service_code}:{server.id}",
+            style="primary",
+        )
+    b.button(text="🔙 رجوع", callback_data="num_hub")
+    b.adjust(1)
+    return b.as_markup()
+
+
+@router.callback_query(F.data == "num_server:")
+async def numbers_server_list(callback: CallbackQuery, session):
+    parts = callback.data.split(":")
+    if len(parts) < 2:
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    service_code = parts[1]
+    service = await get_number_service_by_code(session, service_code)
+    if service is None or not service.is_active:
+        await callback.answer("⚠️ الخدمة غير متاحة.", show_alert=True)
+        return
+    servers = await NumberServerService.list_servers(session, service.id, active_only=True)
+    if not servers:
+        await callback.answer("⚠️ لا توجد سيرفرات مفعلة لهذه الخدمة.", show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.edit_text(
+        f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n"
+        "🖥 <b>اختر السيرفر (المزود)</b> أولاً:\n"
+        "كل سيرفر مربوط بمزود مستقل، والأسعار تختلف بينهم.",
+        reply_markup=_servers_kb(service_code, servers),
+    )
+
+
 # ══════════════ اختيار الخدمة (عرض أول 10 دول مرتبة من الأرخص) ══════════════
 
 
@@ -148,6 +193,19 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
     if service is None or not service.is_active:
         await callback.answer("⚠️ الخدمة غير متاحة حالياً.", show_alert=True)
         return
+
+    if await FeatureService.enabled(SERVER_SELECTION_FEATURE, default=True):
+        servers = await NumberServerService.ensure_defaults(session, service)
+        active = [s for s in servers if s.is_active]
+        if active:
+            await callback.answer()
+            await callback.message.edit_text(
+                f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n"
+                "🖥 <b>اختر السيرفر (المزود)</b> أولاً:\n"
+                "كل سيرفر مربوط بمزود مستقل، والأسعار تختلف بينهم.",
+                reply_markup=_servers_kb(service_code, active),
+            )
+            return
 
     await callback.answer("⏳ جاري جلب أسعار الدول المتاحة...")
 
@@ -178,6 +236,59 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
     )
 
 
+@router.callback_query(F.data.startswith("num_server_pick:"))
+async def number_server_picked(callback: CallbackQuery, session, db_user=None):
+    """المستخدم اختار سيرفر → نعرض دول هذا المزود فقط."""
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    service_code = parts[1]
+    server_id = int(parts[2])
+    service = await get_number_service_by_code(session, service_code)
+    server = await NumberServerService.get(session, server_id) if service else None
+    if service is None or server is None or not server.is_active:
+        await callback.answer("⚠️ السيرفر غير متاح حالياً.", show_alert=True)
+        return
+    await callback.answer("⏳ جاري جلب أسعار الدول من هذا السيرفر...")
+
+    try:
+        from services.number_catalog_service import build_board
+        entries = await build_board(session, service, server=server)
+    except Exception as e:
+        logger.error(f"فشل بناء لوحة أسعار سيرفر {server.id}: {e}")
+        entries = []
+
+    if not entries:
+        await callback.message.edit_text(
+            f"{server.emoji} <b>سيرفر {server.name_ar}</b> · {service.emoji} {service.name_ar}\n\n"
+            "❌ لا توجد أرقام متوفرة حالياً على هذا السيرفر.\n"
+            "جرّب سيرفراً آخر أو عد لاحقاً.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🖥 تغيير السيرفر", callback_data=f"num_server:{service_code}", style="success")]
+                ]
+            ),
+        )
+        return
+
+    text = (
+        f"{server.emoji} <b>سيرفر {server.name_ar}</b> · {service.emoji} {service.name_ar}\n\n"
+        "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
+        "اختر الدولة المطلوبة:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=countries_price_kb(
+            service_code,
+            entries,
+            page=0,
+            server_id=server.id,
+            server_label=f"{server.emoji} {server.name_ar}",
+        ),
+    )
+
+
 # ══════════════ التنقل بين صفحات الدول (10 دول بكل صفحة) ══════════════
 
 
@@ -186,17 +297,25 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
     parts = callback.data.split(":")
     service_code = parts[1]
     page = int(parts[2])
+    server_id = int(parts[3]) if len(parts) > 3 and parts[3] else None
 
     service = await get_number_service_by_code(session, service_code)
     if service is None:
         await callback.answer("⚠️ الخدمة غير موجودة.", show_alert=True)
         return
 
+    server = None
+    if server_id is not None:
+        server = await NumberServerService.get(session, server_id)
+        if server is None or not server.is_active:
+            await callback.answer("⚠️ السيرفر غير متاح.", show_alert=True)
+            return
+
     await callback.answer()
 
     try:
         from services.number_catalog_service import build_board
-        entries = await build_board(session, service)
+        entries = await build_board(session, service, server=server)
     except Exception:
         entries = []
 
@@ -212,9 +331,21 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
         "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
         "اختر الدولة المطلوبة:"
     )
+    if server is not None:
+        text = (
+            f"{server.emoji} <b>سيرفر {server.name_ar}</b> · {service.emoji} {service.name_ar}\n\n"
+            "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
+            "اختر الدولة المطلوبة:"
+        )
     await callback.message.edit_text(
         text,
-        reply_markup=countries_price_kb(service_code, entries, page=page),
+        reply_markup=countries_price_kb(
+            service_code,
+            entries,
+            page=page,
+            server_id=server.id if server else None,
+            server_label=f"{server.emoji} {server.name_ar}" if server else None,
+        ),
     )
 
 
@@ -226,6 +357,7 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
     parts = callback.data.split(":")
     service_code = parts[1]
     country_code = parts[2]
+    server_id = int(parts[3]) if len(parts) > 3 and parts[3] else None
 
     service = await get_number_service_by_code(session, service_code)
     country = await get_country_by_code(session, country_code)
@@ -234,10 +366,19 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
         await callback.answer("⚠️ الدولة أو الخدمة غير متوفرة.", show_alert=True)
         return
 
+    server = None
+    only_provider = None
+    if server_id is not None:
+        server = await NumberServerService.get(session, server_id)
+        if server is None or not server.is_active:
+            await callback.answer("⚠️ السيرفر غير متاح.", show_alert=True)
+            return
+        only_provider = ProviderName(server.provider) if await NumberServerService.validate_provider(server.provider) else None
+
     await callback.answer("⏳ جاري تأكيد السعر والمخزون...")
 
     try:
-        prices = await provider_manager.get_cheapest_price(service, country, session)
+        prices = await provider_manager.get_cheapest_price(service, country, session, only_provider=only_provider)
     except Exception as e:
         logger.error(f"خطأ جلب الأسعار: {e}")
         await callback.message.answer("⚠️ تعذّر الاتصال بالمزود، حاول بعد لحظات.")
@@ -268,13 +409,22 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
     from services.country_localization_service import display_flag, display_name
 
     price_display = await CurrencyService.format_dual(sell_price, db_user, session)
+    server_line = ""
+    if server is not None:
+        server_line = f"{server.emoji} <b>السيرفر:</b> {server.name_ar}\n"
     await callback.message.edit_text(
         f"🌍 <b>الدولة:</b> {display_flag(country)} {display_name(country)}\n"
         f"{service.emoji} <b>الخدمة:</b> {service.name_ar}\n"
+        f"{server_line}"
         f"💰 <b>السعر:</b> <b>{price_display}</b>\n\n"
         "🛡 <b>الضمان:</b> إذا لم يصل الكود خلال 5 دقائق يُسترجع رصيدك تلقائياً.\n\n"
         "هل تريد تأكيد شراء الرقم الآن؟",
-        reply_markup=confirm_purchase_kb(service_code, country_code, quote.token),
+        reply_markup=confirm_purchase_kb(
+            service_code,
+            country_code,
+            quote.token,
+            server_id=server_id,
+        ),
     )
 
 
@@ -361,14 +511,32 @@ async def _load_service_country(session, service_code: str, country_code: str):
     return service, country
 
 
-async def _show_bulk_quote(callback_or_message, session, db_user: User, service_code: str, country_code: str, quantity: int):
+async def _show_bulk_quote(callback_or_message, session, db_user: User, service_code: str, country_code: str, quantity: int, server_id: int | None = None):
     service, country = await _load_service_country(session, service_code, country_code)
     if service is None or country is None:
         await callback_or_message.answer("⚠️ الخدمة أو الدولة غير متاحة حالياً.")
         return
 
+    server = None
+    strict_provider = None
+    if server_id is not None:
+        server = await NumberServerService.get(session, server_id)
+        if server is None or not server.is_active:
+            await callback_or_message.answer("⚠️ السيرفر غير متاح.")
+            return
+        strict_provider = (
+            ProviderName(server.provider)
+            if await NumberServerService.validate_provider(server.provider)
+            else None
+        )
+
     try:
-        quote = await BulkNumberService.quote(session, service, country, quantity)
+        if strict_provider is None:
+            quote = await BulkNumberService.quote(session, service, country, quantity)
+        else:
+            quote = await BulkNumberService.quote(
+                session, service, country, quantity, strict_provider=strict_provider
+            )
     except BulkError as exc:
         await callback_or_message.answer(f"⚠️ {exc}")
         return
@@ -390,9 +558,13 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
         total_display = final_total_display
         agent_line = f"💼 خصم الوكيل: <b>{agent_pct}%</b>\n"
 
+    server_line = ""
+    if server is not None:
+        server_line = f"{server.emoji} السيرفر: <b>{server.name_ar}</b>\n"
     text = (
         "📦 <b>تأكيد شراء دفعة أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
+        f"{server_line}"
         f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
         f"🔢 الكمية: <b>{quantity}</b>\n"
         f"💵 السعر الفردي: <b>{unit_display}</b>\n"
@@ -401,7 +573,7 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
         f"💰 الإجمالي المطلوب: <b>{total_display}</b>\n\n"
         "🛡 إذا فشل أي رقم يتم استرجاع قيمته تلقائياً."
     )
-    markup = bulk_confirm_kb(service_code, country_code, quantity)
+    markup = bulk_confirm_kb(service_code, country_code, quantity, server_id=server_id)
     if isinstance(callback_or_message, CallbackQuery):
         await callback_or_message.message.edit_text(text, reply_markup=markup)
     else:
@@ -418,6 +590,7 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
     service_code = parts[1]
     country_code = parts[2]
     quote_token = parts[3] if len(parts) > 3 else ""
+    server_id = int(parts[4]) if len(parts) > 4 and parts[4] else None
     service, country = await _load_service_country(session, service_code, country_code)
     if service is None or country is None:
         await callback.answer("⚠️ غير متاح.", show_alert=True)
@@ -427,12 +600,19 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
     await callback.answer()
     from services.country_localization_service import display_flag, display_name
 
+    server_line = ""
+    if server_id is not None:
+        server = await NumberServerService.get(session, server_id)
+        if server and server.is_active:
+            server_line = f"{server.emoji} السيرفر: <b>{server.name_ar}</b>\n"
+
     await callback.message.edit_text(
         f"📦 <b>شراء أرقام بالجملة</b>\n\n"
         f"{service.emoji} الخدمة: <b>{service.name_ar}</b>\n"
+        f"{server_line}"
         f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
         f"🔢 اختر الكمية أو اكتب كمية مخصصة (الحد الأقصى: <b>{max_qty}</b>):",
-        reply_markup=bulk_quantity_kb(service_code, country_code, quote_token),
+        reply_markup=bulk_quantity_kb(service_code, country_code, quote_token, server_id=server_id),
     )
 
 
@@ -440,15 +620,17 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
 async def bulk_quantity_selected(callback: CallbackQuery, session, db_user: User):
     parts = callback.data.split(":")
     quantity = int(parts[3])
+    server_id = int(parts[4]) if len(parts) > 4 and parts[4] else None
     await callback.answer("⏳ جاري حساب سعر الدفعة...")
-    await _show_bulk_quote(callback, session, db_user, parts[1], parts[2], quantity)
+    await _show_bulk_quote(callback, session, db_user, parts[1], parts[2], quantity, server_id)
 
 
 @router.callback_query(F.data.startswith("num_bulk_custom:"))
 async def bulk_custom_quantity(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split(":")
+    server_id = int(parts[4]) if len(parts) > 4 and parts[4] else None
     await state.set_state(NumberBulkStates.waiting_quantity)
-    await state.update_data(service_code=parts[1], country_code=parts[2])
+    await state.update_data(service_code=parts[1], country_code=parts[2], server_id=server_id)
     await callback.message.answer("✍️ أرسل الكمية المطلوبة كرقم فقط (مثال: 25):")
     await callback.answer()
 
@@ -470,6 +652,7 @@ async def bulk_custom_quantity_received(message: Message, state: FSMContext, ses
         data.get("service_code", ""),
         data.get("country_code", ""),
         quantity,
+        data.get("server_id"),
     )
 
 
@@ -483,13 +666,32 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
     service_code = parts[1]
     country_code = parts[2]
     quantity = int(parts[3])
+    server_id = int(parts[4]) if len(parts) > 4 and parts[4] else None
     service, country = await _load_service_country(session, service_code, country_code)
     if service is None or country is None:
         await callback.answer("⚠️ غير متاح.", show_alert=True)
         return
 
+    strict_provider = None
+    server = None
+    if server_id is not None:
+        server = await NumberServerService.get(session, server_id)
+        if server is None or not server.is_active:
+            await callback.answer("⚠️ السيرفر غير متاح.", show_alert=True)
+            return
+        strict_provider = (
+            ProviderName(server.provider)
+            if await NumberServerService.validate_provider(server.provider)
+            else None
+        )
+
     try:
-        quote = await BulkNumberService.quote(session, service, country, quantity)
+        if strict_provider is None:
+            quote = await BulkNumberService.quote(session, service, country, quantity)
+        else:
+            quote = await BulkNumberService.quote(
+                session, service, country, quantity, strict_provider=strict_provider
+            )
     except BulkError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
@@ -528,6 +730,7 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
             quantity,
             timeout_minutes=await _get_order_timeout(),
             discount_percent=agent_pct if agent_pct > 0 else None,
+            strict_provider=strict_provider,
         )
     except BulkError as exc:
         await callback.message.answer(f"⚠️ {exc}")
@@ -584,6 +787,7 @@ async def confirm_buy(
     service_code = parts[1]
     country_code = parts[2]
     quote_token = parts[3] if len(parts) > 3 and parts[3] else None
+    server_id = int(parts[4]) if len(parts) > 4 and parts[4] else None
 
     service = await get_number_service_by_code(session, service_code)
     country = await get_country_by_code(session, country_code)
@@ -591,6 +795,21 @@ async def confirm_buy(
     if not service or not country or not country.is_active:
         await callback.answer("⚠️ الخدمة أو الدولة غير متاحة.", show_alert=True)
         return
+
+    server = None
+    strict_provider = None
+    server_provider = None
+    if server_id is not None:
+        server = await NumberServerService.get(session, server_id)
+        if server is None or not server.is_active:
+            await callback.answer("⚠️ السيرفر غير متاح.", show_alert=True)
+            return
+        server_provider = (
+            ProviderName(server.provider)
+            if await NumberServerService.validate_provider(server.provider)
+            else None
+        )
+        strict_provider = server_provider
 
     can_proceed = await _check_rate_limit(session, db_user.id)
     if not can_proceed:
@@ -607,7 +826,12 @@ async def confirm_buy(
     await callback.answer("⏳ جاري شراء الرقم...")
 
     try:
-        prices = await provider_manager.get_cheapest_price(service, country, session)
+        if strict_provider is None:
+            prices = await provider_manager.get_cheapest_price(service, country, session)
+        else:
+            prices = await provider_manager.get_cheapest_price(
+                service, country, session, only_provider=strict_provider
+            )
     except Exception:
         await callback.message.answer("⚠️ خطأ مؤقت بالاتصال بالمزود.")
         return
@@ -631,6 +855,10 @@ async def confirm_buy(
             preferred_provider = ProviderName(quote.provider)
         except ValueError:
             preferred_provider = None
+
+    # السيرفر المختار له أولوية مطلقة: حتى لو اختلف المزود في القفل القديم.
+    if strict_provider is not None:
+        preferred_provider = strict_provider
 
     # خصم الوكيل على سعر البيع (إن كان وكلاً فعّلاً)
     sell_price = await AgentService.apply_discount(session, db_user.id, sell_price)
@@ -659,12 +887,21 @@ async def confirm_buy(
         return
 
     try:
-        buy_result = await provider_manager.buy_number(
-            service,
-            country,
-            session,
-            preferred_provider=preferred_provider,
-        )
+        if strict_provider is None:
+            buy_result = await provider_manager.buy_number(
+                service,
+                country,
+                session,
+                preferred_provider=preferred_provider,
+            )
+        else:
+            buy_result = await provider_manager.buy_number(
+                service,
+                country,
+                session,
+                preferred_provider=preferred_provider,
+                strict_provider=strict_provider,
+            )
     except Exception:
         await BalanceService.add_balance(
             session,
