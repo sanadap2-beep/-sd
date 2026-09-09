@@ -139,26 +139,30 @@ class CatalogRoutingService:
 
     @staticmethod
     async def coverage_report(session) -> dict:
-        """كم منتجاً صار له أكثر من مزود — مقياس جهوزية الكتالوج."""
+        """كم منتجاً صار له أكثر من مزود — مقياس جهوزية الكتالوج.
+        
+        يُحسَّن بعدم جلب كل الـ ids دفعة واحدة ثم iterate.
+        """
         from database.models import ProductStatus
 
-        total = (
+        rows = (
             await session.execute(
-                select(Product.id).where(
+                select(Product.id, Product.api_provider_id).where(
                     Product.status == ProductStatus.ACTIVE,
                     Product.api_provider_id.is_not(None),
                 )
             )
-        ).scalars().all()
+        ).all()
+        total = len(rows)
         covered = 0
-        for product_id in total:
+        for product_id, _ in rows:
             product = await session.get(Product, product_id)
             if product is None:
                 continue
             if len(await CatalogRoutingService.routes_for(session, product)) > 1:
                 covered += 1
         return {
-            "products_with_provider": len(total),
+            "products_with_provider": total,
             "products_with_failover": covered,
-            "coverage_percent": round(covered / len(total) * 100, 1) if total else 0.0,
+            "coverage_percent": round(covered / total * 100, 1) if total else 0.0,
         }

@@ -204,6 +204,10 @@ class BaseProtocol(ABC):
         """
         pass
 
+    async def close(self):
+        """Close any open HTTP sessions. Subclasses should override."""
+        pass
+
     @abstractmethod
     async def get_balance(self) -> ProtocolBalance:
         """

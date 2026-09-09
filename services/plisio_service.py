@@ -157,6 +157,10 @@ class PlisioClient(PaymentGatewayBase):
                 request = session.get(url, params=request_params)
             elif method.upper() == "POST":
                 request = session.post(url, data=request_params)
+            elif method.upper() == "GET_WITH_BODY":
+                # Legacy paths that used GET with params — redirect to POST for security
+                logger.warning("Redirecting %s %s from GET to POST for security", method.upper(), endpoint)
+                request = session.post(url, data=request_params)
             else:
                 raise PlisioError(f"Unsupported HTTP method: {method}")
 
@@ -271,7 +275,7 @@ class PlisioClient(PaymentGatewayBase):
         if email:
             params["email"] = email
 
-        result = await self._request("GET", "/invoices/new", params)
+        result = await self._request("POST", "/invoices/new", params)
 
         if not isinstance(result, dict):
             raise PlisioAPIError("استجابة إنشاء فاتورة Plisio غير صالحة")

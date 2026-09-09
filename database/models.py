@@ -2241,6 +2241,36 @@ class WarmPoolNumber(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ReadyCodeItem(Base):
+    """عناصر قسم التطبيقات والأكواد الجاهزة."""
+    __tablename__ = "ready_code_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name_ar: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, onupdate=func.now(), server_default=func.now())
+
+
+class ReferralAbuseLog(Base):
+    """سجل إساءة استعمال الإحالة."""
+    __tablename__ = "referral_abuse_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referrer_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    joiner_telegram_id: Mapped[int] = mapped_column(BigInteger)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    referrer: Mapped["User"] = relationship()
+
+
 class UnifiedRefund(Base):
     """
     سجل الاسترجاع الموحّد لكل البوت.

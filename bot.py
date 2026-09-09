@@ -58,6 +58,8 @@ from handlers import (
     store as user_store,
     inline_search,
     fallback,
+    ready_codes,
+    referral_guard,
 )
 from handlers.deposit_methods import router as deposit_methods_router
 from handlers.games import router as games_router
@@ -209,6 +211,8 @@ def register_routers():
     dp.include_router(user_store.router)
     dp.include_router(inline_search.router)
     dp.include_router(games_router)
+    dp.include_router(ready_codes.router)
+    dp.include_router(referral_guard.router)
 
     # ── هاندلرز الأدمن ──
     dp.include_router(admin_panel.router)
