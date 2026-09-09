@@ -33,33 +33,6 @@ from handlers import (
     referral,
     referral_guard,
     deposit,
-    transfer,
-    withdrawal,
-    notifications,
-    bot_info,
-    sponsored_ads,
-    special_offers,
-    numbers,
-    loyalty,
-    promotions,
-    product_requests,
-    gift,
-    assistant,
-    status,
-    reviews,
-    webapp,
-    language,
-    currency,
-    challenges,
-    marketplace as user_marketplace,
-    tasks as user_tasks,
-    points as user_points,
-    extras as user_extras,
-    store as user_store,
-    inline_search,
-    fallback,
-    ready_codes,
-    referral_guard,
 )
 from handlers.deposit_methods import router as deposit_methods_router
 from handlers.games import router as games_router
@@ -182,7 +155,6 @@ def register_routers():
     dp.include_router(account.router)
     dp.include_router(cart.router)
     dp.include_router(referral.router)
-    dp.include_router(referral_guard.router)
     dp.include_router(deposit.router)
     dp.include_router(deposit_methods_router)
     dp.include_router(transfer.router)
