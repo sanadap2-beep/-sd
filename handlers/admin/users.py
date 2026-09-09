@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 
 from database.models import User, TransactionType
 from services.balance_service import BalanceService, InsufficientBalanceError
@@ -28,17 +28,60 @@ router.callback_query.filter(IsAdmin())
 async def users_search_start(callback: CallbackQuery, state: FSMContext, session):
     total = (await session.execute(select(func.count(User.id)))).scalar_one()
     banned = (await session.execute(select(func.count(User.id)).where(User.is_banned.is_(True)))).scalar_one()
+    admins = (await session.execute(select(func.count(User.id)).where(User.is_admin.is_(True)))).scalar_one()
     await callback.message.edit_text(
         "👥 <b>إدارة المستخدمين</b>\n\n"
         f"عدد المستخدمين: <b>{total}</b>\n"
-        f"المجمدين/المحظورين: <b>{banned}</b>\n\n"
-        "أرسل آيدي المستخدم (Telegram ID) للبحث، أو افتح قائمة آخر المستخدمين:",
+        f"المجمدين/المحظورين: <b>{banned}</b>\n"
+        f"الأدمنز: <b>{admins}</b>\n\n"
+        "أرسل آيدي المستخدم، يوزر (مع @ أو بدونه)، أو اسم للبحث.\n"
+        "أو اختر من القائمة:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📋 قائمة المستخدمين", callback_data="admin:users_list:0")],
+            [InlineKeyboardButton(text="🚫 المحظورين فقط", callback_data="admin:users_filter:banned:0")],
+            [InlineKeyboardButton(text="👑 الأدمنز فقط", callback_data="admin:users_filter:admin:0")],
+            [InlineKeyboardButton(text="📥 تصدير المستخدمين", callback_data="admin:users_export")],
             [InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:main")],
         ]),
     )
     await state.set_state(AdminUserSearchStates.waiting_user_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:users_filter:"))
+async def users_filtered(callback: CallbackQuery, session):
+    parts = callback.data.split(":")
+    filt, page = parts[2], int(parts[3])
+    per_page = 10
+    base = select(User)
+    if filt == "banned":
+        base = base.where(User.is_banned.is_(True))
+    elif filt == "admin":
+        base = base.where(User.is_admin.is_(True))
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    users = list((await session.execute(
+        base.order_by(User.joined_at.desc()).limit(per_page).offset(page * per_page)
+    )).scalars().all())
+    rows = [
+        [InlineKeyboardButton(
+            text=f"{'🚫' if user.is_banned else '👤'} {user.telegram_id} · {user.balance:.2f}$",
+            callback_data=f"admin:user_open:{user.id}",
+        )]
+        for user in users
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️ السابق", callback_data=f"admin:users_filter:{filt}:{page - 1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text="التالي ▶️", callback_data=f"admin:users_filter:{filt}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:users")])
+    await callback.message.edit_text(
+        f"📋 <b>قائمة المستخدمين ({filt})</b>\n"
+        f"الإجمالي: {total}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
     await callback.answer()
 
 
@@ -98,18 +141,60 @@ async def user_open(callback: CallbackQuery, session):
 
 @router.message(AdminUserSearchStates.waiting_user_id)
 async def user_search_result(message: Message, state: FSMContext, session):
+    text = (message.text or "").strip()
+    # Remove @ prefix for username search
+    search_term = text.lstrip("@")
+    
+    # Try Telegram ID first
     try:
-        tg_id = int(message.text.strip())
+        tg_id = int(search_term)
+        result = await session.execute(select(User).where(User.telegram_id == tg_id))
+        user = result.scalar_one_or_none()
+        if user:
+            await _show_user(message, user)
+            await state.clear()
+            return
     except ValueError:
-        await message.answer("⚠️ آيدي غير صحيح.")
-        return
+        pass
 
-    result = await session.execute(select(User).where(User.telegram_id == tg_id))
+    # Try username
+    result = await session.execute(select(User).where(User.username.ilike(search_term)))
     user = result.scalar_one_or_none()
-    if user is None:
-        await message.answer("⚠️ لا يوجد مستخدم بهذا الآيدي.")
+    if user:
+        await _show_user(message, user)
+        await state.clear()
         return
 
+    # Try partial name match
+    like = f"%{search_term}%"
+    result = await session.execute(
+        select(User).where(User.full_name.ilike(like)).limit(5)
+    )
+    users = list(result.scalars().all())
+    if len(users) == 1:
+        await _show_user(message, users[0])
+        await state.clear()
+        return
+    elif len(users) > 1:
+        rows = [
+            [InlineKeyboardButton(
+                text=f"{'🚫' if u.is_banned else '👤'} {u.telegram_id} · {u.full_name or '-'}",
+                callback_data=f"admin:user_open:{u.id}",
+            )]
+            for u in users
+        ]
+        rows.append([InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:users")])
+        await message.answer(
+            f"🔍 تم العثور على {len(users)} مستخدمين بالاسم \"{search_term}\":",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+        await state.clear()
+        return
+
+    await message.answer(f"⚠️ لا يوجد مستخدم بهذا الآيدي أو الاسم: {search_term}")
+
+
+async def _show_user(message: Message, user: User):
     await message.answer(
         "👤 <b>معلومات المستخدم</b>\n\n"
         f"🆔 آيدي: {user.telegram_id}\n"
@@ -125,7 +210,6 @@ async def user_search_result(message: Message, state: FSMContext, session):
         f"📅 الانضمام: {user.joined_at.strftime('%Y-%m-%d')}",
         reply_markup=user_manage_kb(user.id, user.is_banned),
     )
-    await state.clear()
 
 
 # ── إضافة/خصم رصيد ──
@@ -300,3 +384,26 @@ async def user_send_msg_received(message: Message, state: FSMContext, session, b
     else:
         await message.answer("⚠️ فشل إرسال الرسالة. ربما المستخدم حظر البوت.")
     await state.clear()
+
+
+# ── تصدير المستخدمين ──
+
+
+@router.callback_query(F.data == "admin:users_export")
+async def users_export(callback: CallbackQuery, session):
+    """تصدير المستخدمين بصيغة CSV."""
+    users = list((await session.execute(
+        select(User).order_by(User.joined_at.desc()).limit(5000)
+    )).scalars().all())
+    lines = ["ID,TelegramID,Username,FullName,Balance,TotalSpent,Orders,Banned,JoinedAt"]
+    for u in users:
+        ban = "1" if u.is_banned else "0"
+        lines.append(f"{u.id},{u.telegram_id},{u.username or ''},{u.full_name or ''},{u.balance},{u.total_spent_usd},{u.total_orders},{ban},{u.joined_at}")
+    csv_text = "\n".join(lines)
+    # Split into chunks of max 4096 chars if too large
+    await callback.message.answer(f"📥 <b>تصدير المستخدمين</b>\nالإجمالي: {len(users)}")
+    for i in range(0, len(csv_text), 3500):
+        chunk = csv_text[i:i + 3500]
+        if chunk.strip():
+            await callback.message.answer(f"<pre>{chunk}</pre>", parse_mode="HTML")
+    await callback.answer()
