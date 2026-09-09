@@ -56,6 +56,12 @@ class SmmAppLabelFilter(Filter):
         return is_smm_app_label(message.text or "")
 
 
+@router.callback_query(F.data == "none")
+async def cosmetic_detail_button(callback: CallbackQuery):
+    """أزرار العرض في تفاصيل الخدمة — شكلية فقط (callback_data="none")."""
+    await callback.answer("هذي معلومة عرض فقط 🏷", show_alert=False)
+
+
 def _auto_lang(scope=None) -> str:
     user = (scope or {}).get("db_user")
     if user is None:
@@ -360,6 +366,8 @@ async def sub_category_selected(callback: CallbackQuery, session, db_user=None, 
     language = _glang(db_user) if db_user else _auto_lang(locals())
     servers = await _servers_for_subcategory(session, sub_cat.id)
     if servers and state is not None:
+        from services.smm_catalog import button_label
+
         # زر تغيير سيرفر في القسم: لا نعرض المنتجات حتى يختار السيرفر.
         header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
         text = f"{header}🖥 اختر السيرفر الذي تريد الشراء منه:"
@@ -462,14 +470,17 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     sub_cat = product.sub_category
     language = _glang(db_user)
 
-    # Show rich SMM provider details when product has a linked provider service
+    # Show rich SMM provider details when product has a linked provider service.
+    # التفاصيل تُعرض كأزرار Inline منسّقة (قيمة + عنوان) بدل نص عادي،
+    # والقيم كلها ديناميكية من المزود وقاعدة البيانات.
     if product.provider_service_ref_id and product.fulfillment_type == ProductFulfillmentType.API:
-        from services.smm_price_service import service_details, format_details, live_sell_price
+        from services.smm_price_service import service_details, format_details_kb, live_sell_price
         det = await service_details(product, session)
         live_price = await live_sell_price(product, session)
-        price_display = await _dual_price(live_price, db_user, session)
-        rich = format_details(det, price_display)
-        await callback.message.edit_text(rich)
+        back_callback = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
+        head = _product_head(product, '📈')
+        details_kb = format_details_kb(det, live_price, back_callback)
+        await callback.message.edit_text(head, reply_markup=details_kb)
         await state.update_data(product_id=product_id, price_override=str(live_price))
         if product.requires_link:
             await callback.message.answer(I18nService.t('send_link', language))
