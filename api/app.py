@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime
+import asyncio
 import hmac
 import os
 import re
@@ -128,6 +129,7 @@ app.include_router(admin_router)
 app.include_router(reseller_router)
 
 _setup_used = False
+_setup_lock = asyncio.Lock()
 
 
 class SetupPayload(BaseModel):
@@ -142,6 +144,11 @@ def _setup_is_valid(key: str) -> bool:
         and not _setup_used
         and hmac.compare_digest(key, settings.SETUP_KEY)
     )
+
+
+def _mark_setup_used():
+    global _setup_used
+    _setup_used = True
 
 
 def _save_local_token(token: str) -> None:
@@ -179,14 +186,15 @@ def setup_page(setup_key: str):
 @app.post("/setup/{setup_key}", include_in_schema=False)
 async def save_setup(setup_key: str, payload: SetupPayload):
     global _setup_used
-    if not _setup_is_valid(setup_key):
-        raise HTTPException(status_code=404, detail="setup link expired")
-    token = payload.bot_token.strip()
-    if not re.fullmatch(r"\\d{5,15}:[A-Za-z0-9_-]{20,}", token):
-        raise HTTPException(status_code=400, detail="invalid Telegram bot token")
-    _save_local_token(token)
-    _setup_used = True
-    return {"status": "saved"}
+    async with _setup_lock:
+        if not _setup_is_valid(setup_key):
+            raise HTTPException(status_code=404, detail="setup link expired")
+        token = payload.bot_token.strip()
+        if not re.fullmatch(r"\\d{5,15}:[A-Za-z0-9_-]{20,}", token):
+            raise HTTPException(status_code=400, detail="invalid Telegram bot token")
+        _save_local_token(token)
+        _mark_setup_used()
+        return {"status": "saved"}
 
 
 @app.get("/health/live")

@@ -204,8 +204,19 @@ async def _server_unit_price(session, product, server: StoreServer | None) -> De
     الترتيب: المنتج اليدوي > القسم الفرعي/التطبيق > القسم > السيرفر >
     السعر المحفوظ. لذلك هامش «لايكات انستا» أو «متابعين تيك توك»
     يتحكم بسعرها حتى لو كان للسيرفر هامش آخر.
+
+    للمنتجات المربوطة بمزود (provider_service_ref_id): يُحسب السعر
+    من سعر المزود اللحظي مباشرة بدلاً من cost_price_usd المخزّن،
+    فيبقى السعر محدثاً تلقائياً دون حاجة لإعادة المزامنة.
     """
     from services.margin_service import MarginService
+    from services.smm_price_service import live_provider_price
+
+    # هل المنتج مربوط بخدمة مزود حية؟
+    live_cost = await live_provider_price(product, session)
+    if live_cost is not None:
+        margin, _ = await MarginService.effective_margin(session, product)
+        return MarginService.price_from_cost(live_cost, margin)
 
     return await MarginService.product_sell_price(session, product, server)
 
@@ -450,6 +461,24 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     await callback.answer()
     sub_cat = product.sub_category
     language = _glang(db_user)
+
+    # Show rich SMM provider details when product has a linked provider service
+    if product.provider_service_ref_id and product.fulfillment_type == ProductFulfillmentType.API:
+        from services.smm_price_service import service_details, format_details, live_sell_price
+        det = await service_details(product, session)
+        live_price = await live_sell_price(product, session)
+        price_display = await _dual_price(live_price, db_user, session)
+        rich = format_details(det, price_display)
+        await callback.message.edit_text(rich)
+        await state.update_data(product_id=product_id, price_override=str(live_price))
+        if product.requires_link:
+            await callback.message.answer(I18nService.t('send_link', language))
+            await state.set_state(SMMOrderStates.waiting_link)
+        else:
+            confirm_q = I18nService.t('confirm_purchase_q', language)
+            await callback.message.answer(confirm_q, reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        return
+
     unit_price = await _server_unit_price(session, product, server)
     price_display = await _dual_price(unit_price, db_user, session)
     await state.update_data(product_id=product_id)

@@ -26,6 +26,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
     "store": (
         "🛍 المتجر والخدمات والرشق",
         [
+            ("📦 التطبيقات والأكواد الجاهزة", "admin:readycodes"),
             ("📥 الخدمات المسحوبة (مزود/بحث)", "admin:pulled_services"),
             ("🔌 مزودو المتجر", "admin:api_providers"),
             ("📂 إدارة الأقسام", "admin:categories"),

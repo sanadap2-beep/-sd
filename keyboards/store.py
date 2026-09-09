@@ -66,6 +66,7 @@ def store_home_kb(
                 b.button(text=entry.label, url=entry.action)
             else:
                 b.button(text=entry.label, callback_data=entry.action)
+        b.button(text="📦 التطبيقات والأكواد الجاهزة", callback_data="readycode:list", style="success")
         b.button(text=_main_menu_label(language), callback_data="back_to_main")
         b.adjust(2)
         return b.as_markup()
