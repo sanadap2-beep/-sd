@@ -20,7 +20,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import select
 
-from database.models import Category, Product, ProductPricingType, SubCategory
+from database.models import Category, Product, ProductPricingType, ProviderService, SubCategory
 from services.settings_service import SettingsService
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,19 @@ class MarginService:
         أسعار منتجاتٍ جاهزة بلا إرادة الأدمن.
         """
         percent, source = await cls.effective_margin(session, product, server)
+
+        # المنتجات المربوطة بخدمة مزود (SMM/ألعاب/تطبيقات): نقرأ تكلفة المزود
+        # اللحظية بدل `cost_price_usd` المخزّن، فتبقى الأسعار في القائمة
+        # والشراء محدّثة تلقائياً مع تغيّر أسعار المزود (إصلاح «الأسعار عالقة»).
+        live_cost = None
+        if getattr(product, "provider_service_ref_id", None):
+            svc = await session.get(ProviderService, product.provider_service_ref_id)
+            if svc is not None and svc.rate_usd is not None and svc.rate_usd > 0:
+                live_cost = Decimal(str(svc.rate_usd))
+
+        if live_cost is not None:
+            return cls.price_from_cost(live_cost, percent)
+
         if source == "عالمي":
             if default_price is not None:
                 return Decimal(str(default_price))

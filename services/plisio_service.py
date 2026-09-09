@@ -275,7 +275,8 @@ class PlisioClient(PaymentGatewayBase):
         if email:
             params["email"] = email
 
-        result = await self._request("POST", "/invoices/new", params)
+        # Plisio يتطلب GET لإنشاء الفاتورة (المفتاح يُمرَّر في الـ query params).
+        result = await self._request("GET", "/invoices/new", params)
 
         if not isinstance(result, dict):
             raise PlisioAPIError("استجابة إنشاء فاتورة Plisio غير صالحة")

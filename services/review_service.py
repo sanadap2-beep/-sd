@@ -34,6 +34,7 @@ class ReviewService:
             order is None
             or order.user_id != user_id
             or order.status != UnifiedOrderStatus.COMPLETED
+            or order.product_id is None
         ):
             raise ReviewError("يمكن تقييم الطلبات المكتملة فقط.")
         existing = await session.execute(

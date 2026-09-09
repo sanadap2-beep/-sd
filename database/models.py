@@ -1359,7 +1359,10 @@ class UnifiedOrder(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    # nullable لأن بعض أنواع الطلبات (مثل التطبيقات والأكواد الجاهزة) لا
+    # ترتبط بمنتج حقيقي في جدول products. القيمة 0 كانت تُستخدم سابقاً في
+    # تلك الحالات ففشلت قيد FOREIGN KEY.
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True)
     api_provider_id: Mapped[int | None] = mapped_column(
         ForeignKey("api_providers.id"), nullable=True
     )

@@ -80,12 +80,6 @@ class SmmV2Protocol(BaseProtocol):
         super().__init__(api_url, api_key, custom_config)
         self.timeout = 30
 
-    def _get_session(self) -> aiohttp.ClientSession:
-        """إعادة استخدام جلسة aiohttp واحدة بدلاً من إنشاء جلسة جديدة كل مرة."""
-        if not hasattr(self, '_http_session') or self._http_session is None or self._http_session.closed:
-            self._http_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.timeout))
-        return self._http_session
-
     async def _request(
         self,
         data: dict,
@@ -93,53 +87,59 @@ class SmmV2Protocol(BaseProtocol):
         """
         يرسل طلب POST إلى الـ API.
         كل طلبات SMM V2 تُرسل بـ POST مع بيانات في form-data.
+
+        نفتح جلسة aiohttp لكل طلب (``async with``) ونغلقها تلقائياً عند
+        انتهاء الطلب/الاستجابة، تماماً كبقية البروتوكولات، حتى لا تتسرب
+        جلسات مفتوحة وتظهر ``RuntimeError: Unclosed client session``.
         """
         data_with_key = {
             "key": self.api_key,
             **data,
         }
 
-        session = self._get_session()
-        try:
-            async with session.post(
-                self.api_url,
-                data=data_with_key,
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as resp:
-                text = await resp.text()
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.timeout)
+        ) as session:
+            try:
+                async with session.post(
+                    self.api_url,
+                    data=data_with_key,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                ) as resp:
+                    text = await resp.text()
 
-                if resp.status == 401 or resp.status == 403:
-                    raise ProtocolAuthError("مفتاح API غير صالح")
+                    if resp.status == 401 or resp.status == 403:
+                        raise ProtocolAuthError("مفتاح API غير صالح")
 
-                if resp.status not in (200, 201):
-                    raise ProtocolConnectionError(f"HTTP {resp.status}: {text[:200]}")
+                    if resp.status not in (200, 201):
+                        raise ProtocolConnectionError(f"HTTP {resp.status}: {text[:200]}")
 
-                try:
-                    result = await resp.json(content_type=None)
-                except (json.JSONDecodeError, Exception):
-                    raise ProtocolError(
-                        f"استجابة غير صالحة (JSON parsing failed): {text[:200]}"
-                    )
+                    try:
+                        result = await resp.json(content_type=None)
+                    except (json.JSONDecodeError, Exception):
+                        raise ProtocolError(
+                            f"استجابة غير صالحة (JSON parsing failed): {text[:200]}"
+                        )
 
-                if isinstance(result, dict):
-                    error = result.get("error")
-                    if error:
-                        if is_insufficient_funds_error(error):
-                            raise ProtocolInsufficientFundsError(str(error))
-                        if is_invalid_service_error(error):
-                            raise ProtocolInvalidServiceError(str(error))
-                        raise ProtocolError(str(error))
+                    if isinstance(result, dict):
+                        error = result.get("error")
+                        if error:
+                            if is_insufficient_funds_error(error):
+                                raise ProtocolInsufficientFundsError(str(error))
+                            if is_invalid_service_error(error):
+                                raise ProtocolInvalidServiceError(str(error))
+                            raise ProtocolError(str(error))
 
-                return result
+                    return result
 
-        except ProtocolError:
-            raise
-        except TimeoutError as e:
-            raise ProtocolConnectionError(
-                f"انتهت مهلة الاتصال ({self.timeout} ثانية)"
-            ) from e
-        except aiohttp.ClientError as e:
-            raise ProtocolConnectionError(f"خطأ اتصال: {e}") from e
+            except ProtocolError:
+                raise
+            except TimeoutError as e:
+                raise ProtocolConnectionError(
+                    f"انتهت مهلة الاتصال ({self.timeout} ثانية)"
+                ) from e
+            except aiohttp.ClientError as e:
+                raise ProtocolConnectionError(f"خطأ اتصال: {e}") from e
 
     async def test_connection(self) -> bool:
         """
@@ -153,10 +153,8 @@ class SmmV2Protocol(BaseProtocol):
             return False
 
     async def close(self):
-        """Close the reusable aiohttp session."""
-        if hasattr(self, '_http_session') and self._http_session is not None and not self._http_session.closed:
-            await self._http_session.close()
-            self._http_session = None
+        """متوافق مع الواجهة القديمة — لم يعد هناك جلسة دائمة تُغلق."""
+        return None
 
     async def get_balance(self) -> ProtocolBalance:
         """

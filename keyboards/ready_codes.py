@@ -30,3 +30,18 @@ def admin_ready_codes_kb(items, language: str = "ar") -> InlineKeyboardMarkup:
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()
+
+def admin_ready_code_edit_kb(item) -> InlineKeyboardMarkup:
+    """قائمة تعديل عنصر جاهز: كل حقل قابل للتغيير + تفعيل/تعطيل + حذف."""
+    b = InlineKeyboardBuilder()
+    b.button(text=f"✏️ الاسم: {item.name_ar}", callback_data=f"arc:field:name:{item.id}")
+    b.button(text=f"📝 الوصف: {(item.description or '—')[:22]}", callback_data=f"arc:field:description:{item.id}")
+    b.button(text=f"💰 السعر: ${item.price_usd}", callback_data=f"arc:field:price:{item.id}")
+    b.button(text=f"📋 التعليمات: {(item.instructions or '—')[:22]}", callback_data=f"arc:field:instructions:{item.id}")
+    b.button(text=f"🔗 الرابط: {(item.file_url or '—')[:24]}", callback_data=f"arc:field:file_url:{item.id}")
+    toggle = "⚠️ تعطيل (إخفاء)" if item.is_active else "✅ تفعيل (إظهار)"
+    b.button(text=toggle, callback_data=f"arc:toggle:{item.id}")
+    b.button(text="🗑 حذف", callback_data=f"arc:delete:{item.id}", style="danger")
+    b.button(text="🔙 رجوع", callback_data="admin:readycodes")
+    b.adjust(1)
+    return b.as_markup()

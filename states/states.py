@@ -132,6 +132,11 @@ class AppsOrderStates(StatesGroup):
     waiting_coupon = State()
 
 
+class ReferralGuardStates(StatesGroup):
+    """حالة التحقق البشري لمن دخل عبر رابط إحالة."""
+    waiting_answer = State()
+
+
 # ══════════════ الأدمن - عام ══════════════
 
 

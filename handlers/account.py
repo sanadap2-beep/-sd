@@ -200,7 +200,7 @@ async def unified_order_detail(callback: CallbackQuery, session, db_user: User):
         except InventoryError:
             text += '\n\n⚠️ تعذر عرض بيانات التسليم حالياً.'
     kb = InlineKeyboardBuilder()
-    if order.status == UnifiedOrderStatus.COMPLETED:
+    if order.status == UnifiedOrderStatus.COMPLETED and order.product_id is not None:
         review_result = await session.execute(select(ProductReview).where(ProductReview.user_id == db_user.id, ProductReview.product_id == order.product_id))
         if review_result.scalar_one_or_none() is None:
             kb.button(text='⭐ قيّم هذا المنتج', callback_data=f'review:start:{order.id}')
