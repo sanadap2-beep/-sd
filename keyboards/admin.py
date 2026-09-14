@@ -39,6 +39,8 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("🖥 السيرفرات العامة", "admin:store_servers"),
             ("🌐 مزودو الأرقام", "admin:providers"),
             ("🌍 إدارة الدول", "admin:countries"),
+            ("🤖 إدارة الذكاء الاصطناعي", "admin:ai_sections"),
+            ("📱 إدارة واتساب", "admin:wa_sections"),
         ],
     ),
     "users": (
@@ -69,8 +71,6 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("🔧 وضع الصيانة", "admin:maintenance"),
             ("🛍 التحكم بالمتجر", "admin:store_control"),
             ("🧩 التحكم بخدمات الأخرى", "admin:extras_control"),
-            ("🤖 أقسام الذكاء الاصطناعي", "admin:ai"),
-            ("📱 قسم واتساب (الجسر)", "admin:wa"),
             ("🎛 أزرار الواجهة", "admin:main_buttons"),
             ("📊 جودة مزودي الأرقام", "admin:number_provider_quality"),
             ("📡 مباشر البوت", "admin:live_feed"),

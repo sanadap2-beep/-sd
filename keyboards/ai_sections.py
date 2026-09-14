@@ -1,154 +1,160 @@
 """
-كيبوردات أقسام الذكاء الاصطناعي وقسم واتساب (جهة المستخدم).
+أزرار القسم الرئيسي للذكاء الاصطناعي (المستخدم + لوحة الأدمن).
 """
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from database.models import AISection, AISession, WALinkStatus, WhatsAppLink
+from database.models import AiSection, AiSession
+from services.i18n_service import I18nService
+from services.ai_section_service import AiSectionService
+
+# ══════════════ المستخدم ══════════════
 
 
-def ai_home_kb(sections: list[AISection]) -> InlineKeyboardMarkup:
-    """قائمة الأقسام المفعّلة — كل قسم زر."""
+def _fmt_price(price) -> str:
+    text = f"{price:.4f}".rstrip("0").rstrip(".")
+    return f"${text}"
+
+
+def ai_home_kb(sections: list[AiSection], language: str = "ar") -> InlineKeyboardMarkup:
+    """قائمة الأقسام الفعالة في القسم الرئيسي للذكاء الاصطناعي."""
+    t = lambda key, **kw: I18nService.t(key, language, **kw)  # noqa: E731
     b = InlineKeyboardBuilder()
     for section in sections:
+        name = section.name_en if (language == "en" and section.name_en) else section.name_ar
+        emoji = "💻" if section.kind == "coding" else "💬"
         b.button(
-            text=f"{section.emoji} {section.title}",
-            callback_data=f"ai:sec:{section.id}",
-            style="primary",
+            text=f"{emoji} {name} · {_fmt_price(AiSectionService.sell_price(section))}/رسالة",
+            callback_data=f"ai:open:{section.id}",
+            style="success",
         )
-    b.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")
+    b.button(text=t("ai_back_to_menu"), callback_data="back_to_main")
     b.adjust(1)
     return b.as_markup()
 
 
-def section_view_kb(section: AISection) -> InlineKeyboardMarkup:
-    """شاشة القسم: زر البدء + الجلسات + رجوع."""
+def ai_section_kb(section_id: int, has_session: bool, language: str = "ar") -> InlineKeyboardMarkup:
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()
-    if section.mode.value == "code":
-        b.button(text="👨‍💻 اطلب كود / ملف", callback_data=f"ai:start:{section.id}", style="success")
-        b.button(text="🗂 طلباتي السابقة", callback_data=f"ai:sessions:{section.id}")
-    else:
-        b.button(text="💬 ابدأ المحادثة", callback_data=f"ai:start:{section.id}", style="success")
-        b.button(text="🗂 جلساتي السابقة", callback_data=f"ai:sessions:{section.id}")
-    b.button(text="🔙 أقسام الذكاء الاصطناعي", callback_data="ai:home")
+    b.button(text=t("ai_new_session"), callback_data=f"ai:new:{section_id}", style="primary")
+    if has_session:
+        b.button(text=t("ai_continue_session"), callback_data=f"ai:continue:{section_id}")
+    b.button(text=t("ai_my_sessions"), callback_data=f"ai:history:{section_id}")
+    b.button(text=t("ai_back"), callback_data="ai:home")
     b.adjust(1)
     return b.as_markup()
 
 
-def chat_active_kb(section: AISection) -> InlineKeyboardMarkup:
-    """أزرار أثناء المحادثة/البرمجة (تُرفق مع كل رد)."""
+def ai_prompt_kb(section_id: int, language: str = "ar") -> InlineKeyboardMarkup:
+    """بعد الرد: إكمال الجلسة أو الخروج."""
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()
-    b.button(text="🆕 جلسة جديدة", callback_data=f"ai:new:{section.id}", style="primary")
-    b.button(text="🗂 الجلسات", callback_data=f"ai:sessions:{section.id}")
-    b.button(text="🔙 خروج", callback_data="ai:home", style="danger")
-    b.adjust(2, 1, 1)
+    b.button(text=t("ai_send_more"), callback_data=f"ai:stay:{section_id}", style="primary")
+    b.button(text=t("ai_new_session"), callback_data=f"ai:new:{section_id}")
+    b.button(text=t("ai_my_sessions"), callback_data=f"ai:history:{section_id}")
+    b.button(text=t("ai_cancel"), callback_data="ai:cancel")
+    b.adjust(2)
     return b.as_markup()
 
 
-def sessions_list_kb(
-    section: AISection, sessions: list[AISession]
-) -> InlineKeyboardMarkup:
-    """قائمة جلسات المستخدم في قسم معيّن — يمكن فتح أي جلسة."""
+def ai_history_kb(section_id: int, sessions: list[AiSession], language: str = "ar") -> InlineKeyboardMarkup:
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()
-    for s in sessions:
-        label = (s.title or "جلسة")[:40]
+    for item in sessions:
+        title = item.title or "…"
         b.button(
-            text=f"📄 {label} ({s.messages_count} رسالة)",
-            callback_data=f"ai:view:{s.id}",
+            text=f"📜 {title[:40]} · {item.message_count // 2} {t('ai_msgs_word')}",
+            callback_data=f"ai:hist_view:{item.id}",
         )
-    b.button(text="🆕 جلسة جديدة", callback_data=f"ai:new:{section.id}", style="success")
-    b.button(text="🔙 {0}".format(section.title), callback_data=f"ai:sec:{section.id}")
+    b.button(text=t("ai_back"), callback_data=f"ai:open:{section_id}")
     b.adjust(1)
     return b.as_markup()
 
 
-def session_view_kb(session: AISession) -> InlineKeyboardMarkup:
-    """عرض جلسة سابقة: متابعة + رجوع لقائمة الجلسات."""
+def ai_hist_view_kb(section_id: int, ai_session_id: int, language: str = "ar") -> InlineKeyboardMarkup:
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()
+    b.button(text=t("ai_back"), callback_data=f"ai:history:{section_id}")
+    return b.as_markup()
+
+
+def ai_insufficient_kb(language: str = "ar") -> InlineKeyboardMarkup:
+    from keyboards.main_menu import insufficient_balance_kb
+
+    return insufficient_balance_kb(language)
+
+
+def ai_error_kb(section_id: int, language: str = "ar") -> InlineKeyboardMarkup:
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
+    b = InlineKeyboardBuilder()
+    b.button(text=t("ai_retry"), callback_data=f"ai:stay:{section_id}", style="primary")
+    b.button(text=t("ai_topup"), callback_data="menu:deposit")
+    b.button(text=t("ai_cancel"), callback_data="ai:cancel")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ══════════════ الأدمن ══════════════
+
+
+def admin_ai_menu_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🧩 الأقسام", callback_data="admin:ai_list", style="primary")
+    b.button(text="➕ إضافة قسم", callback_data="admin:ai_new", style="success")
+    b.button(text="🔌 مزود NanoGPT", callback_data="admin:ai_provider")
+    b.button(text="📊 الإحصاءات", callback_data="admin:ai_stats")
+    b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
+    b.adjust(2, 2, 1)
+    return b.as_markup()
+
+
+def admin_ai_list_kb(sections: list[AiSection]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    if not sections:
+        pass
+    for section in sections:
+        status = "🟢" if section.enabled else "🔴"
+        b.button(
+            text=f"{status} {section.name_ar} ({section.model})",
+            callback_data=f"admin:ai_edit:{section.id}",
+        )
+        b.button(
+            text=("🔴 تعطيل" if section.enabled else "🟢 تفعيل"),
+            callback_data=f"admin:ai_toggle:{section.id}",
+            style="primary" if not section.enabled else "danger",
+        )
+    b.button(text="➕ إضافة قسم", callback_data="admin:ai_new", style="success")
+    b.button(text="🔙", callback_data="admin:ai_sections")
+    b.adjust(2, 2)
+    return b.as_markup()
+
+
+def admin_ai_kind_kb(section_id: int | None) -> InlineKeyboardMarkup:
+    """اختيار نوع القسم: برمجة (ملفات) أو دردشة."""
+    prefix = f"admin:ai_kind_edit:{section_id}" if section_id else "admin:ai_kind"
+    b = InlineKeyboardBuilder()
+    b.button(text="💻 برمجة (كود/ملفات)", callback_data=f"{prefix}:coding", style="primary")
+    b.button(text="💬 دردشة", callback_data=f"{prefix}:chat")
+    return b.as_markup()
+
+
+def admin_ai_section_kb(section_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ تعديل البيانات", callback_data=f"admin:ai_edit:{section_id}", style="primary")
+    b.button(text="🔙 قائمة الأقسام", callback_data="admin:ai_list")
+    return b.as_markup()
+
+
+def admin_ai_provider_kb(configured: bool) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✏️ عنوان الـ API", callback_data="admin:ai_prov_url")
+    b.button(text="🔑 مفتاح الـ API", callback_data="admin:ai_prov_key")
     b.button(
-        text="▶️ متابعة هذه الجلسة",
-        callback_data=f"ai:resume:{session.id}",
-        style="success",
+        text="🧪 اختبار الاتصال",
+        callback_data="admin:ai_prov_test",
+        style="success" if configured else "danger",
     )
-    b.button(
-        text="🔙 كل الجلسات",
-        callback_data=f"ai:sessions:{session.section_id}",
-    )
-    b.adjust(1)
-    return b.as_markup()
-
-
-# ══════════════ قسم واتساب ══════════════
-
-
-def wa_home_active_kb() -> InlineKeyboardMarkup:
-    """القسم مفعّل والمستخدم مشترك."""
-    b = InlineKeyboardBuilder()
-    b.button(text="📲 ربط رقم واتساب", callback_data="wa:link", style="success")
-    b.button(text="🧭 أوامر واتساب", callback_data="wa:menu", style="primary")
-    b.button(text="🔌 حالة الاتصال", callback_data="wa:status")
-    b.button(text="🔓 فصل الرقم", callback_data="wa:unlink", style="danger")
-    b.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def wa_home_inactive_kb(has_linked: bool = False) -> InlineKeyboardMarkup:
-    """غير مشترك أو القسم يحتاج اشتراك."""
-    b = InlineKeyboardBuilder()
-    b.button(text="✅ اشترك يوم بـ 1$ ", callback_data="wa:subscribe", style="success")
-    if has_linked:
-        b.button(text="🔌 حالة الاتصال", callback_data="wa:status")
-    b.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def wa_pairing_kb() -> InlineKeyboardMarkup:
-    """بعد إرسال كود الاقتران."""
-    b = InlineKeyboardBuilder()
-    b.button(text="🔄 تحققت، افحص الحالة", callback_data="wa:status", style="primary")
-    b.button(text="🧭 أوامر واتساب", callback_data="wa:menu")
-    b.button(text="🔙 قسم واتساب", callback_data="wa:home")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def wa_bridge_menu_kb(link: WhatsAppLink) -> InlineKeyboardMarkup:
-    """
-    يعرض أزرار البوت الثاني القادمة من الجسر.
-    كل زر يحمل فهرس عمله؛ يُترجم عند الضغط إلى الـ action المحفوظ.
-    """
-    b = InlineKeyboardBuilder()
-    buttons = []
-    try:
-        import json
-
-        data = json.loads(link.last_menu_json or "{}")
-        buttons = [item for item in (data.get("buttons") or []) if item.get("text") and item.get("action")]
-    except (ValueError, TypeError):
-        buttons = []
-    for index, item in enumerate(buttons[:32]):
-        b.button(
-            text=str(item.get("text"))[:64],
-            callback_data=f"wa:go:{link.id}:{index}",
-        )
-    b.button(text="🔄 تحديث القائمة", callback_data="wa:menu", style="primary")
-    b.button(text="🔙 قسم واتساب", callback_data="wa:home")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def wa_status_kb(link_status: WALinkStatus) -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    if link_status == WALinkStatus.PENDING:
-        b.button(text="🔄 فحص مرة أخرى", callback_data="wa:status", style="primary")
-        b.button(text="🧭 أوامر واتساب", callback_data="wa:menu")
-    elif link_status == WALinkStatus.LINKED:
-        b.button(text="🧭 أوامر واتساب", callback_data="wa:menu", style="success")
-    else:
-        b.button(text="📲 ربط رقم جديد", callback_data="wa:link", style="primary")
-    b.button(text="🔙 قسم واتساب", callback_data="wa:home")
+    b.button(text="🔙", callback_data="admin:ai_sections")
     b.adjust(1)
     return b.as_markup()

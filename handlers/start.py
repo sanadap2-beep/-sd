@@ -39,12 +39,8 @@ async def _build_menu(session, db_user):
         await FeatureService.config("agent_program", "default_percent", 10)
     )
     completed_orders = await _completed_orders_count(session)
-    # ── القسمان الرئيسيان الجديدان ──
-    from services.ai_sections_service import AISectionService
-    from services.whatsapp_bridge_service import WASettings
-
-    show_ai = bool(await AISectionService.available_for_users(session))
-    show_whatsapp = await WASettings.enabled()
+    show_ai = await _ai_section_visible(session)
+    show_whatsapp = await FeatureService.enabled("whatsapp_section")
     return build_main_menu(
         number_services=[],
         categories=[],
@@ -57,6 +53,20 @@ async def _build_menu(session, db_user):
         show_ai=show_ai,
         show_whatsapp=show_whatsapp,
     )
+
+
+async def _ai_section_visible(session) -> bool:
+    """زر الذكاء الاصطناعي يظهر إذا فُعّلت الميزة وفيه قسم مفعّل."""
+    from sqlalchemy import func, select
+
+    from database.models import AiSection
+
+    if not await FeatureService.enabled("ai_sections"):
+        return False
+    count = await session.scalar(
+        select(func.count(AiSection.id)).where(AiSection.enabled.is_(True))
+    )
+    return bool(count)
 
 
 async def _completed_orders_count(session) -> int:

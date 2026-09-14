@@ -345,45 +345,38 @@ async def init_db() -> None:
             if existing is None:
                 session.add(Setting(key=key, value=value))
 
-        # ── زرع قسمَي الذكاء الاصطناعي الافتراضيين (مرة واحدة فقط) ──
+        # ── زرع قسمَي الذكاء الاصطناعي الافتراضيين (مرة واحدة، معطّلين حتى
+        #    يضبط الأدمن مفتاح NanoGPT ويفعّلهما من اللوحة) ──
         if await session.get(Setting, "ai_sections_seeded") is None:
-            from database.models import AISection, AISectionMode, AIPricingMode
+            from database.models import AiSection
 
             session.add_all([
-                AISection(
-                    title="برمجة بدون قيود",
-                    emoji="👨‍💻",
-                    description=(
+                AiSection(
+                    key="coding",
+                    name_ar="برمجة بدون قيود",
+                    description_ar=(
                         "اطلب أي كود أو سكربت أو أداة أو ملف كامل بأي لغة برمجة، "
                         "والنتيجة توصلك ملفاً جاهزاً للتحميل."
                     ),
-                    mode=AISectionMode.CODE,
+                    kind="coding",
                     model="z-ai/glm-4.6",
-                    system_prompt=(
-                        "أنت مهندس برمجيات خبير. عند أي طلب اكتب الكود كاملاً وجاهزاً "
-                        "للتشغيل داخل كتلة كود واحدة مع شرح مختصر قبله. اكتب الملف "
-                        "كاملاً بدون اختصارات أو (...) وبدون مقدمات زائدة."
-                    ),
-                    pricing_mode=AIPricingMode.USAGE,
-                    est_cost_per_message=Decimal("0.003"),
-                    fixed_price=Decimal("0.02"),
-                    profit_multiplier=Decimal("3"),
+                    cost_per_message_usd=Decimal("0.003"),
+                    profit_multiplier=3.0,
+                    enabled=False,
                     sort_order=10,
                 ),
-                AISection(
-                    title="تحدث بدون قيود",
-                    emoji="💬",
-                    description=(
+                AiSection(
+                    key="chat",
+                    name_ar="تحدث بدون قيود",
+                    description_ar=(
                         "دردشة حرة مع ذكاء اصطناعي — اسأل عن أي شيء، تحدث بأي لغة، "
                         "والموديل يتذكر سياق محادثتك الحالية."
                     ),
-                    mode=AISectionMode.CHAT,
+                    kind="chat",
                     model="z-ai/glm-4.6",
-                    system_prompt=None,
-                    pricing_mode=AIPricingMode.USAGE,
-                    est_cost_per_message=Decimal("0.001"),
-                    fixed_price=Decimal("0.01"),
-                    profit_multiplier=Decimal("3"),
+                    cost_per_message_usd=Decimal("0.001"),
+                    profit_multiplier=3.0,
+                    enabled=False,
                     sort_order=20,
                 ),
             ])

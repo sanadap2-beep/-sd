@@ -554,6 +554,40 @@ FEATURES: tuple[FeatureSpec, ...] = (
         personalization_weight=70,
     ),
     _spec(
+        "ai_sections",
+        "🤖 القسم الرئيسي للذكاء الاصطناعي (برمجة/دردشة)",
+        "AI Sections (main area)",
+        "الذكاء",
+        "قسم رئيسي في القائمة: أقسام ديناميكية (برمجة بدون قيود/دردشة/مستقبلي) "
+        "يُنشئها الأدمن من اللوحة، كل قسم بموديل NanoGPT ووصف يدوي وتكلفة "
+        "رسالة تقريبية. سعر المستخدم = التكلفة + ربح (3× افتراضياً)، يُخصم "
+        "للرسالة الناجحة مع استرجاع عند فشل المزود، وتُحفظ الجلسات والرسائل.",
+        False,
+        context_messages=20,
+        max_response_chars=8000,
+        timeout_seconds=120,
+    ),
+    _spec(
+        "whatsapp_section",
+        "📱 قسم واتساب (مربوط ببوت الجسر)",
+        "WhatsApp Section (bridge bot)",
+        "الاشتراكات",
+        "قسم رئيسي يربط البوت الثاني (إدارة جلسات واتساب) عبر جسر HTTP: "
+        "المستخدم يشتري باقة (يوم/3/7/30 يوم) ويرسل رقمه فيستلم كود ربط، "
+        "ثم تظهر كل أزرار وأوامر البوت الثاني داخل هذا البوت. تجديد تلقائي "
+        "يومي بسعر اليوم عند كفاية الرصيد.",
+        False,
+        price_per_day_usd=1.0,
+        auto_renew_default=True,
+        reminder_hours_before=12,
+        packages_json=[
+            {"days": 1, "price_usd": 1.0},
+            {"days": 3, "price_usd": 2.85},
+            {"days": 7, "price_usd": 6.30},
+            {"days": 30, "price_usd": 25.50},
+        ],
+    ),
+    _spec(
         "behavioral_fingerprint",
         "البصمة السلوكية لمكافحة الاحتيال",
         "Behavioral Fraud Detection",

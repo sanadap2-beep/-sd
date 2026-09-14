@@ -1,299 +1,390 @@
 """
-واجهة المستخدم لقسم واتساب.
+قسم واتساب — واجهة المستخدم (القسم الرئيسي الثاني).
 
-المسار: زر «📱 واتساب» في القائمة الرئيسية ← شاشة القسم.
-
-- القسم يتطلب اشتراكاً يومياً (سعره من اللوحة، افتراضي 1$).
-- الربط: المستخدم يرسل رقم واتساب ← الجسر (البوت الثاني) يعيد كود اقتران
-  ← المستخدم يدخله في تطبيق واتساب (الأجهزة المرتبطة ← ربط جهاز).
-- بعد الربط تظهر أزرار البوت الثاني داخل هذا البوت: نعرض القائمة التي
-  يرجعها الجسر ونمرّر كل ضغطة إليه — كل أوامر البوت الثاني تعمل من هنا.
+التدفق:
+1) 📱 واتساب → وصف القسم + الحالة:
+   - بلا اشتراك → باقات (1/3/7/30 يوم) → دفع من الرصيد.
+   - مشترك وليس مربوطاً → «أرسل رقم واتساب» → كود ربط من الجسر.
+   - مشترك ومربوط → قائمة البوت الثاني (أزراره الحقيقية من الجسر)
+     وكل ضغطة تنفذ أمراً فيه وتعيد الرسم.
+2) كل استخدام يفحص الاشتراك النشط، وكل أمر يمر بالجسر باسم
+   Telegram user id نفسه — البوت الثاني هو مصدر الحقيقة.
 """
 
 from __future__ import annotations
 
-import html as html_module
+import logging
+import re
+import uuid
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from database.models import User, WALinkStatus, WhatsAppLink
-from keyboards.ai_sections import (
-    wa_bridge_menu_kb,
-    wa_home_active_kb,
-    wa_home_inactive_kb,
-    wa_pairing_kb,
-    wa_status_kb,
-)
+from database.models import User, WaLinkState, WaSubscription
+from services import wa_bridge_client
 from services.balance_service import InsufficientBalanceError
-from services.whatsapp_bridge_service import (
-    WABridgeError,
-    WALinkService,
-    WASubscriptionService,
-    WASettings,
-)
-from states.states import WhatsAppStates
+from services.feature_service import FeatureService
+from services.i18n_service import I18nService
+from services.settings_service import SettingsService
+from services.whatsapp_section_service import WhatsAppSectionService
+from states.states import WaStates
 
+logger = logging.getLogger(__name__)
 router = Router(name="whatsapp")
+
+_BUY_RE = re.compile(r"^wa:buy:(\d+)$")
+_ACT_RE = re.compile(r"^wa:act:([a-f0-9]{8}):(\d+)$")
+
+# كاش مؤقت لقوائم الجسر: token → (telegram_id, [items])
+# (يُفقد عند إعادة التشغيل — المستخدم يضغط «تحديث» ويعود كل شيء)
+_menu_cache: dict[str, tuple[int, list[dict]]] = {}
+
+
+def _lang(db_user) -> str:
+    return getattr(db_user, "language_code", "ar") or "ar"
+
+
+async def _feature_on() -> bool:
+    return await FeatureService.enabled("whatsapp_section")
+
+
+async def _section_description(language: str) -> str:
+    return (await SettingsService.get("wa_section_description", "")) or (
+        I18nService.t("wa_default_description", language)
+    )
 
 
 def _fmt_until(until) -> str:
     return until.strftime("%Y-%m-%d %H:%M") if until else "—"
 
 
+async def _save_menu(token: str, tg_id: int, items: list[dict]) -> None:
+    _menu_cache[token] = (tg_id, items)
+    # حد بسيط للحجم.
+    if len(_menu_cache) > 2000:
+        oldest = list(_menu_cache.keys())[:500]
+        for key in oldest:
+            _menu_cache.pop(key, None)
 
 
-# ══════════════ الشاشة الرئيسية للقسم ══════════════
-
-
-async def _render_wa_home(message: Message, session, db_user: User) -> None:
-    """يرسم شاشة قسم واتساب (تُستخدم من أكثر من مسار)."""
-    link = await WALinkService.get_link(session, db_user.id)
-    has_link = link is not None and link.status in (WALinkStatus.PENDING, WALinkStatus.LINKED)
-
-    if not await WASettings.configured():
-        await message.edit_text(
-            "📱 <b>قسم واتساب</b>\n\nالقسم قيد التجهيز حالياً. راجع الإدارة.",
-            reply_markup=wa_home_inactive_kb(has_link),
+def _menu_kb(token: str, items: list[dict], language: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for index, item in enumerate(items[:40]):
+        label = str(item.get("label") or item.get("id") or f"#{index}").strip()[:48]
+        rows.append(
+            [InlineKeyboardButton(text=label, callback_data=f"wa:act:{token}:{index}")]
         )
-        return
+    rows.append(
+        [InlineKeyboardButton(text=I18nService.t("wa_refresh", language), callback_data="wa:refresh")]
+    )
+    rows.append(
+        [InlineKeyboardButton(text=I18nService.t("wa_back_home", language), callback_data="wa:home")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    paid_until = await WASubscriptionService.active_until(session, db_user.id)
-    admin_description = await WASettings.description()
 
-    if paid_until:
-        text_parts = ["📱 <b>قسم واتساب</b>"]
-        if admin_description:
-            text_parts.extend(["", html_module.escape(admin_description)])
-        text_parts.extend([
-            "",
-            f"✅ اشتراكك فعال حتى: <b>{_fmt_until(paid_until)}</b>",
-        ])
-        if link and link.status == WALinkStatus.LINKED:
-            text_parts.append(f"🔗 الرقم المرتبط: <code>{html_module.escape(link.phone)}</code>")
-        elif link and link.status == WALinkStatus.PENDING:
-            text_parts.append("⏳ عندك كود اقتران قيد الانتظار — كمّل الربط أو اطلب رقماً جديداً.")
-        kb = wa_home_active_kb()
+async def _show_home(callback: CallbackQuery, session, db_user: User):
+    language = _lang(db_user)
+    t = lambda key, **kw: I18nService.t(key, language, **kw)  # noqa: E731
+    sub = await WhatsAppSectionService.get_sub(session, db_user.id)
+    active = WhatsAppSectionService.is_active(sub)
+    description = await _section_description(language)
+
+    lines = [f"📱 <b>{t('wa_section_title')}</b>\n"]
+    if description:
+        lines.append(f"{description}\n")
+
+    b = InlineKeyboardBuilder()
+    if not active:
+        lines.append(f"\n💰 {t('wa_need_subscription')}")
+        for pkg in WhatsAppSectionService.packages():
+            b.button(
+                text=t(
+                    "wa_package",
+                    days=pkg["days"],
+                    price=f"{pkg['price_usd']:g}$",
+                ),
+                callback_data=f"wa:buy:{pkg['days']}",
+                style="success",
+            )
+        if sub is not None:
+            b.button(
+                text=(
+                    t("wa_autorenew_on")
+                    if sub.auto_renew
+                    else t("wa_autorenew_off")
+                ),
+                callback_data="wa:autorenew",
+            )
     else:
-        price = await WASettings.daily_price()
-        text_parts = ["📱 <b>قسم واتساب</b>"]
-        if admin_description:
-            text_parts.extend(["", html_module.escape(admin_description)])
-        text_parts.extend([
-            "",
-            f"💳 استخدام هذا القسم يتطلب اشتراكاً يومياً: <b>${price}</b> / يوم.",
-            "الاشتراك يتيح لك ربط رقم واتساب واستخدام كل أوامر البوت طوال اليوم.",
-        ])
-        kb = wa_home_inactive_kb(has_link)
+        lines.append(f"\n🟢 {t('wa_active_until', until=_fmt_until(sub.active_until))}")
+        state = sub.link_state if sub else WaLinkState.NONE.value
+        if state in (WaLinkState.NONE.value, WaLinkState.EXPIRED.value, WaLinkState.PENDING.value):
+            lines.append(f"\n🔗 {t('wa_not_linked')}")
+            b.button(
+                text=t("wa_send_phone"),
+                callback_data="wa:send_phone",
+                style="success",
+            )
+        else:
+            lines.append(f"\n🔗 {t('wa_linked')}")
+            b.button(
+                text=t("wa_open_menu"),
+                callback_data="wa:menu",
+                style="success",
+            )
+        b.button(
+            text=(
+                t("wa_autorenew_on") if sub.auto_renew else t("wa_autorenew_off")
+            ),
+            callback_data="wa:autorenew",
+        )
 
-    await message.edit_text("\n".join(text_parts), reply_markup=kb)
+    b.button(text=t("wa_back_home"), callback_data="back_to_main")
+    b.adjust(1)
+    await callback.message.edit_text("\n".join(lines), reply_markup=b.as_markup())
+    await callback.answer()
 
 
 @router.callback_query(F.data == "wa:home")
-async def wa_home(callback: CallbackQuery, state: FSMContext, session, db_user: User):
-    await state.clear()
-    if not await WASettings.enabled():
-        await callback.answer("قسم واتساب معطّل حالياً.", show_alert=True)
+async def wa_home(callback: CallbackQuery, session, db_user: User | None = None):
+    if not await _feature_on():
+        await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
         return
-    await _render_wa_home(callback.message, session, db_user)
+    await _show_home(callback, session, db_user)
+
+
+@router.callback_query(_BUY_RE)
+async def wa_buy(callback: CallbackQuery, session, db_user: User | None = None):
+    if not await _feature_on():
+        await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
+        return
+    days = int(callback.data.split(":")[2])
+    package = next(
+        (p for p in WhatsAppSectionService.packages() if p["days"] == days), None
+    )
+    if package is None:
+        await _show_home(callback, session, db_user)
+        return
+    language = _lang(db_user)
+    try:
+        await WhatsAppSectionService.purchase(
+            session, db_user, days, package["price_usd"]
+        )
+    except InsufficientBalanceError:
+        await callback.answer(
+            I18nService.t("wa_insufficient", language, price=f"{package['price_usd']:g}$"),
+            show_alert=True,
+        )
+        return
+    await _show_home(callback, session, db_user)
+    await callback.answer(I18nService.t("wa_purchase_ok", language))
+
+
+@router.callback_query(F.data == "wa:autorenew")
+async def wa_autorenew(callback: CallbackQuery, session, db_user: User | None = None):
+    if not await _feature_on():
+        await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
+        return
+    sub = await WhatsAppSectionService.get_sub(session, db_user.id)
+    if sub is None:
+        sub = WaSubscription(user_id=db_user.id)
+        session.add(sub)
+        await session.flush()
+    sub.auto_renew = not sub.auto_renew
+    await session.commit()
+    await _show_home(callback, session, db_user)
     await callback.answer()
 
 
-# ══════════════ الاشتراك اليومي ══════════════
-
-
-@router.callback_query(F.data == "wa:subscribe")
-async def wa_subscribe(callback: CallbackQuery, session, db_user: User):
-    if not await WASettings.enabled():
-        await callback.answer("قسم واتساب معطّل حالياً.", show_alert=True)
+@router.callback_query(F.data == "wa:send_phone")
+async def wa_send_phone(callback: CallbackQuery, session, state: FSMContext, db_user: User | None = None):
+    if not await _feature_on():
+        await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
         return
-    try:
-        sub, amount = await WASubscriptionService.subscribe(session, db_user, days=1)
-    except InsufficientBalanceError as exc:
-        await callback.answer(f"❌ {exc}", show_alert=True)
+    if not WhatsAppSectionService.is_active(
+        await WhatsAppSectionService.get_sub(session, db_user.id)
+    ):
+        await _show_home(callback, session, db_user)
         return
-    except WABridgeError as exc:
-        await callback.answer(f"❌ {exc}", show_alert=True)
-        return
-    await callback.answer(f"✅ تم الاشتراك! خصم ${amount} — فعال حتى {_fmt_until(sub.paid_until)}", show_alert=True)
-    await wa_home(callback, session=session, db_user=db_user, state=None)
-
-
-# ══════════════ ربط رقم واتساب ══════════════
-
-
-@router.callback_query(F.data == "wa:link")
-async def wa_link_start(callback: CallbackQuery, state: FSMContext, session, db_user: User):
-    paid_until = await WASubscriptionService.active_until(session, db_user.id)
-    if paid_until is None:
-        await callback.answer("اشترك أولاً ليوم واحد ثم اربط رقمك.", show_alert=True)
-        return
-    if not await WASettings.configured():
-        await callback.answer("جسر واتساب غير مضبوط. راجع الإدارة.", show_alert=True)
-        return
-    await state.set_state(WhatsAppStates.waiting_phone)
-    await state.update_data(subscribed_until=_fmt_until(paid_until))
+    await state.set_state(WaStates.waiting_phone)
     await callback.message.edit_text(
-        "📲 <b>ربط رقم واتساب</b>\n\n"
-        "أرسل رقمك بالصيغة الدولية بدون مسافات، مثال:\n"
-        "<code>+963955123456</code>\n\n"
-        "⚠️ تأكد أن الرقم هو نفسه الذي ستدخل به كود الاقتران في واتساب.\n"
-        "❌ للإلغاء اضغط زر الرجوع بالأسفل أو أرسل /start.",
-        reply_markup=wa_home_active_kb(),
+        I18nService.t("wa_phone_prompt", _lang(db_user))
     )
     await callback.answer()
 
 
-@router.message(WhatsAppStates.waiting_phone, F.text)
-async def wa_phone_received(message: Message, state: FSMContext, session, db_user: User):
-    raw = (message.text or "").strip()
-    if raw.lower() in ("/start", "الغاء", "إلغاء", "cancel"):
+@router.message(WaStates.waiting_phone, F.text)
+async def wa_phone_received(message: Message, state: FSMContext, session, db_user: User | None = None):
+    from services.whatsapp_section_service import WaSectionError
+
+    if db_user is None:
         await state.clear()
         return
-    try:
-        link = await WALinkService.start_pairing(session, db_user.id, raw)
-    except WABridgeError as exc:
-        await message.answer(f"❌ {exc}\n\nجرّب إرسال الرقم مرة أخرى أو أرسل /start للإلغاء.")
+    raw = (message.text or "").strip()
+    phone = re.sub(r"[^\d+]", "", raw)
+    if not re.fullmatch(r"\+?\d{8,15}", phone):
+        await message.answer(I18nService.t("wa_phone_invalid", _lang(db_user)))
         return
-
+    if not WhatsAppSectionService.is_active(
+        await WhatsAppSectionService.get_sub(session, db_user.id)
+    ):
+        await state.clear()
+        await message.answer(I18nService.t("wa_expired_notice", _lang(db_user)))
+        return
+    language = _lang(db_user)
+    try:
+        result = await WhatsAppSectionService.start_link(session, db_user, phone)
+    except (wa_bridge_client.WaBridgeError, WaSectionError) as exc:
+        await state.clear()
+        await message.answer(f"⚠️ {exc}", reply_markup=_home_kb(language))
+        return
     await state.clear()
-    code_line = (
-        f"\n🔑 <b>كود الاقتران:</b> <code>{html_module.escape(link.pairing_code)}</code>"
-        if link.pairing_code
-        else "\n🔑 لم يصل كود بعد — اضغط «فحص الحالة» بعد لحظات."
+    t = lambda key, **kw: I18nService.t(key, language, **kw)  # noqa: E731
+    text = (
+        f"✅ {t('wa_link_started', phone=phone)}\n\n"
+        f"🔑 <b>{t('wa_link_code')}</b>\n<code>{result['link_code']}</code>\n\n"
+        + (f"\n{result['instructions']}\n" if result.get("instructions") else "")
+        + f"\n{t('wa_link_wait')}"
     )
-    await message.answer(
-        "📲 <b>خطوات الربط</b>\n"
-        f"{code_line}\n\n"
-        "1️⃣ افتح واتساب على جهازك\n"
-        "2️⃣ الإعدادات ← <b>الأجهزة المرتبطة</b>\n"
-        "3️⃣ اختر <b>ربط جهاز</b>\n"
-        "4️⃣ اضغط «<b>ربط برقم الهاتف بدلاً من ذلك</b>» وأدخل الكود أعلاه\n\n"
-        "بعد ثوانٍ اضغط «فحص الحالة» وستشتغل أزرار البوت هنا مباشرة 👇",
-        reply_markup=wa_pairing_kb(),
-    )
+    b = InlineKeyboardBuilder()
+    b.button(text=t("wa_check_link"), callback_data="wa:check_link", style="primary")
+    b.button(text=t("wa_back_home"), callback_data="wa:home")
+    b.adjust(2)
+    await message.answer(text, reply_markup=b.as_markup())
 
 
-# ══════════════ حالة الاتصال ══════════════
-
-
-@router.callback_query(F.data == "wa:status")
-async def wa_status(callback: CallbackQuery, session, db_user: User):
-    paid_until = await WASubscriptionService.active_until(session, db_user.id)
-    if paid_until is None:
-        await callback.answer("اشترك أولاً ليوم واحد.", show_alert=True)
+@router.callback_query(F.data == "wa:check_link")
+async def wa_check_link(callback: CallbackQuery, session, db_user: User | None = None):
+    if not await _feature_on():
+        await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
         return
-    link = await WALinkService.get_link(session, db_user.id)
-    if link is None or not link.bridge_session_id:
-        await callback.message.edit_text(
-            "🔌 لا يوجد رقم مربوط. اربط رقمك أولاً 👇",
-            reply_markup=wa_status_kb(WALinkStatus.DISCONNECTED),
-        )
-        await callback.answer()
-        return
+    language = _lang(db_user)
     try:
-        status = await WALinkService.refresh_status(session, link)
-    except WABridgeError as exc:
-        await callback.answer(f"❌ {exc}", show_alert=True)
+        sub = await WhatsAppSectionService.check_link(session, db_user)
+    except wa_bridge_client.WaBridgeError as exc:
+        await callback.answer(str(exc), show_alert=True)
         return
-
-    labels = {
-        WALinkStatus.PENDING: "⏳ بانتظار إدخال كود الاقتران في واتساب",
-        WALinkStatus.LINKED: "✅ الجلسة مربوطة وتعمل",
-        WALinkStatus.EXPIRED: "⌛ انتهت صلاحية كود الاقتران — اطلب كوداً جديداً",
-        WALinkStatus.DISCONNECTED: "❌ الجلسة غير متصلة — اربط الرقم من جديد",
-    }
-    await callback.message.edit_text(
-        "🔌 <b>حالة الاتصال</b>\n\n"
-        f"📱 الرقم: <code>{html_module.escape(link.phone)}</code>\n"
-        f"الحالة: {labels.get(status, status.value)}\n"
-        f"📅 الاشتراك فعال حتى: <b>{_fmt_until(paid_until)}</b>",
-        reply_markup=wa_status_kb(status),
-    )
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
+    if sub.link_state == WaLinkState.LINKED.value:
+        await callback.message.edit_text(t("wa_linked"), reply_markup=_menu_entry_kb(language))
+    else:
+        await callback.message.edit_text(
+            t("wa_link_pending"), reply_markup=_home_kb(language)
+        )
     await callback.answer()
-
-
-# ══════════════ أزرار البوت الثاني (الجسر) ══════════════
 
 
 @router.callback_query(F.data == "wa:menu")
-async def wa_menu(callback: CallbackQuery, state: FSMContext, session, db_user: User):
-    await state.clear()
-    paid_until = await WASubscriptionService.active_until(session, db_user.id)
-    if paid_until is None:
-        await callback.answer("اشترك أولاً ليوم واحد.", show_alert=True)
+async def wa_menu(callback: CallbackQuery, session, db_user: User | None = None):
+    if not await _feature_on():
+        await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
         return
-    link = await WALinkService.get_link(session, db_user.id)
-    if link is None or not link.bridge_session_id:
-        await callback.answer("اربط رقمك أولاً.", show_alert=True)
+    if not WhatsAppSectionService.is_active(
+        await WhatsAppSectionService.get_sub(session, db_user.id)
+    ):
+        await _show_home(callback, session, db_user)
         return
-    if link.status != WALinkStatus.LINKED:
-        try:
-            link.status = await WALinkService.refresh_status(session, link)
-        except WABridgeError as exc:
-            await callback.answer(f"❌ {exc}", show_alert=True)
-            return
-        if link.status != WALinkStatus.LINKED:
-            await callback.answer("الجلسة غير مربوطة بعد — أكمل إدخال الكود في واتساب.", show_alert=True)
-            return
-
+    language = _lang(db_user)
     try:
-        data = await WALinkService.run_command(session, link, action="menu")
-    except WABridgeError as exc:
-        await callback.answer(f"❌ {exc}", show_alert=True)
+        data = await wa_bridge_client.menu(db_user.telegram_id)
+    except wa_bridge_client.WaBridgeError as exc:
+        await callback.answer(str(exc), show_alert=True)
         return
-
-    text = (data.get("text") or "").strip() or "🧭 قائمة أوامر واتساب:"
-    kb = wa_bridge_menu_kb(link)
-    if not WALinkService.parse_buttons(link):  # الجسر لم يرجع أزراراً
-        text += "\n\n(البوت الثاني لم يرسل أزراراً — راجع إعداد قائمته)"
-    await callback.message.edit_text(
-        f"🧭 <b>أوامر واتساب</b>\n\n{html_module.escape(text[:3500])}",
-        reply_markup=kb,
-    )
+    items = data.get("menu") or []
+    if not items:
+        await callback.message.edit_text(
+            I18nService.t("wa_menu_empty", language),
+            reply_markup=_home_kb(language),
+        )
+        await callback.answer()
+        return
+    token = uuid.uuid4().hex[:8]
+    await _save_menu(token, db_user.telegram_id, items)
+    text = I18nService.t("wa_menu_header", language)
+    if data.get("status_text"):
+        text += f"\n\n{data['status_text']}"
+    await callback.message.edit_text(text, reply_markup=_menu_kb(token, items, language))
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("wa:go:"))
-async def wa_bridge_action(callback: CallbackQuery, session, db_user: User):
-    _, _, link_id, index = callback.data.split(":")
-    link = await WALinkService.get_link(session, db_user.id)
-    if link is None or str(link.id) != link_id:
-        await callback.answer("الجلسة قديمة، افتح القائمة من جديد.", show_alert=True)
+@router.callback_query(F.data == "wa:refresh")
+async def wa_refresh(callback: CallbackQuery, session, db_user: User | None = None):
+    """يعيد جلب قائمة البوت الثاني (تُحدَّث فور أي تغيير)."""
+    if not await _feature_on():
+        await callback.answer()
         return
-    buttons = WALinkService.parse_buttons(link)
-    try:
-        position = int(index)
-        action = buttons[position]["action"]
-    except (IndexError, ValueError, KeyError):
-        await callback.answer("الزر غير معروف، حدّث القائمة.", show_alert=True)
-        return
+    await wa_menu(callback, session, db_user)
 
-    try:
-        data = await WALinkService.run_command(session, link, action=action)
-    except WABridgeError as exc:
-        await callback.answer(f"❌ {exc}", show_alert=True)
-        return
 
-    text = (data.get("text") or "").strip() or "✅ تم التنفيذ."
-    kb = wa_bridge_menu_kb(link)
-    await callback.message.edit_text(
-        f"{html_module.escape(text[:3500])}",
-        reply_markup=kb,
+@router.callback_query(_ACT_RE)
+async def wa_action(callback: CallbackQuery, session, db_user: User | None = None):
+    """ضغطة زر من قائمة البوت الثاني → تنفيذ عبر الجسر."""
+    if not await _feature_on():
+        await callback.answer()
+        return
+    _token, index = (
+        callback.data.split(":")[2],
+        int(callback.data.split(":")[3]),
     )
-    await callback.answer()
-
-
-# ══════════════ فصل الرقم ══════════════
-
-
-@router.callback_query(F.data == "wa:unlink")
-async def wa_unlink(callback: CallbackQuery, session, db_user: User):
-    link = await WALinkService.get_link(session, db_user.id)
-    if link is None:
-        await callback.answer("لا يوجد رقم مربوط.", show_alert=True)
+    cached = _menu_cache.get(_token)
+    if cached is None or cached[0] != db_user.telegram_id:
+        await callback.answer(I18nService.t("wa_menu_expired", _lang(db_user)), show_alert=True)
         return
-    await WALinkService.unlink(session, link)
-    await callback.answer("🔓 تم فصل الرقم.", show_alert=True)
-    await wa_home(callback, session=session, db_user=db_user, state=None)
+    items = cached[1]
+    if index >= len(items):
+        await callback.answer("؟", show_alert=True)
+        return
+    item = items[index]
+    if not WhatsAppSectionService.is_active(
+        await WhatsAppSectionService.get_sub(session, db_user.id)
+    ):
+        await _show_home(callback, session, db_user)
+        return
+    language = _lang(db_user)
+    await callback.answer(I18nService.t("wa_action_working", language))
+    try:
+        result = await wa_bridge_client.action(
+            db_user.telegram_id, str(item.get("id")), item.get("data") or None
+        )
+    except wa_bridge_client.WaBridgeError as exc:
+        await callback.message.answer(
+            f"⚠️ {exc}", reply_markup=_menu_entry_kb(language)
+        )
+        return
+
+    new_menu = result.get("menu")
+    if new_menu:
+        token = uuid.uuid4().hex[:8]
+        await _save_menu(token, db_user.telegram_id, new_menu)
+        kb = _menu_kb(token, new_menu, language)
+    else:
+        kb = _menu_entry_kb(language)
+
+    text = result.get("text") or I18nService.t("wa_action_done", language)
+    try:
+        await callback.message.edit_text(text[:4000], reply_markup=kb)
+    except Exception:  # noqa: BLE001 — الرسالة قد تكون أقدم من 48 ساعة
+        await callback.message.answer(text[:4000], reply_markup=kb)
+
+
+def _home_kb(language: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text=I18nService.t("wa_check_link", language), callback_data="wa:check_link")
+    b.button(text=I18nService.t("wa_back_home", language), callback_data="wa:home")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def _menu_entry_kb(language: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(
+        text=I18nService.t("wa_open_menu", language),
+        callback_data="wa:menu",
+        style="primary",
+    )
+    b.button(text=I18nService.t("wa_back_home", language), callback_data="wa:home")
+    b.adjust(1)
+    return b.as_markup()

@@ -1,591 +1,457 @@
 """
-لوحة الأدمن: أقسام الذكاء الاصطناعي.
+إدارة القسم الرئيسي للذكاء الاصطناعي من لوحة الأدمن.
 
-من هنا يضيف الأدمن أقساماً جديدة (برمجة بدون قيود، دردشة بدون قيود،
-وأي قسم مستقبلي)، يربط كل قسم بموديل NanoGPT، يكتب شرحه وسعره التقريبي
-يدوياً، يضبط مضاعف الربح، يدير مفتاح المزود، ويستعرض جلسات المستخدمين
-ورسائلهم للمراجعة.
+- 🧩 الأقسام: إنشاء/تعديل/تفعيل/تعطيل.
+  كل قسم: معرّف + اسم + وصف يدوي + نوع (برمجة/دردشة) + موديل NanoGPT
+  + تكلفة الرسالة التقريبية + مضاعف الربح (الافتراضي 3×).
+- 🔌 المزود: عنوان الـ API + المفتاح + اختبار اتصال.
+- 📊 الإحصاءات: رسائل/تكلفة/إيراد/ربح لكل قسم.
 """
 
 from __future__ import annotations
 
-import html as html_module
+import re
+import time
 from decimal import Decimal, InvalidOperation
 
-from aiogram import F, Router
+from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from sqlalchemy import desc, select
-
-from database.models import (
-    AISection,
-    AISectionMode,
-    AIPricingMode,
-    AISession,
-    User,
-)
 from filters.admin_filter import IsAdmin
-from keyboards.ai_sections_admin import (
-    ai_admin_home_kb,
-    ai_admin_section_kb,
-    ai_admin_wizard_mode_kb,
-    ai_admin_wizard_pricing_kb,
-    ai_admin_wizard_start_kb,
+from keyboards.ai_sections import (
+    admin_ai_kind_kb,
+    admin_ai_list_kb,
+    admin_ai_menu_kb,
+    admin_ai_provider_kb,
+    admin_ai_section_kb,
 )
-from services.ai_sections_service import (
-    AISectionService,
-    AISessionService,
-    global_ai_stats,
+from services.ai_provider_client import (
+    AiProviderError,
+    chat_completion,
+    configured,
+    get_provider_config,
 )
-from services.audit_service import AuditAction, AuditService
-from services.nanogpt_service import NanoGPTService
+from services.ai_section_service import (
+    AiConversationService,
+    AiSectionError,
+    AiSectionService,
+)
 from services.settings_service import SettingsService
-from states.states import AdminAISectionStates
+from states.states import AdminAiProviderStates, AdminAiSectionStates
 
 router = Router(name="admin_ai_sections")
 router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
 
-MODE_LABELS = {
-    AISectionMode.CODE: "👨‍💻 برمجة (الرد كملف)",
-    AISectionMode.CHAT: "💬 دردشة حرة",
-    AISectionMode.CUSTOM: "🧩 مخصص",
-}
-PRICING_LABELS = {
-    AIPricingMode.USAGE: "حسب استهلاك المزود × مضاعف",
-    AIPricingMode.FIXED: "سعر ثابت للرسالة",
-}
+_EDIT_RE = re.compile(r"^admin:ai_edit:(\d+)$")
+_TOGGLE_RE = re.compile(r"^admin:ai_toggle:(\d+)$")
+_KIND_RE = re.compile(r"^admin:ai_kind(?::edit:\d+)?:(\w+)$")
 
 
-def _fmt_decimal(value) -> str:
-    try:
-        return f"{Decimal(str(value)):g}"
-    except (InvalidOperation, TypeError, ValueError):
-        return str(value)
+# ══════════════ القائمة الرئيسية للقسم ══════════════
 
 
-async def _render_home(callback: CallbackQuery, session) -> None:
-    configured = await NanoGPTService.configured()
-    sections = await AISectionService.list_all(session)
-    stats = await global_ai_stats(session)
-
-    key_line = "🔑 مفتاح NanoGPT: <b>مضبوط ✅</b>" if configured else "🔑 مفتاح NanoGPT: <b>غير مضبوط ❌</b> (الأقسام مخفية عن المستخدمين)"
-    lines = [
-        "🤖 <b>إدارة أقسام الذكاء الاصطناعي</b>",
-        "",
-        key_line,
-        f"📂 الأقسام: <b>{len(sections)}</b> | المفعّل: <b>{sum(1 for s in sections if s.is_enabled)}</b>",
-        "",
-        f"📊 الجلسات: <b>{stats['sessions']}</b> | الرسائل: <b>{stats['messages']}</b>",
-        f"💵 تكلفة المزود: <b>${stats['provider_cost']}</b> | المُحصّل: <b>${stats['charged']}</b> | الربح: <b>${stats['profit']}</b>",
-        "",
-        "💡 كل قسم: موديل خاص + شرح تكتبه يدوياً + تسعير "
-        "(تكلفة المزود × مضاعف الربح، أو سعر ثابت).",
-    ]
-    await callback.message.edit_text("\n".join(lines), reply_markup=ai_admin_home_kb(sections))
-    await callback.answer()
-
-
-@router.callback_query(F.data == "admin:ai")
-async def ai_admin_home(callback: CallbackQuery, session):
-    await _render_home(callback, session)
-
-
-# ══════════════ معالج إضافة قسم جديد (Wizard) ══════════════
-
-
-@router.callback_query(F.data == "admin:ai:new")
-async def ai_wizard_start(callback: CallbackQuery, state: FSMContext, session):
-    await state.set_state(AdminAISectionStates.wizard_title)
-    await state.update_data(wiz={})
+@router.callback_query(F.data == "admin:ai_sections")
+async def ai_menu(callback: CallbackQuery):
     await callback.message.edit_text(
-        "➕ <b>إضافة قسم ذكاء اصطناعي جديد</b>\n\n"
-        "1/9 — أرسل <b>عنوان القسم</b> كما سيظهر للمستخدم:\n"
-        "<i>مثال: برمجة بدون قيود</i>",
-        reply_markup=ai_admin_wizard_start_kb(),
+        "🤖 <b>إدارة قسم الذكاء الاصطناعي</b>\n\n"
+        "أنشئ الأقسام (برمجة/دردشة/مستقبلية) واضبط موديل كل قسم وتكلفة "
+        "رسالته. سعر الرسالة للمستخدم = التكلفة + ربح (3× افتراضياً).\n"
+        "المستخدمون يشاهدون القسم في القائمة الرئيسية عند توفر قسم مفعّل.",
+        reply_markup=admin_ai_menu_kb(),
     )
     await callback.answer()
 
 
-async def _cancel_wizard(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ أُلغي إنشاء القسم.")
+@router.callback_query(F.data == "admin:ai_list")
+async def ai_list(callback: CallbackQuery, session):
+    sections = await AiSectionService.list_all(session)
+    await callback.message.edit_text(
+        "🧩 <b>أقسام الذكاء الاصطناعي</b>\n\n"
+        "🟢 مفعّل | 🔴 معطّل\n"
+        "اضغط القسم لتعديله أو الزر المجاور للتفعيل/التعطيل.",
+        reply_markup=admin_ai_list_kb(sections),
+    )
+    await callback.answer()
 
 
-@router.message(AdminAISectionStates.wizard_title, F.text)
-async def wiz_title(message: Message, state: FSMContext):
-    if message.text.strip() == "إلغاء":
-        await _cancel_wizard(message, state)
+@router.callback_query(_TOGGLE_RE)
+async def ai_toggle(callback: CallbackQuery, session):
+    section_id = int(callback.data.split(":")[2])
+    section = await AiSectionService.get(session, section_id)
+    if section is None:
+        await callback.answer("القسم غير موجود.", show_alert=True)
         return
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz["title"] = message.text.strip()[:64]
-    await state.update_data(wiz=wiz)
-    await state.set_state(AdminAISectionStates.wizard_emoji)
-    await message.answer(
-        "2/9 — أرسل <b>إيموجي القسم</b>:\n<i>مثال: 👨‍💻</i>"
-    )
-
-
-@router.message(AdminAISectionStates.wizard_emoji, F.text)
-async def wiz_emoji(message: Message, state: FSMContext):
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz["emoji"] = message.text.strip()[:8] or "🤖"
-    await state.update_data(wiz=wiz)
-    await state.set_state(AdminAISectionStates.wizard_description)
-    await message.answer(
-        "3/9 — اكتب <b>شرح القسم</b> (مهمته وماذا يفعل) — يظهر للمستخدم في شاشة القسم:\n"
-        "<i>مثال: اطلب أي كود أو أداة وستوصلك النتيجة كملف جاهز.</i>"
-    )
-
-
-@router.message(AdminAISectionStates.wizard_description, F.text)
-async def wiz_description(message: Message, state: FSMContext):
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz["description"] = message.text.strip()[:1500]
-    await state.update_data(wiz=wiz)
-    await state.set_state(AdminAISectionStates.wizard_mode)
-    await message.answer(
-        "4/9 — اختر <b>نوع القسم</b>:\n"
-        "• برمجة: الرد ينرسل للمستخدم <b>كملف</b>\n"
-        "• دردشة: الرد نصي حواري\n"
-        "• مخصص: نصي حواري (لأي فكرة مستقبلية)",
-        reply_markup=ai_admin_wizard_mode_kb(),
-    )
-
-
-@router.callback_query(AdminAISectionStates.wizard_mode, F.data.startswith("aiw:mode:"))
-async def wiz_mode(callback: CallbackQuery, state: FSMContext):
-    mode = callback.data.split(":")[2]
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz["mode"] = mode
-    await state.update_data(wiz=wiz)
-    await state.set_state(AdminAISectionStates.wizard_model)
+    await AiSectionService.toggle(session, section)
     await callback.message.edit_text(
-        "5/9 — أرسل <b>اسم الموديل في NanoGPT</b> لهذا القسم:\n"
-        "<i>أمثلة:</i>\n<code>openai/gpt-5.2</code>\n<code>anthropic/claude-sonnet-4.6</code>\n<code>z-ai/glm-4.6</code>\n\n"
-        "شوف الأسعار والأسماء من: nano-gpt.com/models",
+        "🧩 <b>أقسام الذكاء الاصطناعي</b>",
+        reply_markup=admin_ai_list_kb(await AiSectionService.list_all(session)),
     )
+    await callback.answer("تم التفعيل." if section.enabled else "تم التعطيل.")
+
+
+# ══════════════ إنشاء/تعديل قسم ══════════════
+
+
+@router.callback_query(F.data == "admin:ai_new")
+async def ai_new_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "➕ <b>إضافة قسم ذكاء اصطناعي</b>\n\n"
+        "1/8) أرسل معرّف القسم (إنجليزي بدون مسافات، مثال: <code>ai_coding</code>):"
+    )
+    await state.set_state(AdminAiSectionStates.waiting_key)
     await callback.answer()
 
 
-@router.message(AdminAISectionStates.wizard_model, F.text)
-async def wiz_model(message: Message, state: FSMContext):
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz["model"] = message.text.strip()[:128]
-    await state.update_data(wiz=wiz)
-    await state.set_state(AdminAISectionStates.wizard_system_prompt)
-    await message.answer(
-        "6/9 — أرسل <b>الـ System Prompt</b> لهذا القسم (شخصية الموديل وتعليماته).\n"
-        "أرسل <code>-</code> إذا أردت الافتراضي بدون تعليمات خاصة."
+@router.callback_query(_EDIT_RE)
+async def ai_edit_start(callback: CallbackQuery, session, state: FSMContext):
+    section_id = int(callback.data.split(":")[2])
+    section = await AiSectionService.get(session, section_id)
+    if section is None:
+        await callback.answer("القسم غير موجود.", show_alert=True)
+        return
+    await state.update_data(section_id=section_id)
+    await callback.message.edit_text(
+        f"✏️ <b>تعديل قسم: {section.name_ar}</b>\n\n"
+        f"المعرّف الحالي: <code>{section.key}</code>\n"
+        f"الموديل الحالي: <code>{section.model}</code>\n"
+        f"التكلفة: {section.cost_per_message_usd}$ · الربح ×{section.profit_multiplier}\n\n"
+        "1/8) أرسل المعرّف الجديد (أو أرسل <code>-</code> للإبقاء على الحالي):"
     )
-
-
-@router.message(AdminAISectionStates.wizard_system_prompt, F.text)
-async def wiz_system_prompt(message: Message, state: FSMContext):
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    text = message.text.strip()
-    wiz["system_prompt"] = None if text == "-" else text[:8000]
-    await state.update_data(wiz=wiz)
-    await state.set_state(AdminAISectionStates.wizard_pricing_mode)
-    await message.answer(
-        "7/9 — اختر <b>طريقة التسعير</b>:\n"
-        "• حسب الاستهلاك: يخصم (تكلفة المزود الفعلية × المضاعف) — الأدق.\n"
-        "• سعر ثابت: مبلغ محدد لكل رسالة.",
-        reply_markup=ai_admin_wizard_pricing_kb(),
-    )
-
-
-@router.callback_query(AdminAISectionStates.wizard_pricing_mode, F.data.startswith("aiw:pricing:"))
-async def wiz_pricing_mode(callback: CallbackQuery, state: FSMContext):
-    pricing = callback.data.split(":")[2]
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz["pricing_mode"] = pricing
-    await state.update_data(wiz=wiz)
-    if pricing == "fixed":
-        await state.set_state(AdminAISectionStates.wizard_fixed_price)
-        await callback.message.edit_text(
-            "أرسل <b>سعر الرسالة الثابت بالدولار</b>:\n<i>مثال: 0.02</i>"
-        )
-    else:
-        await state.set_state(AdminAISectionStates.wizard_est_cost)
-        await callback.message.edit_text(
-            "أرسل <b>التكلفة التقريبية للرسالة الواحدة عند المزود بالدولار</b>.\n"
-            "تُستخدم للخصم المسبق، وبعد كل رد تُحسب التكلفة الفعلية التي يرجعها "
-            "NanoGPT وتُسوّى تلقائياً (زيادة تُخصم، نقص يُرجع).\n<i>مثال: 0.003</i>"
-        )
+    await state.set_state(AdminAiSectionStates.waiting_key)
     await callback.answer()
 
 
-async def _wiz_read_decimal(message: Message, state: FSMContext, field: str, prompt: str, next_state, extra: dict | None = None):
-    raw = (message.text or "").strip().replace("$", "")
-    try:
-        value = Decimal(raw)
-        if value < 0 or not value.is_finite():
-            raise InvalidOperation
-    except (InvalidOperation, TypeError):
-        await message.answer("⚠️ أرسل رقماً صحيحاً موجباً. " + prompt)
-        return False
-    data = await state.get_data()
-    wiz = data.get("wiz", {})
-    wiz[field] = str(value)
-    if extra:
-        wiz.update(extra)
-    await state.update_data(wiz=wiz)
-    await state.set_state(next_state)
-    return True
-
-
-@router.message(AdminAISectionStates.wizard_fixed_price, F.text)
-async def wiz_fixed_price(message: Message, state: FSMContext):
-    ok = await _wiz_read_decimal(
-        message, state, "fixed_price", "مثال: 0.02",
-        AdminAISectionStates.wizard_multiplier,
-    )
-    if ok:
-        await message.answer(
-            "9/9 — أرسل <b>مضاعف الربح</b> (يُطبّق على التكلفة الفعلية للتسوية أيضاً).\n"
-            "3 = المستخدم يدفع 3 أضعاف تكلفة المزود. أرسل رقماً مثل <code>3</code>"
-        )
-
-
-@router.message(AdminAISectionStates.wizard_est_cost, F.text)
-async def wiz_est_cost(message: Message, state: FSMContext):
-    ok = await _wiz_read_decimal(
-        message, state, "est_cost_per_message", "مثال: 0.003",
-        AdminAISectionStates.wizard_multiplier,
-    )
-    if ok:
-        await message.answer(
-            "9/9 — أرسل <b>مضاعف الربح</b>.\n"
-            "الخصم = (تكلفة المزود) × المضاعف → مضاعف 3 يعني ربح 3 أضعاف. أرسل مثل <code>3</code>"
-        )
-
-
-@router.message(AdminAISectionStates.wizard_multiplier, F.text)
-async def wiz_multiplier(message: Message, state: FSMContext, session, db_user: User):
+@router.message(AdminAiSectionStates.waiting_key)
+async def ai_key_received(message: Message, state: FSMContext, session):
     raw = (message.text or "").strip()
-    try:
-        multiplier = Decimal(raw)
-        if multiplier < 1 or not multiplier.is_finite():
-            raise InvalidOperation
-    except (InvalidOperation, TypeError):
-        await message.answer("⚠️ أرسل رقماً ≥ 1. مثال: 3")
-        return
-
     data = await state.get_data()
-    wiz = data.get("wiz", {})
-    section = await AISectionService.create(
-        session,
-        title=wiz.get("title", "قسم جديد"),
-        model=wiz.get("model", "openai/gpt-4o-mini"),
-        mode=AISectionMode(wiz.get("mode", "chat")),
-        emoji=wiz.get("emoji", "🤖"),
-        description=wiz.get("description"),
-        system_prompt=wiz.get("system_prompt"),
-        pricing_mode=AIPricingMode(wiz.get("pricing_mode", "usage")),
-        est_cost_per_message=Decimal(wiz.get("est_cost_per_message", "0.003")),
-        fixed_price=Decimal(wiz.get("fixed_price", "0.01")),
-        profit_multiplier=multiplier,
-    )
-    await state.clear()
-    await AuditService.log(
-        admin_id=db_user.id,
-        action=AuditAction.CREATE,
-        entity_type="ai_section",
-        entity_name=section.title,
-        new_value={"model": section.model, "mode": section.mode.value, "pricing": section.pricing_mode.value, "multiplier": str(multiplier)},
-        description="إنشاء قسم ذكاء اصطناعي",
-        session=session,
-    )
-    await message.answer(
-        f"✅ تم إنشاء القسم <b>{section.emoji} {section.title}</b>\n"
-        f"🧠 الموديل: <code>{section.model}</code>\n"
-        f"💸 {AISectionService.price_label(section)}\n\n"
-        "القسم مفعّل ويظهر للمستخدمين فوراً (بعد ضبط مفتاح NanoGPT إن لم يكن مضبوطاً).",
-        reply_markup=ai_admin_section_kb(section),
-    )
+    section_id = data.get("section_id")
+    keep_key = bool(section_id) and raw == "-"
 
-
-# ══════════════ تفاصيل قسم وتعديله ══════════════
-
-
-EDITABLE_FIELDS = {
-    "title": "العنوان",
-    "emoji": "الإيموجي",
-    "description": "الشرح",
-    "model": "الموديل",
-    "system_prompt": "System Prompt (أرسل - للإلغاء)",
-    "est_cost_per_message": "التكلفة التقريبية للرسالة ($)",
-    "fixed_price": "السعر الثابت ($)",
-    "profit_multiplier": "مضاعف الربح (≥1)",
-}
-
-
-@router.callback_query(F.data.startswith("admin:ai:sec:"))
-async def ai_admin_section_view(callback: CallbackQuery, session):
-    section_id = int(callback.data.split(":")[3])
-    section = await AISectionService.get(session, section_id)
-    if section is None:
-        await callback.answer("القسم غير موجود.", show_alert=True)
-        return
-    status = "🟢 مفعّل" if section.is_enabled else "🔴 موقوف"
-    prompt_line = "موجود" if section.system_prompt else "بدون"
-    await callback.message.edit_text(
-        f"{section.emoji} <b>{section.title}</b> — {status}\n\n"
-        f"📝 الشرح: {html_module.escape((section.description or '—')[:300])}\n"
-        f"🧠 الموديل: <code>{section.model}</code>\n"
-        f"🧩 النوع: {MODE_LABELS.get(section.mode, section.mode.value)}\n"
-        f"📜 System Prompt: {prompt_line}\n"
-        f"💳 التسعير: {PRICING_LABELS.get(section.pricing_mode, '')}\n"
-        f"• تكلفة تقريبية/رسالة: <b>${_fmt_decimal(section.est_cost_per_message)}</b>\n"
-        f"• سعر ثابت: <b>${_fmt_decimal(section.fixed_price)}</b>\n"
-        f"• مضاعف الربح: <b>×{_fmt_decimal(section.profit_multiplier)}</b>\n"
-        f"🧾 {AISectionService.price_label(section)}",
-        reply_markup=ai_admin_section_kb(section),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("admin:ai:toggle:"))
-async def ai_admin_section_toggle(callback: CallbackQuery, session, db_user: User):
-    section_id = int(callback.data.split(":")[3])
-    section = await AISectionService.toggle(session, section_id)
-    if section is None:
-        await callback.answer("القسم غير موجود.", show_alert=True)
-        return
-    await AuditService.log(
-        admin_id=db_user.id,
-        action=AuditAction.UPDATE,
-        entity_type="ai_section",
-        entity_name=section.title,
-        new_value={"is_enabled": section.is_enabled},
-        description="تفعيل/تعطيل قسم ذكاء اصطناعي",
-        session=session,
-    )
-    await callback.answer("تم الحفظ ✅")
-    await ai_admin_section_view(callback, session)
-
-
-@router.callback_query(F.data.startswith("admin:ai:del:"))
-async def ai_admin_section_delete(callback: CallbackQuery, session, db_user: User):
-    section_id = int(callback.data.split(":")[3])
-    deleted = await AISectionService.delete(session, section_id)
-    if not deleted:
-        await callback.answer("القسم غير موجود.", show_alert=True)
-        return
-    await AuditService.log(
-        admin_id=db_user.id,
-        action=AuditAction.DELETE,
-        entity_type="ai_section",
-        entity_name=str(section_id),
-        description="حذف قسم ذكاء اصطناعي",
-        session=session,
-    )
-    await callback.answer("🗑 تم حذف القسم.", show_alert=True)
-    await _render_home(callback, session)
-
-
-@router.callback_query(F.data.startswith("admin:ai:edit:"))
-async def ai_admin_section_edit(callback: CallbackQuery, state: FSMContext):
-    section_id = int(callback.data.split(":")[3])
-    await state.set_state(AdminAISectionStates.edit_field_value)
-    await state.update_data(edit_section_id=section_id)
-    buttons = "\n".join(f"• <code>{key}</code> — {label}" for key, label in EDITABLE_FIELDS.items())
-    await callback.message.edit_text(
-        f"✏️ <b>تعديل القسم</b>\n\nأرسل: <code>الحقل: القيمة الجديدة</code>\n\nالحقول:\n{buttons}\n\n"
-        "مثال:\n<code>model: openai/gpt-5.2</code>\n<code>profit_multiplier: 3.5</code>\n\n"
-        "أرسل <code>تم</code> للانتهاء.",
-    )
-    await callback.answer()
-
-
-@router.message(AdminAISectionStates.edit_field_value, F.text)
-async def ai_admin_section_edit_value(message: Message, state: FSMContext, session, db_user: User):
-    raw = (message.text or "").strip()
-    if raw.lower() in ("تم", "done"):
-        await state.clear()
-        await message.answer("✅ انتهى التعديل.")
-        return
-    if ":" not in raw:
-        await message.answer("⚠️ الصيغة: <code>الحقل: القيمة</code> — أرسل <code>تم</code> للانتهاء.")
-        return
-    field, _, value = raw.partition(":")
-    field = field.strip()
-    value = value.strip()
-    data = await state.get_data()
-    section_id = data.get("edit_section_id")
-    if section_id is None:
-        await state.clear()
-        await message.answer("❌ انتهت جلسة التعديل، افتح القسم من جديد.")
-        return
-    section = await AISectionService.get(session, int(section_id))
-    if section is None:
-        await state.clear()
-        await message.answer("❌ القسم غير موجود.")
-        return
-
-    if field not in EDITABLE_FIELDS:
-        await message.answer(f"⚠️ حقل غير معروف: {field}")
-        return
-    if field in ("est_cost_per_message", "fixed_price", "profit_multiplier"):
-        try:
-            number = Decimal(value)
-            if number < 0 or not number.is_finite():
-                raise InvalidOperation
-            if field == "profit_multiplier" and number < 1:
-                raise InvalidOperation
-        except (InvalidOperation, TypeError):
-            await message.answer("⚠️ أرسل رقماً صحيحاً.")
+    key = raw
+    if not keep_key:
+        if not re.fullmatch(r"[a-z0-9_]{3,40}", raw):
+            await message.answer(
+                "⚠️ المعرّف: 3-40 رمزاً، أحرف إنجليزية صغيرة وأرقام و _ فقط "
+                "(مثال: ai_chat)."
+            )
             return
-        setattr(section, field, number)
-    elif field == "system_prompt":
-        setattr(section, field, None if value == "-" else value[:8000])
+        if not section_id:
+            existing = await AiSectionService.get_by_key(session, raw)
+            if existing:
+                await message.answer(f"⚠️ يوجد قسم بهذا المعرّف مسبقاً: {raw}")
+                return
     else:
-        setattr(section, field, value[:1500])
+        section = await AiSectionService.get(session, int(section_id))
+        key = section.key if section else raw
 
-    await session.commit()
-    await AuditService.log(
-        admin_id=db_user.id,
-        action=AuditAction.UPDATE,
-        entity_type="ai_section",
-        entity_name=section.title,
-        new_value={field: value[:200]},
-        description="تعديل حقل في قسم ذكاء اصطناعي",
-        session=session,
-    )
-    await message.answer(f"✅ تم تحديث «{EDITABLE_FIELDS[field]}».")
+    await state.update_data(key=key)
+    await message.answer("2/8) أرسل <b>الاسم بالعربية</b> (هذا ما يظهر للمستخدم):")
+    await state.set_state(AdminAiSectionStates.waiting_name_ar)
 
 
-# ══════════════ مفتاح NanoGPT ══════════════
-
-
-@router.callback_query(F.data == "admin:ai:key")
-async def ai_admin_key_start(callback: CallbackQuery, state: FSMContext):
-    current = await SettingsService.get("nanogpt_api_key", "")
-    masked = f"{current[:6]}…{current[-4:]}" if len(current or "") > 12 else ("مضبوط" if current else "غير مضبوط")
-    await state.set_state(AdminAISectionStates.waiting_api_key)
-    await callback.message.edit_text(
-        f"🔑 <b>مفتاح NanoGPT الحالي:</b> {masked}\n\n"
-        "أرسل المفتاح الجديد (من nano-gpt.com/api).\n"
-        "أرسل <code>-</code> لحذف المفتاح، أو <code>إلغاء</code> للتراجع.",
-    )
-    await callback.answer()
-
-
-@router.message(AdminAISectionStates.waiting_api_key, F.text)
-async def ai_admin_key_save(message: Message, state: FSMContext, session, db_user: User):
+@router.message(AdminAiSectionStates.waiting_name_ar)
+async def ai_name_ar_received(message: Message, state: FSMContext):
     raw = (message.text or "").strip()
-    if raw == "إلغاء":
-        await state.clear()
-        await message.answer("❌ تم التراجع.")
+    if len(raw) < 2 or len(raw) > 120:
+        await message.answer("⚠️ الاسم: بين 2 و 120 حرفاً.")
         return
-    await state.clear()
+    await state.update_data(name_ar=raw)
+    await message.answer(
+        "3/8) أرسل <b>الاسم بالإنجليزية</b> (اختياري — أرسل <code>-</code> للتخطي):"
+    )
+    await state.set_state(AdminAiSectionStates.waiting_name_en)
+
+
+@router.message(AdminAiSectionStates.waiting_name_en)
+async def ai_name_en_received(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
     if raw == "-":
-        await SettingsService.set(session, "nanogpt_api_key", "")
-        await message.answer("🗑 تم حذف المفتاح.")
-        return
-    await SettingsService.set(session, "nanogpt_api_key", raw)
-    await AuditService.log(
-        admin_id=db_user.id,
-        action=AuditAction.UPDATE,
-        entity_type="setting",
-        entity_name="nanogpt_api_key",
-        description="تحديث مفتاح NanoGPT",
-        session=session,
+        raw = ""
+    await state.update_data(name_en=raw or None)
+    await message.answer(
+        "4/8) اختر <b>نوع القسم</b>:\n"
+        "💻 برمجة = يولد كوداً/أداة كاملة ويرسلها <b>كملف</b> "
+        "(تليجرام فيه حد رسائل فالكود الطويل يتلخبط).\n"
+        "💬 دردشة = محادثة عادية بدون قيود.",
+        reply_markup=admin_ai_kind_kb(None),
     )
-    status = await message.answer("⏳ جاري اختبار المفتاح...")
-    ok, report = await NanoGPTService.test_key()
-    await status.edit_text(("✅ " if ok else "❌ ") + report)
+    await state.set_state(AdminAiSectionStates.waiting_kind)
 
 
-# ══════════════ استعراض جلسات المستخدمين ══════════════
+@router.message(AdminAiSectionStates.waiting_kind)
+async def ai_kind_text_reject(message: Message):
+    """نوع القسم يُختار بالزر أعلاه فقط."""
+    await message.answer("⚠️ اختر النوع من الأزرار أعلاه (💻 برمجة أو 💬 دردشة).")
 
 
-@router.callback_query(F.data == "admin:ai:users")
-async def ai_admin_users_start(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminAISectionStates.waiting_user_search)
+@router.callback_query(_KIND_RE)
+async def ai_kind_selected(callback: CallbackQuery, state: FSMContext):
+    kind = callback.data.split(":")[-1]
+    if kind not in ("coding", "chat"):
+        await callback.answer("؟", show_alert=True)
+        return
+    await state.update_data(kind=kind)
     await callback.message.edit_text(
-        "🧾 <b>جلسات المستخدمين</b>\n\nأرسل <b>آيدي تيليجرام</b> للمستخدم لعرض جلساته ورسائله.\nأرسل <code>إلغاء</code> للتراجع."
+        "5/8) أرسل <b>اسم الموديل</b> عند NanoGPT لهذا القسم "
+        "(مثال: <code>openai/gpt-5.6-sol</code> — اختره من كتالوج nano-gpt.com):"
+    )
+    await state.set_state(AdminAiSectionStates.waiting_model)
+    await callback.answer()
+
+
+@router.message(AdminAiSectionStates.waiting_model)
+async def ai_model_received(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    if len(raw) < 2 or len(raw) > 120:
+        await message.answer("⚠️ أرسل اسم موديل صحيح (2-120 رمزاً).")
+        return
+    await state.update_data(model=raw)
+    await message.answer(
+        "6/8) أرسل <b>تكلفة الرسالة التقريبية عند المزود</b> بالدولار "
+        "(مثال: <code>0.01</code> — تظهر للأدمن في الإحصاءات فقط):"
+    )
+    await state.set_state(AdminAiSectionStates.waiting_cost)
+
+
+@router.message(AdminAiSectionStates.waiting_cost)
+async def ai_cost_received(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    try:
+        cost = Decimal(raw)
+        if cost <= 0 or cost > Decimal("10"):
+            raise InvalidOperation
+    except (InvalidOperation, ValueError):
+        await message.answer("⚠️ أرسل رقماً موجباً بالدولار (مثال: 0.01).")
+        return
+    await state.update_data(cost=cost)
+    await message.answer(
+        "7/8) أرسل <b>مضاعف الربح</b> (الافتراضي <code>3</code> = ربح 3 أضعاف التكلفة).\n"
+        "سعر الرسالة للمستخدم = التكلفة × (1 + المضاعف). "
+        "مثال: تكلفة 0.01$ × 4 = 0.04$: "
+    )
+    await state.set_state(AdminAiSectionStates.waiting_multiplier)
+
+
+@router.message(AdminAiSectionStates.waiting_multiplier)
+async def ai_multiplier_received(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    if raw in ("", "-"):
+        raw = "3"
+    try:
+        mult = float(raw)
+        if mult < 0 or mult > 100:
+            raise ValueError
+    except ValueError:
+        await message.answer("⚠️ أرسل رقماً بين 0 و 100 (مثال: 3).")
+        return
+    await state.update_data(multiplier=mult)
+    await message.answer(
+        "8/8 (أ) أرسل <b>الوصف/الشرح بالعربية</b>:\n"
+        "اشرح يدوياً ماذا يسوي هذا القسم وما مهمته (يظهر للمستخدم داخله).\n"
+        "أرسل <code>-</code> إذا ما بدك وصف:"
+    )
+    await state.set_state(AdminAiSectionStates.waiting_desc_ar)
+
+
+@router.message(AdminAiSectionStates.waiting_desc_ar)
+async def ai_desc_ar_received(message: Message, state: FSMContext):
+    raw = (message.text or "").strip()
+    if raw == "-":
+        raw = ""
+    await state.update_data(desc_ar=raw or None)
+    await message.answer(
+        "8/8 (ب) أرسل <b>الوصف بالإنجليزية</b> (اختياري — أرسل <code>-</code> للتخطي):"
+    )
+    await state.set_state(AdminAiSectionStates.waiting_desc_en)
+
+
+@router.message(AdminAiSectionStates.waiting_desc_en)
+async def ai_desc_en_received(message: Message, state: FSMContext, session):
+    raw = (message.text or "").strip()
+    if raw == "-":
+        raw = ""
+    data = await state.get_data()
+    await state.clear()
+
+    try:
+        if data.get("section_id"):
+            section = await AiSectionService.get(session, int(data["section_id"]))
+            if section is None:
+                await message.answer("❌ القسم لم يعد موجوداً.")
+                return
+            section = await AiSectionService.update(
+                session,
+                section,
+                key=data.get("key") or section.key,
+                name_ar=data["name_ar"],
+                name_en=data.get("name_en") or None,
+                kind=data.get("kind") or section.kind,
+                model=data["model"],
+                cost_per_message_usd=Decimal(str(data["cost"])),
+                profit_multiplier=data["multiplier"],
+                description_ar=data.get("desc_ar"),
+                description_en=raw or None,
+            )
+            verb = "✓ عُدّل"
+        else:
+            section = await AiSectionService.create(
+                session,
+                key=data["key"],
+                name_ar=data["name_ar"],
+                name_en=data.get("name_en") or None,
+                kind=data.get("kind") or "chat",
+                model=data["model"],
+                cost_per_message_usd=Decimal(str(data["cost"])),
+                profit_multiplier=data["multiplier"],
+                description_ar=data.get("desc_ar"),
+                description_en=raw or None,
+                enabled=False,
+            )
+            verb = "✓ أُنشئ"
+    except (AiSectionError, InvalidOperation, ValueError, KeyError) as exc:
+        await message.answer(f"❌ {exc}")
+        return
+
+    price = AiSectionService.sell_price(section)
+    await message.answer(
+        f"{verb} القسم <b>{section.name_ar}</b>\n\n"
+        f"• المعرّف: <code>{section.key}</code>\n"
+        f"• النوع: {'💻 برمجة (ملفات)' if section.kind == 'coding' else '💬 دردشة'}\n"
+        f"• الموديل: <code>{section.model}</code>\n"
+        f"• تكلفة الرسالة عند المزود: {section.cost_per_message_usd}$\n"
+        f"• ربح ×{section.profit_multiplier} → سعر المستخدم: <b>{price}$</b>\n\n"
+        "القسم الآن <b>معطّل</b>. فعّله من قائمة الأقسام بعد التأكد من المفتاح "
+        "والموديل (🔌 المزود ← 🧪 اختبار الاتصال).",
+        reply_markup=admin_ai_section_kb(section.id),
+    )
+
+
+# ══════════════ المزود (NanoGPT) ══════════════
+
+
+def _mask_key(key: str) -> str:
+    if len(key) <= 8:
+        return "****"
+    return f"{'*' * 8}{key[-4:]}"
+
+
+@router.callback_query(F.data == "admin:ai_provider")
+async def ai_provider_screen(callback: CallbackQuery):
+    base_url, api_key = await get_provider_config()
+    state = "🟢 مضبوط" if api_key else "🔴 لا يوجد مفتاح (ضع NANOGPT_API_KEY أو أرسله هنا)"
+    await callback.message.edit_text(
+        "🔌 <b>مزود NanoGPT</b>\n\n"
+        f"عنوان الـ API:\n<code>{base_url}</code>\n\n"
+        f"المفتاح: <code>{_mask_key(api_key) if api_key else '—'}</code>\n"
+        f"الحالة: {state}\n\n"
+        "المفتاح هنا (لوحة الأدمن) يسري على كل الأقسام. الأولوية له على "
+        "قيمة ملف البيئة NANOGPT_API_KEY.",
+        reply_markup=admin_ai_provider_kb(bool(api_key)),
     )
     await callback.answer()
 
 
-@router.message(AdminAISectionStates.waiting_user_search, F.text)
-async def ai_admin_users_search(message: Message, state: FSMContext, session):
-    raw = (message.text or "").strip()
-    if raw == "إلغاء":
-        await state.clear()
-        await message.answer("❌ تم التراجع.")
-        return
-    if not raw.isdigit():
-        await message.answer("⚠️ أرسل آيدي رقمي مثل <code>123456789</code>.")
-        return
-    await state.clear()
-
-    from sqlalchemy import select
-
-    user = (
-        await session.execute(select(User).where(User.telegram_id == int(raw)))
-    ).scalar_one_or_none()
-    if user is None:
-        await message.answer("❌ لا يوجد مستخدم بهذا الآيدي.")
-        return
-
-    from sqlalchemy import desc as _desc
-    from database.models import AISession as AISessionModel, AISection as AISectionModel
-
-    sessions_result = await session.execute(
-        select(AISessionModel, AISectionModel)
-        .join(AISectionModel, AISectionModel.id == AISessionModel.section_id)
-        .where(AISessionModel.user_id == user.id)
-        .order_by(_desc(AISessionModel.updated_at), _desc(AISessionModel.id))
-        .limit(10)
+@router.callback_query(F.data == "admin:ai_prov_url")
+async def ai_prov_url_start(callback: CallbackQuery, state: FSMContext):
+    base_url, _key = await get_provider_config()
+    await callback.message.edit_text(
+        "✏️ أرسل عنوان الـ API الجديد (ينتهي بـ /v1 عادةً):\n"
+        f"الحالي: <code>{base_url}</code>\n"
+        "أرسل <code>-</code> للإبقاء على الحالي:"
     )
-    rows = sessions_result.all()
-    if not rows:
-        await message.answer(f"📭 المستخدم <b>{user.full_name or raw}</b> ليس لديه جلسات ذكاء اصطناعي.")
-        return
-
-    lines = [f"🧾 <b>آخر جلسات</b> {html_module.escape(user.full_name or raw)}:\n"]
-    for ai_session, section in rows:
-        lines.append(
-            f"• [{ai_session.id}] {section.emoji} {html_module.escape(section.title)} — "
-            f"«{html_module.escape((ai_session.title or 'جلسة')[:36])}» "
-            f"({ai_session.messages_count} رسالة | دُفع ${ai_session.charged_total})"
-        )
-    lines.append("\nلعرض رسائل جلسة أرسل: <code>جلسة: الآيدي</code>")
-    await state.set_state(AdminAISectionStates.waiting_user_search)
-    await state.update_data(viewing_user=user.id)
-    await message.answer("\n".join(lines))
+    await state.set_state(AdminAiProviderStates.waiting_base_url)
+    await callback.answer()
 
 
-# (يُستدعى مباشرة من ai_admin_users_search عند "جلسة: <id>")
-async def ai_admin_session_messages(message: Message, state: FSMContext, session):
+@router.message(AdminAiProviderStates.waiting_base_url)
+async def ai_prov_url_received(message: Message, state: FSMContext, session):
     raw = (message.text or "").strip()
-    session_id = int(raw.split(":")[1])
-    ai_session = await session.get(AISessionModel := __import__(
-        "database.models", fromlist=["AISession"]
-    ).AISession, session_id)
-    if ai_session is None:
-        await message.answer("❌ جلسة غير موجودة.")
+    if raw != "-":
+        if not re.match(r"^https?://[\w.-]+(/[\w./-]*)?$", raw):
+            await message.answer("⚠️ أرسل رابطاً صحيحاً (http/https).")
+            return
+        await SettingsService.set(session, "ai_provider_base_url", raw.rstrip("/"))
+    await state.clear()
+    await message.answer("✓ تم.", reply_markup=admin_ai_provider_kb(True))
+
+
+@router.callback_query(F.data == "admin:ai_prov_key")
+async def ai_prov_key_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "🔑 أرسل مفتاح NanoGPT الجديد:\n"
+        "من لوحة nano-gpt.com ← API Keys. أرسل <code>-</code> للإبقاء على الحالي:"
+    )
+    await state.set_state(AdminAiProviderStates.waiting_api_key)
+    await callback.answer()
+
+
+@router.message(AdminAiProviderStates.waiting_api_key)
+async def ai_prov_key_received(message: Message, state: FSMContext, session):
+    raw = (message.text or "").strip()
+    if raw != "-":
+        if len(raw) < 8:
+            await message.answer("⚠️ المفتاح يبدو قصيراً — تأكد منه وأرسله مرة أخرى.")
+            return
+        await SettingsService.set(session, "ai_provider_api_key", raw)
+    await state.clear()
+    await message.answer("✓ تم حفظ المفتاح.", reply_markup=admin_ai_provider_kb(True))
+
+
+@router.callback_query(F.data == "admin:ai_prov_test")
+async def ai_prov_test(callback: CallbackQuery, session):
+    if not await configured():
+        await callback.answer("لا يوجد مفتاح بعد.", show_alert=True)
         return
-    messages = await AISessionService.get_messages(session, ai_session)
-    lines = [
-        f"📄 جلسة #{ai_session.id} — {ai_session.messages_count} رسالة | "
-        f"تكلفة المزود ${ai_session.provider_cost} | دُفع ${ai_session.charged_total}\n"
-    ]
-    for m in messages[-14:]:
-        icon = "🧑" if m.role.value == "user" else "🤖"
-        lines.append(f"{icon} {(m.content or '')[:280]}".replace("\n", " "))
-        lines.append("")
-    text = "\n".join(lines) or "لا رسائل."
-    for start in range(0, len(text), 3800):
-        await message.answer(html_module.escape(text[start:start + 3800]))
+    sections = await AiSectionService.list_all(session)
+    enabled = [s for s in sections if s.enabled]
+    model = (enabled or sections or [None])[0].model if (enabled or sections) else None
+    if not model:
+        await callback.answer("أنشئ قسماً أولاً حتى يختبر الاتصال بموديله.", show_alert=True)
+        return
+    await callback.answer("جارٍ الاختبار...")
+    started = time.monotonic()
+    try:
+        result = await chat_completion(
+            [{"role": "user", "content": "ping"}],
+            model,
+            max_tokens=8,
+            temperature=0,
+            timeout_seconds=60,
+        )
+    except AiProviderError as exc:
+        await callback.message.answer(f"❌ <b>فشل الاختبار</b>\n\n{exc}")
+        return
+    elapsed = time.monotonic() - started
+    await callback.message.answer(
+        f"✅ <b>نجح الاتصال</b>\n\n"
+        f"الموديل: <code>{model}</code>\n"
+        f"الزمن: {elapsed:.1f} ثانية\n"
+        f"الرد: <code>{result.text[:120]}</code>"
+    )
+
+
+# ══════════════ الإحصاءات ══════════════
+
+
+@router.callback_query(F.data == "admin:ai_stats")
+async def ai_stats(callback: CallbackQuery, session):
+    stats = await AiConversationService.stats(session)
+    lines = ["📊 <b>إحصاءات الذكاء الاصطناعي</b>\n"]
+    for row in stats["sections"]:
+        lines.append(
+            f"🧩 {row['name_ar']}\n"
+            f"   رسائل: {row['messages']} · تكلفة المزود: {row['cost']:g}$ · "
+            f"إيراد: {row['revenue']:g}$ · ربح: {row['profit']:g}$\n"
+        )
+    if not stats["sections"]:
+        lines.append("لا توجد رسائل بعد.")
+    lines.append(
+        f"\n<b>الإجمالي:</b> {stats['total_messages']} رسالة · "
+        f"تكلفة {stats['total_cost']:g}$ · إيراد {stats['total_revenue']:g}$ · "
+        f"ربح <b>{stats['total_profit']:g}$</b>"
+    )
+    await callback.message.edit_text("\n".join(lines))
+    await callback.answer()
