@@ -385,5 +385,7 @@
   "referral_join_notification": "👤 انضم مستخدم جديد عبر رابطك!\n\nالاسم: {name}\nيوزر: @{username}\nالآيدي: <code>{user_id}</code>",
   "smm_choose_inner_service": "اختر نوع الخدمة المطلوبة:",
   "menu_terms": "🔴 🔺 شروط الاستخدام",
-  "menu_completed_orders": "🟢 🛡 طلبات أنجزناها ({count}) طلب"
+  "menu_completed_orders": "🟢 🛡 طلبات أنجزناها ({count}) طلب",
+  "menu_ai": "🤖 الذكاء الاصطناعي",
+  "menu_whatsapp": "📱 واتساب"
 }

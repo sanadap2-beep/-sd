@@ -58,6 +58,10 @@ class TransactionType(str, enum.Enum):
     COUPON_BONUS = "coupon_bonus"
     LOYALTY_REDEEM = "loyalty_redeem"
     GIFT_REDEEM = "gift_redeem"
+    # ── أقسام الذكاء الاصطناعي وواتساب ──
+    AI_USAGE = "ai_usage"                # خصم رسالة ذكاء اصطناعي (برمجة/دردشة/أي قسم)
+    AI_USAGE_ADJUST = "ai_usage_adjust"  # تسوية فرق التكلفة الفعلية بعد رد المزود
+    WA_SUBSCRIPTION = "wa_subscription"  # اشتراك يومي بقسم واتساب
 
 
 class DepositStatus(str, enum.Enum):
@@ -2297,3 +2301,171 @@ class UnifiedRefund(Base):
     )
 
     user: Mapped["User"] = relationship()
+
+
+# ════════════════════════════════════════════════════════════════
+#  أقسام الذكاء الاصطناعي (ديناميكية) + قسم واتساب
+# ════════════════════════════════════════════════════════════════
+
+
+class AISectionMode(str, enum.Enum):
+    """نوع القسم: برمجة (الرد ينرسل كملف) أو دردشة حوارية أو أي نوع مستقبلي."""
+
+    CODE = "code"
+    CHAT = "chat"
+    CUSTOM = "custom"
+
+
+class AIPricingMode(str, enum.Enum):
+    """التسعير: حسب استهلاك المزود الفعلي × مضاعف، أو سعر ثابت للرسالة."""
+
+    USAGE = "usage"
+    FIXED = "fixed"
+
+
+class AIMessageRole(str, enum.Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class WALinkStatus(str, enum.Enum):
+    PENDING = "pending"          # أُرسل كود الاقتران ولم يتم الربط بعد
+    LINKED = "linked"            # الجلسة مربوطة وتعمل
+    EXPIRED = "expired"          # انتهت مدة صلاحية كود الاقتران
+    DISCONNECTED = "disconnected"  # فُصلت الجلسة من جهة الجسر/واتساب
+
+
+class AISection(Base):
+    """
+    قسم ذكاء اصطناعي يضيفه الأدمن من اللوحة.
+
+    كل قسم يرتبط بموديل واحد من NanoGPT، وشرحه وسعره التقريبي للرسالة
+    يكتبهما الأدمن يدوياً، ويمكن في أي وقت إضافة قسم ثالث/رابع بنفس الطريقة
+    بدون أي تعديل على الكود.
+    """
+
+    __tablename__ = "ai_sections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(64), nullable=False)
+    emoji: Mapped[str] = mapped_column(String(8), default="🤖")
+    # شرح يدوي من الأدمن: ماذا يفعل القسم وما مهمته (يظهر للمستخدم)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mode: Mapped[AISectionMode] = mapped_column(
+        SAEnum(AISectionMode), default=AISectionMode.CHAT
+    )
+    provider: Mapped[str] = mapped_column(String(32), default="nanogpt")
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── التسعير ──
+    pricing_mode: Mapped[AIPricingMode] = mapped_column(
+        SAEnum(AIPricingMode), default=AIPricingMode.USAGE
+    )
+    # التكلفة التقريبية للرسالة الواحدة عند المزود بالدولار (يدخلها الأدمن).
+    # تُستخدم للخصم المسبق وحساب كفاية الرصيد، وتُحسب التكلفة الفعلية
+    # بعد الرد وتُسوّى تلقائياً (فرق زيادة يُخصم / فرق نقص يُرجَع).
+    est_cost_per_message: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0.003"))
+    # السعر الثابت للرسالة عندما pricing_mode = fixed
+    fixed_price: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0.01"))
+    # مضاعف الربح: المستخدم يدفع (تكلفة المزود × المضاعف). 3 = ربح 3 أضعاف.
+    profit_multiplier: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("3"))
+
+    max_context_messages: Mapped[int] = mapped_column(Integer, default=12)
+    max_output_tokens: Mapped[int] = mapped_column(Integer, default=4000)
+    temperature: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0.7"))
+
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=100)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AISession(Base):
+    """جلسة محادثة/برمجة لمستخدم داخل قسم معيّن — تُحفظ للرجوع إليها."""
+
+    __tablename__ = "ai_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    section_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_sections.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(80), default="جلسة جديدة")
+    messages_count: Mapped[int] = mapped_column(Integer, default=0)
+    provider_cost: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    charged_total: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, onupdate=func.now(), nullable=True
+    )
+
+    section: Mapped["AISection"] = relationship()
+    messages: Mapped[list["AIMessage"]] = relationship(
+        back_populates="ai_session",
+        cascade="all, delete-orphan",
+        order_by="AIMessage.id",
+    )
+
+
+class AIMessage(Base):
+    """رسالة واحدة داخل جلسة (من المستخدم أو من الموديل) مع تكلفتها."""
+
+    __tablename__ = "ai_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("ai_sessions.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[AIMessageRole] = mapped_column(SAEnum(AIMessageRole))
+    content: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider_cost: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    charged_amount: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    ai_session: Mapped["AISession"] = relationship(back_populates="messages")
+
+
+class WhatsAppLink(Base):
+    """
+    ربط جلسة واتساب لمستخدم عبر الجسر (البوت الثاني).
+
+    يرسل المستخدم رقمه ← الجسر يعيد كود اقتران (pairing code) ← بعد
+    إدخاله في واتساب تصبح الجلسة LINKED وتظهر أزرار البوت الثاني هنا.
+    """
+
+    __tablename__ = "whatsapp_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    # معرّف الجلسة عند الجسر (يستخدم لكل الأوامر اللاحقة)
+    bridge_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pairing_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[WALinkStatus] = mapped_column(
+        SAEnum(WALinkStatus), default=WALinkStatus.PENDING, index=True
+    )
+    # آخر قائمة أزرار أعادها الجسر لهذا المستخدم (JSON) لعرضها داخل البوت
+    last_menu_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WhatsAppSubscription(Base):
+    """اشتراك قسم واتساب: دفعة واحدة = يوم (قابل للتكديس)."""
+
+    __tablename__ = "whatsapp_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), unique=True, index=True
+    )
+    paid_until: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    total_paid: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    last_charged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -385,5 +385,7 @@
   "referral_join_notification": "👤 A new user joined via your link!\n\nName: {name}\nUsername: @{username}\nID: <code>{user_id}</code>",
   "smm_choose_inner_service": "Choose the service type:",
   "menu_terms": "🔴 🔺 Terms of use",
-  "menu_completed_orders": "🟢 🛡 Completed orders ({count})"
+  "menu_completed_orders": "🟢 🛡 Completed orders ({count})",
+  "menu_ai": "🤖 AI Sections",
+  "menu_whatsapp": "📱 WhatsApp"
 }

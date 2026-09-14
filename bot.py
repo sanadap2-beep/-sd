@@ -60,6 +60,8 @@ from handlers import (
     ready_codes,
     fallback,
 )
+from handlers import ai_sections as user_ai_sections
+from handlers import whatsapp as user_whatsapp
 from handlers.deposit_methods import router as deposit_methods_router
 from handlers.games import router as games_router
 from handlers.error_reports import router as error_reports_router

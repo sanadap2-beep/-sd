@@ -541,3 +541,44 @@ class AdminSmmProductsStates(StatesGroup):
     """منتجات قسم الرشق: انتظار نسبة الربح للقسم/التطبيق المحدد."""
 
     waiting_margin = State()
+
+
+class AISectionStates(StatesGroup):
+    """أقسام الذكاء الاصطناعي: دردشة حوارية أو طلب برمجة."""
+
+    chatting = State()
+    coding = State()
+
+
+class WhatsAppStates(StatesGroup):
+    """قسم واتساب: انتظار رقم الجهاز للربط."""
+
+    waiting_phone = State()
+
+
+class AdminAISectionStates(StatesGroup):
+    """لوحة الأدمن لأقسام الذكاء الاصطناعي."""
+
+    wizard_title = State()
+    wizard_emoji = State()
+    wizard_description = State()
+    wizard_mode = State()
+    wizard_model = State()
+    wizard_system_prompt = State()
+    wizard_pricing_mode = State()
+    wizard_fixed_price = State()
+    wizard_est_cost = State()
+    wizard_multiplier = State()
+    edit_field_value = State()
+    waiting_api_key = State()
+    waiting_user_search = State()
+
+
+class AdminWhatsAppStates(StatesGroup):
+    """لوحة الأدمن لإعدادات جسر واتساب."""
+
+    waiting_base_url = State()
+    waiting_api_key = State()
+    waiting_daily_price = State()
+    waiting_description = State()
+    waiting_bot_username = State()

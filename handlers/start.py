@@ -39,6 +39,12 @@ async def _build_menu(session, db_user):
         await FeatureService.config("agent_program", "default_percent", 10)
     )
     completed_orders = await _completed_orders_count(session)
+    # ── القسمان الرئيسيان الجديدان ──
+    from services.ai_sections_service import AISectionService
+    from services.whatsapp_bridge_service import WASettings
+
+    show_ai = bool(await AISectionService.available_for_users(session))
+    show_whatsapp = await WASettings.enabled()
     return build_main_menu(
         number_services=[],
         categories=[],
@@ -48,6 +54,8 @@ async def _build_menu(session, db_user):
         show_agent=show_agent,
         agent_percent=agent_percent,
         completed_orders_count=completed_orders,
+        show_ai=show_ai,
+        show_whatsapp=show_whatsapp,
     )
 
 

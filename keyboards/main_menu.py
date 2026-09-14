@@ -26,6 +26,8 @@ def build_main_menu(
     show_agent: bool = False,
     agent_percent: str = "10",
     completed_orders_count: int | None = None,
+    show_ai: bool = False,
+    show_whatsapp: bool = False,
 ) -> InlineKeyboardMarkup:
     """Build the compact top-level menu.
 

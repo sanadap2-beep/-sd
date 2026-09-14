@@ -9,6 +9,7 @@
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import inspect, select, text
 
@@ -343,6 +344,51 @@ async def init_db() -> None:
             existing = await session.get(Setting, key)
             if existing is None:
                 session.add(Setting(key=key, value=value))
+
+        # ── زرع قسمَي الذكاء الاصطناعي الافتراضيين (مرة واحدة فقط) ──
+        if await session.get(Setting, "ai_sections_seeded") is None:
+            from database.models import AISection, AISectionMode, AIPricingMode
+
+            session.add_all([
+                AISection(
+                    title="برمجة بدون قيود",
+                    emoji="👨‍💻",
+                    description=(
+                        "اطلب أي كود أو سكربت أو أداة أو ملف كامل بأي لغة برمجة، "
+                        "والنتيجة توصلك ملفاً جاهزاً للتحميل."
+                    ),
+                    mode=AISectionMode.CODE,
+                    model="z-ai/glm-4.6",
+                    system_prompt=(
+                        "أنت مهندس برمجيات خبير. عند أي طلب اكتب الكود كاملاً وجاهزاً "
+                        "للتشغيل داخل كتلة كود واحدة مع شرح مختصر قبله. اكتب الملف "
+                        "كاملاً بدون اختصارات أو (...) وبدون مقدمات زائدة."
+                    ),
+                    pricing_mode=AIPricingMode.USAGE,
+                    est_cost_per_message=Decimal("0.003"),
+                    fixed_price=Decimal("0.02"),
+                    profit_multiplier=Decimal("3"),
+                    sort_order=10,
+                ),
+                AISection(
+                    title="تحدث بدون قيود",
+                    emoji="💬",
+                    description=(
+                        "دردشة حرة مع ذكاء اصطناعي — اسأل عن أي شيء، تحدث بأي لغة، "
+                        "والموديل يتذكر سياق محادثتك الحالية."
+                    ),
+                    mode=AISectionMode.CHAT,
+                    model="z-ai/glm-4.6",
+                    system_prompt=None,
+                    pricing_mode=AIPricingMode.USAGE,
+                    est_cost_per_message=Decimal("0.001"),
+                    fixed_price=Decimal("0.01"),
+                    profit_multiplier=Decimal("3"),
+                    sort_order=20,
+                ),
+            ])
+            session.add(Setting(key="ai_sections_seeded", value="true"))
+            await session.commit()
 
         # ── تسجيل الأدمن ──
         for admin_tg_id in settings.admin_ids_list:
