@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     SMS_ACTIVATE_API_KEY: str = ""
     SMSHUB_API_KEY: str = ""
 
+    # ── NanoGPT (مزود أقسام الذكاء الاصطناعي — OpenAI-compatible) ──
+    NANOGPT_API_KEY: str = ""
+    NANOGPT_BASE_URL: str = "https://nano-gpt.com/api/v1"
+
+    # ── بوت واتساب الجسر (قسم واتساب) ──
+    WA_BRIDGE_URL: str = ""
+    WA_BRIDGE_SECRET: str = ""
+
     # ── Sam API (شام كاش تلقائي) ──
     SAM_API_KEY: str = ""
     SAM_API_WALLET_ADDRESS: str = ""

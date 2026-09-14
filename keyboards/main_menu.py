@@ -26,6 +26,8 @@ def build_main_menu(
     show_agent: bool = False,
     agent_percent: str = "10",
     completed_orders_count: int | None = None,
+    show_ai: bool = False,
+    show_whatsapp: bool = False,
 ) -> InlineKeyboardMarkup:
     """Build the compact top-level menu.
 
@@ -54,6 +56,10 @@ def build_main_menu(
     b.button(text=t("menu_transfer"), callback_data="menu:transfer", style="primary")
     b.button(text=t("menu_referral"), callback_data="menu:referral", style="primary")
     b.button(text=t("menu_extras"), callback_data="extras:home", style="success")
+    if show_ai:
+        b.button(text=t("menu_ai"), callback_data="ai:home", style="success")
+    if show_whatsapp:
+        b.button(text=t("menu_whatsapp"), callback_data="wa:home", style="success")
     b.button(text=t("menu_terms"), callback_data="info:terms", style="danger")
     b.button(text=t("menu_support"), callback_data="menu:support")
     if show_agent:
