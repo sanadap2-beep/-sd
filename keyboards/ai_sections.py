@@ -53,7 +53,7 @@ def ai_prompt_kb(section_id: int, language: str = "ar") -> InlineKeyboardMarkup:
     b.button(text=t("ai_send_more"), callback_data=f"ai:stay:{section_id}", style="primary")
     b.button(text=t("ai_new_session"), callback_data=f"ai:new:{section_id}")
     b.button(text=t("ai_my_sessions"), callback_data=f"ai:history:{section_id}")
-    b.button(text=t("ai_cancel"), callback_data="ai:cancel")
+    b.button(text=t("ai_cancel"), callback_data="ai:cancel", style="danger")
     b.adjust(2)
     return b.as_markup()
 
@@ -89,8 +89,8 @@ def ai_error_kb(section_id: int, language: str = "ar") -> InlineKeyboardMarkup:
     t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()
     b.button(text=t("ai_retry"), callback_data=f"ai:stay:{section_id}", style="primary")
-    b.button(text=t("ai_topup"), callback_data="menu:deposit")
-    b.button(text=t("ai_cancel"), callback_data="ai:cancel")
+    b.button(text=t("ai_topup"), callback_data="menu:deposit", style="primary")
+    b.button(text=t("ai_cancel"), callback_data="ai:cancel", style="danger")
     b.adjust(1)
     return b.as_markup()
 
@@ -103,7 +103,7 @@ def admin_ai_menu_kb() -> InlineKeyboardMarkup:
     b.button(text="🧩 الأقسام", callback_data="admin:ai_list", style="primary")
     b.button(text="➕ إضافة قسم", callback_data="admin:ai_new", style="success")
     b.button(text="🔌 مزود NanoGPT", callback_data="admin:ai_provider")
-    b.button(text="📊 الإحصاءات", callback_data="admin:ai_stats")
+    b.button(text="📊 الإحصاءات", callback_data="admin:ai_stats", style="primary")
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     b.adjust(2, 2, 1)
     return b.as_markup()

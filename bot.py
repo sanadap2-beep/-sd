@@ -408,6 +408,22 @@ async def bid_cleanup_cycle():
         await ProviderBiddingService.cleanup_expired(session)
 
 
+async def wa_bridge_health_cycle(bot):
+    """صحة جسر واتساب: تنبيه الأدمن عند انقطاع البوت الثاني وعند عودته.
+
+    بدون هذا الفحص يبقى عطب الجسر صامتاً: المستخدمون يرون رسالة خطأ فقط،
+    ولا يعرف الأدمن أن القسم كله واقف إلا من الشكاوى.
+    """
+    from services.whatsapp_section_service import WhatsAppSectionService
+
+    if not await FeatureService.enabled("whatsapp_section"):
+        return
+    try:
+        await WhatsAppSectionService.bridge_health(bot=bot)
+    except Exception:  # noqa: BLE001 — المراقبة لا تُسقط البوت
+        logger.exception("فشل فحص جسر واتساب")
+
+
 async def wa_renewal_cycle():
     """قسم واتساب: تجديد تلقائي للباقات قرب انتهائها + تنبيه الانتهاء."""
     from database.engine import async_session_maker
@@ -593,6 +609,14 @@ async def start_scheduler() -> AsyncIOScheduler:
         wa_renewal_cycle,
         "interval",
         hours=1,
+    )
+
+    # قسم واتساب: صحة جسر البوت الثاني — إنذار الأدمن عند انقطاعه (كل 10 دقائق).
+    scheduler.add_job(
+        wa_bridge_health_cycle,
+        "interval",
+        minutes=10,
+        args=[bot],
     )
 
     # التوفر المتقطع: كل دورة (افتراضياً دقيقة) تُحذف اللوحة وتُنشأ بأحدث
