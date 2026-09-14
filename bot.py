@@ -58,6 +58,8 @@ from handlers import (
     store as user_store,
     inline_search,
     ready_codes,
+    ai_sections as user_ai_sections,
+    whatsapp as user_whatsapp,
     fallback,
 )
 from handlers.deposit_methods import router as deposit_methods_router
@@ -110,6 +112,8 @@ from handlers.admin import (
     sponsored_ads as admin_sponsored_ads,
     special_offers as admin_special_offers,
     pulled_services as admin_pulled_services,
+    ai_sections as admin_ai_sections,
+    whatsapp as admin_whatsapp,
     ledger as admin_ledger,
     partner_catalog as admin_partner_catalog,
     live_feed as admin_live_feed,
@@ -210,6 +214,8 @@ def register_routers():
     dp.include_router(inline_search.router)
     dp.include_router(games_router)
     dp.include_router(ready_codes.router)
+    dp.include_router(user_ai_sections.router)
+    dp.include_router(user_whatsapp.router)
     dp.include_router(referral_guard.router)
 
     # ── هاندلرز الأدمن ──
@@ -231,6 +237,8 @@ def register_routers():
     dp.include_router(admin_smm_products.router)
     dp.include_router(admin_api_providers.router)
     dp.include_router(admin_pulled_services.router)
+    dp.include_router(admin_ai_sections.router)
+    dp.include_router(admin_whatsapp.router)
     dp.include_router(admin_partner_catalog.router)
     dp.include_router(admin_audit.router)
     dp.include_router(admin_health.router)
@@ -400,6 +408,21 @@ async def bid_cleanup_cycle():
         await ProviderBiddingService.cleanup_expired(session)
 
 
+async def wa_renewal_cycle():
+    """قسم واتساب: تجديد تلقائي للباقات قرب انتهائها + تنبيه الانتهاء."""
+    from database.engine import async_session_maker
+
+    from services.whatsapp_section_service import WhatsAppSectionService
+
+    if not await FeatureService.enabled("whatsapp_section"):
+        return
+    try:
+        async with async_session_maker() as session:
+            await WhatsAppSectionService.renewal_cycle(session, bot=bot)
+    except Exception:
+        logger.exception("فشل دورة تجديد قسم واتساب")
+
+
 async def agent_weekly_cycle(bot):
     """فحص أسبوعي لبرنامج الوكلاء: سحب من أقل إيداعاته الأسبوعية من الحد."""
     from database.engine import async_session_maker
@@ -563,6 +586,13 @@ async def start_scheduler() -> AsyncIOScheduler:
         bid_cleanup_cycle,
         "interval",
         minutes=30,
+    )
+
+    # قسم واتساب: تجديد تلقائي اليومي + تنبيه الانتهاء (كل ساعة).
+    scheduler.add_job(
+        wa_renewal_cycle,
+        "interval",
+        hours=1,
     )
 
     # التوفر المتقطع: كل دورة (افتراضياً دقيقة) تُحذف اللوحة وتُنشأ بأحدث

@@ -53,6 +53,41 @@ class AiSupportStates(StatesGroup):
     waiting_question = State()
 
 
+class AiSectionStates(StatesGroup):
+    """المستخدم داخل قسم ذكاء اصطناعي يرد على طلباته (section_id في state data)."""
+
+    waiting_prompt = State()
+
+
+class AdminAiSectionStates(StatesGroup):
+    waiting_key = State()
+    waiting_name_ar = State()
+    waiting_name_en = State()
+    waiting_kind = State()
+    waiting_model = State()
+    waiting_cost = State()
+    waiting_multiplier = State()
+    waiting_desc_ar = State()
+    waiting_desc_en = State()
+
+
+class AdminAiProviderStates(StatesGroup):
+    waiting_base_url = State()
+    waiting_api_key = State()
+
+
+class WaStates(StatesGroup):
+    waiting_phone = State()
+
+
+class AdminWaStates(StatesGroup):
+    waiting_description = State()
+    waiting_price = State()
+    waiting_packages = State()
+    waiting_bridge_url = State()
+    waiting_bridge_secret = State()
+
+
 class NumberBulkStates(StatesGroup):
     waiting_quantity = State()
 
