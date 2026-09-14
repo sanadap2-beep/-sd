@@ -9,6 +9,7 @@
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import inspect, select, text
 
@@ -343,6 +344,44 @@ async def init_db() -> None:
             existing = await session.get(Setting, key)
             if existing is None:
                 session.add(Setting(key=key, value=value))
+
+        # ── زرع قسمَي الذكاء الاصطناعي الافتراضيين (مرة واحدة، معطّلين حتى
+        #    يضبط الأدمن مفتاح NanoGPT ويفعّلهما من اللوحة) ──
+        if await session.get(Setting, "ai_sections_seeded") is None:
+            from database.models import AiSection
+
+            session.add_all([
+                AiSection(
+                    key="coding",
+                    name_ar="برمجة بدون قيود",
+                    description_ar=(
+                        "اطلب أي كود أو سكربت أو أداة أو ملف كامل بأي لغة برمجة، "
+                        "والنتيجة توصلك ملفاً جاهزاً للتحميل."
+                    ),
+                    kind="coding",
+                    model="z-ai/glm-4.6",
+                    cost_per_message_usd=Decimal("0.003"),
+                    profit_multiplier=3.0,
+                    enabled=False,
+                    sort_order=10,
+                ),
+                AiSection(
+                    key="chat",
+                    name_ar="تحدث بدون قيود",
+                    description_ar=(
+                        "دردشة حرة مع ذكاء اصطناعي — اسأل عن أي شيء، تحدث بأي لغة، "
+                        "والموديل يتذكر سياق محادثتك الحالية."
+                    ),
+                    kind="chat",
+                    model="z-ai/glm-4.6",
+                    cost_per_message_usd=Decimal("0.001"),
+                    profit_multiplier=3.0,
+                    enabled=False,
+                    sort_order=20,
+                ),
+            ])
+            session.add(Setting(key="ai_sections_seeded", value="true"))
+            await session.commit()
 
         # ── تسجيل الأدمن ──
         for admin_tg_id in settings.admin_ids_list:
