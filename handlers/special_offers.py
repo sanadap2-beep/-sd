@@ -40,14 +40,38 @@ async def special_home(callback: CallbackQuery, session, db_user):
         return
     rows = []
     lines = ["🔥 <b>العروض الخاصة 24</b>", ""]
+    timer_enabled = await _flash_timer_enabled()
     for offer in offers:
         price = await CurrencyService.format_dual(offer.price_usd, db_user, session)
         mode = "⚡ تلقائي" if offer.offer_type == "api" else "🧑‍💼 يدوي"
-        lines.append(f"#{offer.id} {mode} · <b>{offer.name}</b> — {price}")
+        countdown = ""
+        if timer_enabled and offer.ends_at:
+            countdown = f" ⏱{_countdown_text(offer.ends_at)}"
+        lines.append(f"#{offer.id} {mode} · <b>{offer.name}</b> — {price}{countdown}")
         rows.append([InlineKeyboardButton(text=f"🔥 {offer.name[:28]} · {price}", callback_data=f"special:view:{offer.id}")])
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="back_to_main")])
     await callback.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
+
+
+async def _flash_timer_enabled() -> bool:
+    from services.feature_service import FeatureService
+    return await FeatureService.enabled("flash_sale_timer")
+
+
+def _countdown_text(ends_at) -> str:
+    """عدّ تنازلي (HH:MM:SS) للعرض حتى انتهاء."""
+    from datetime import datetime
+    from datetime import timezone
+
+    remaining = (ends_at - datetime.utcnow()).total_seconds()
+    if remaining <= 0:
+        return "انتهى"
+    secs = int(remaining)
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 @router.callback_query(F.data.startswith("special:view:"))
@@ -156,6 +180,14 @@ async def special_confirm(callback: CallbackQuery, state: FSMContext, session, d
         return
     offer = await session.get(SpecialOffer, offer_id)
     await state.clear()
+    try:
+        from services.weekly_challenge_service import WeeklyChallengeService
+
+        price = getattr(order, "price_usd", None) or Decimal("0")
+        await WeeklyChallengeService.record_event(session, db_user.id, amount=price, event="orders")
+        await WeeklyChallengeService.record_event(session, db_user.id, amount=price, event="spend_usd")
+    except Exception:
+        pass
     await callback.message.edit_text(
         f"✅ تم استلام طلب العرض الخاص.\n\n"
         f"🆔 الطلب: #{order.id}\n"

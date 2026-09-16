@@ -107,7 +107,9 @@ class CartService:
         return CheckoutService.calculate_total(item.product, item.quantity)
 
     @staticmethod
-    async def checkout(session, user_id: int) -> dict:
+    async def checkout(
+        session, user_id: int, coupon_code: str | None = None
+    ) -> dict:
         """Process cart items and keep failed items for retry.
 
         External providers cannot share a database transaction, so partial
@@ -116,7 +118,7 @@ class CartService:
         from services.checkout_service import CheckoutError, CheckoutService
 
         items = await CartService.get_items(session, user_id)
-        results = {"completed": [], "failed": []}
+        results = {"completed": [], "failed": [], "total_saved_usd": Decimal("0")}
         for item in items:
             try:
                 checkout = await CheckoutService.purchase(
@@ -125,8 +127,10 @@ class CartService:
                     item.product_id,
                     item.target or "",
                     item.quantity,
+                    coupon_code=coupon_code,
                 )
                 results["completed"].append((item, checkout))
+                results["total_saved_usd"] += checkout.discount
                 await CartService.remove(session, user_id, item.product_id)
             except CheckoutError as exc:
                 results["failed"].append((item, str(exc)))

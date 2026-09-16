@@ -51,6 +51,7 @@ from states.states import (
     UsdtManualStates,
     ShamCashAutoStates,
     UsdtAutoStates,
+    MobileCreditDepositStates,
 )
 from keyboards.admin import deposit_decision_kb
 from keyboards.deposit_methods import (
@@ -183,6 +184,7 @@ async def _show_deposit_menu(target, state: FSMContext):
     usdt_manual = await _payment_method_enabled("usdt_manual")
     shamcash_auto = await _payment_method_enabled("shamcash_auto")
     usdt_auto = await _payment_method_enabled("usdt_auto")
+    mobile_credit = await _payment_method_enabled("mobile_credit")
     other = await _payment_method_enabled("other")
 
     text = "💰 <b>شحن الرصيد</b>\n\nاختر طريقة الشحن المناسبة لك:"
@@ -192,6 +194,7 @@ async def _show_deposit_menu(target, state: FSMContext):
         usdt_manual_enabled=usdt_manual,
         shamcash_auto_enabled=shamcash_auto,
         usdt_auto_enabled=usdt_auto,
+        mobile_credit_enabled=mobile_credit,
         other_enabled=other,
     )
 
@@ -316,6 +319,9 @@ async def deposit_custom_amount(callback: CallbackQuery, state: FSMContext):
     if method == "shamcash_manual":
         await state.set_state(ShamCashManualStates.waiting_amount)
         await callback.message.answer("✍️ أرسل المبلغ بالدولار، مثال: 5")
+    elif method == "mobile_credit":
+        await state.set_state(MobileCreditDepositStates.waiting_amount)
+        await callback.message.answer("✍️ أرسل المبلغ بالدولار، مثال: 10")
     elif method == "shamcash_auto":
         await state.update_data(currency=currency)
         await state.set_state(ShamCashAutoStates.waiting_amount)
@@ -352,6 +358,11 @@ async def deposit_preset_amount(
         await _create_shamcash_auto_invoice(
             callback.message, state, session, db_user, bot, amount, currency
         )
+        return
+    if method == "mobile_credit":
+        from handlers.deposit_credit import _accept_mobile_credit_amount
+
+        await _accept_mobile_credit_amount(callback.message, state, amount)
         return
     await callback.message.answer("⚠️ طريقة الشحن غير مدعومة لهذا الاختصار.")
 
@@ -916,6 +927,19 @@ async def shamcash_auto_tx_received(
         invoice.paid_at = datetime.utcnow()
         await session.commit()
 
+        bonus = Decimal("0")
+        try:
+            from services.deposit_bonus_service import DepositBonusService
+            bonus = await DepositBonusService.apply_for_deposit(
+                session,
+                user_id=db_user.id,
+                deposit_amount_usd=invoice.amount_usd,
+                deposit_id=invoice.id,
+                deposit_source="auto_invoices",
+            )
+        except Exception:
+            logger.exception(f"فشل صرف مكافأة شحن لفاتورة #{invoice.id}")
+
         notifier = NotificationService(bot)
         await notifier.notify_admin(
             f"💳 <b>شحن شام كاش تلقائي</b>\n\n"
@@ -926,6 +950,11 @@ async def shamcash_auto_tx_received(
             f"{invoice.currency}\n"
             f"🔢 رقم العملية: <code>{tx_ref}</code>"
         )
+        if bonus and bonus > 0:
+            await notifier.notify_user(
+                telegram_id=db_user.telegram_id,
+                text=f"🎁 مكافأة شحن! أُضيف <b>+{bonus}$</b> لرصيدك.",
+            )
 
         await message.answer(
             f"✅ <b>تم شحن رصيدك بنجاح!</b>\n\n"

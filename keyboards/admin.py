@@ -19,6 +19,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("📞 طلبات الأرقام", "admin:number_orders"),
             ("💳 طلبات الشحن", "admin:deposits"),
             ("💸 طلبات السحب", "admin:withdrawals"),
+            ("🎁 طلبات الشحن لأهلي", "admin:topup_gifts"),
             ("📒 جرد الحسابات", "admin:ledger"),
             ("📊 إحصائيات البوت", "admin:stats"),
         ],
@@ -49,6 +50,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("👥 إدارة المستخدمين", "admin:users"),
             ("💼 إدارة الوكلاء", "admin:agents"),
             ("🎟 إدارة الكوبونات", "admin:coupons"),
+            ("🏷 أكواد الحملات", "admin:campaigns"),
             ("📢 إدارة الإعلانات", "admin:ads"),
             ("📢 إذاعة جماعية", "admin:broadcast"),
             ("📌 الاشتراك الإجباري", "admin:channels"),
@@ -440,6 +442,7 @@ def admin_product_detail_kb(product, sub_category_id: int) -> InlineKeyboardMark
     b.button(text="📝 شرح/وصف الخدمة", callback_data=f"admin:prod_edit_desc:{product.id}")
     b.button(text="✏️ تعديل الاسم", callback_data=f"admin:prod_edit_name:{product.id}")
     b.button(text="🔌 تعديل آيدي المزود", callback_data=f"admin:prod_edit_svc_id:{product.id}")
+    b.button(text="🔁 مزود احتياطي", callback_data=f"admin:prod_routes:{product.id}", style="success")
     b.button(text="🗑 حذف", callback_data=f"admin:prod_delete:{product.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data=f"admin:prods:{sub_category_id}")
     b.adjust(1)
@@ -532,6 +535,61 @@ def admin_coupon_detail_kb(coupon) -> InlineKeyboardMarkup:
         b.button(text="🟢 تفعيل", callback_data=f"admin:coupon_toggle:{coupon.id}", style="primary")
     b.button(text="🗑 حذف", callback_data=f"admin:coupon_delete:{coupon.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:coupons")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ══════════════ أكواد الحملات (campaign_codes) ══════════════
+
+
+def admin_campaign_codes_kb(campaigns) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for c in campaigns:
+        status = "🟢" if c.is_active else "⚪"
+        tracking = f" [{c.tracking}]" if c.tracking else ""
+        b.button(
+            text=f"{status} {c.code}{tracking} ({c.used_count}/{c.max_uses})",
+            callback_data=f"admin:campaign_view:{c.id}", style="primary",
+        )
+    b.button(text="➕ إنشاء كود حملة", callback_data="admin:campaign_add", style="primary")
+    b.button(text="🔙 رجوع", callback_data="admin:main")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_campaign_detail_kb(campaign) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    if campaign.is_active:
+        b.button(text="⚪ تعطيل", callback_data=f"admin:campaign_toggle:{campaign.id}", style="primary")
+    else:
+        b.button(text="🟢 تفعيل", callback_data=f"admin:campaign_toggle:{campaign.id}", style="primary")
+    b.button(text="🗑 حذف", callback_data=f"admin:campaign_delete:{campaign.id}", style="danger")
+    b.button(text="🔙 رجوع", callback_data="admin:campaigns")
+    b.adjust(1)
+    return b.as_markup()
+
+
+# ══════════════ طلبات «اشحن لأهلك» (topup_gift) ══════════════
+
+
+def admin_topup_gifts_kb(requests) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for req in requests:
+        status_icon = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(req.status, "•")
+        b.button(
+            text=f"{status_icon} #{req.id} — {req.operator} {req.amount_usd}$ → {req.recipient_number}",
+            callback_data=f"admin:topup_view:{req.id}", style="primary",
+        )
+    b.button(text="🔙 رجوع", callback_data="admin:main")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_topup_gift_decision_kb(request_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ قبول وتم الشحن", callback_data=f"admin:topup_approve:{request_id}", style="primary")
+    b.button(text="❌ رفض", callback_data=f"admin:topup_reject:{request_id}", style="danger")
+    b.button(text="🔙 رجوع", callback_data="admin:topup_gifts")
     b.adjust(1)
     return b.as_markup()
 

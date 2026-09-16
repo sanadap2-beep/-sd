@@ -82,6 +82,8 @@ async def _send_account(message: Message, session, db_user: User):
     total_cashback = await CashbackService.get_user_total_cashback(session, db_user.id)
     kb = _account_kb(language)
     balance_display = await CurrencyService.format_dual(db_user.balance, db_user, session)
+    balance_syp_note = await CurrencyService.syp_note(db_user.balance, db_user, session)
+    balance_line = balance_display + balance_syp_note
     # «إجمالي مشترياتك» = ما اكتمل وتفعّل فعلاً فقط (الأرقام بعد التفعيل،
     # والرشق/الألعاب بعد الاكتمال) — لا الطلبات المعلّقة ولا المسترجَعة،
     # لأن المستخدم يدفع مسبقاً وقد يُرجع رصيده إذا لم يتفعّل الطلب.
@@ -92,7 +94,19 @@ async def _send_account(message: Message, session, db_user: User):
     )
     spent_display = await CurrencyService.format_dual(realized_spent, db_user, session)
     cashback_display = await CurrencyService.format_dual(total_cashback, db_user, session)
-    await message.answer(t('account_card', user_id=db_user.telegram_id, balance=balance_display, spent=spent_display, orders=realized_orders, cashback=cashback_display, points=db_user.loyalty_points, referrals=referrals_count, joined=db_user.joined_at.strftime('%Y-%m-%d')), reply_markup=kb.as_markup())
+
+    vip_line = ""
+    try:
+        from services.feature_service import FeatureService
+        from services.vip_service import VipService
+
+        if await VipService.enabled() and await VipService.show_in_profile():
+            tier = await VipService.tier_for(realized_spent)
+            vip_line = f"👑 {('مستوى' if language.startswith('ar') else 'Tier')}: <b>{tier.name}</b> · كاشباك ×{tier.cashback_mult}\n\n"
+    except Exception:
+        pass
+
+    await message.answer(vip_line + t('account_card', user_id=db_user.telegram_id, balance=balance_line, spent=spent_display, orders=realized_orders, cashback=cashback_display, points=db_user.loyalty_points, referrals=referrals_count, joined=db_user.joined_at.strftime('%Y-%m-%d')), reply_markup=kb.as_markup())
 
 @router.callback_query(F.data == 'my_watches')
 async def my_watches(callback: CallbackQuery, session, db_user: User):

@@ -2443,3 +2443,271 @@ class WaSubscription(Base):
     )
 
     user: Mapped["User"] = relationship()
+
+
+# ══════════════════════════════════════════════════════════════
+#  الإضافات الجديدة (مكافآت الشحن، عجلة الحظ، إنذارات السعر،
+#  ألقاب المشترين، التحديات الأسبوعية، سوق الأرقام المستعملة،
+#  تقييم المزودين)
+# ══════════════════════════════════════════════════════════════
+
+
+class DepositBonusRule(Base):
+    """
+    قاعدة مكافأة شحن: إذا أودع المستخدم مبلغاً >= min_deposit_usd،
+    تُضاف له نسبة مئوية bonus_percent كرصيد مجاني.
+
+    الأدمن يتحكم بالكامل: إضافة/تعديل/تفعيل/حذف من لوحة الأدمن.
+    """
+
+    __tablename__ = "deposit_bonus_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    min_deposit_usd: Mapped[Decimal] = mapped_column(MONEY)
+    bonus_percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("5"))
+    # المكافأة القصوى بالدولار (0 = بلا حد)
+    max_bonus_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DepositBonusGrant(Base):
+    """
+    سجل مكافأة شحن مُصرَّفة — يمنع تكرار المكافأة لنفس الإيداع
+    ويُحسب إجمالي المكافآت الموزعة.
+    """
+
+    __tablename__ = "deposit_bonus_grants"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    deposit_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # نوع الإيداع (deposit_requests / auto_invoices / stars)
+    deposit_source: Mapped[str] = mapped_column(String(32), default="deposit")
+    deposit_amount_usd: Mapped[Decimal] = mapped_column(MONEY)
+    bonus_usd: Mapped[Decimal] = mapped_column(MONEY)
+    rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+
+
+class SpinPrize(Base):
+    """
+    جائزة داخل عجلة الحظ. الأدمن يتحكم بكل شيء:
+    الاسم، النوع (رصيد/نقاط/بلا شيء)، القيمة، الاحتمال.
+    """
+
+    __tablename__ = "spin_prizes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name_ar: Mapped[str] = mapped_column(String(128))
+    # balance / points / loyalty_points / nothing
+    prize_type: Mapped[str] = mapped_column(String(24), default="balance")
+    # القيمة: دولار (balance) أو نقاط (points)
+    value: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    # الاحتمال المرجح شكله 100 / المجموع
+    weight: Mapped[int] = mapped_column(Integer, default=10)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SpinHistory(Base):
+    """
+    سجل لفات المستخدمين — مع قيد منع اللف المتكرر لنفس اليوم.
+    """
+
+    __tablename__ = "spin_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    prize_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prize_type: Mapped[str] = mapped_column(String(24))
+    prize_label: Mapped[str] = mapped_column(String(128))
+    value: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    day_key: Mapped[str] = mapped_column(String(16), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+
+
+class PriceAlert(Base):
+    """
+    تنبيه سعر: المستخدم يحدد خدمة + دولة + سعر مستهدف،
+    ويُشعَر تلقائياً عندما ينخفض السعر عن الهدف.
+    """
+
+    __tablename__ = "price_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    service_code: Mapped[str] = mapped_column(String(32), index=True)
+    country_code: Mapped[str] = mapped_column(String(8), index=True)
+    target_price_usd: Mapped[Decimal] = mapped_column(MONEY)
+    last_checked_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+
+
+class WeeklyChallenge(Base):
+    """
+    تحدٍّ أسبوعي: الأدمن يحدد الهدف (عدد الطلبات/الصرف/الإحالات)
+    والمكافأة. يُحصى التقدم تلقائياً من الأحداث الحقيقية.
+    """
+
+    __tablename__ = "weekly_challenges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(String(500))
+    emoji: Mapped[str] = mapped_column(String(8), default="🏆")
+    # orders / spend_usd / checkins / referrals
+    metric: Mapped[str] = mapped_column(String(32), default="orders")
+    target_value: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("10"))
+    reward_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("1"))
+    reward_points: Mapped[int] = mapped_column(Integer, default=0)
+    week_start: Mapped[str] = mapped_column(String(16), index=True)  # "2026-W37"
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WeeklyChallengeProgress(Base):
+    """
+    تقدّم مستخدم داخل تحدٍّ أسبوعي. قيد مركب يمنع الحساب المزدوج.
+    """
+
+    __tablename__ = "weekly_challenge_progress"
+    __table_args__ = (
+        UniqueConstraint(
+            "challenge_id", "user_id", name="uq_weekly_challenge_user"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    challenge_id: Mapped[int] = mapped_column(
+        ForeignKey("weekly_challenges.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    progress: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    claimed: Mapped[bool] = mapped_column(Boolean, default=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    challenge: Mapped["WeeklyChallenge"] = relationship()
+    user: Mapped["User"] = relationship()
+
+
+class NumberResaleListing(Base):
+    """
+    رقم مستعمل يعرضه مالكه للبيع بسعر يحدده (أرخص من الشراء الجديد).
+    المشتري يشتريه بضغطة واحدة من رصيده، والبائع يستلم رصيداً فوراً بعد خصم عمولة.
+    """
+
+    __tablename__ = "number_resale_listings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seller_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    buyer_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # رقم الطلب الأصلي (رقم SMS) الذي يثبت الملكية
+    source_order_id: Mapped[int] = mapped_column(Integer, index=True)
+    phone_number: Mapped[str] = mapped_column(String(32))
+    service_name: Mapped[str] = mapped_column(String(64))
+    country_name: Mapped[str] = mapped_column(String(64))
+    price_usd: Mapped[Decimal] = mapped_column(MONEY)
+    commission_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open/sold/cancelled
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    seller: Mapped["User"] = relationship(foreign_keys=[seller_id])
+    buyer: Mapped["User | None"] = relationship(foreign_keys=[buyer_id])
+
+
+class ProviderReview(Base):
+    """
+    تقييم المستخدم لمزود أرقام/خدمة بعد طلب مكتمل:
+    نجوم + تعليق. يعرض المتوسط لكل مزود قبل الشراء.
+    """
+
+    __tablename__ = "provider_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    order_type: Mapped[str] = mapped_column(String(16), default="number")  # number/unified
+    order_id: Mapped[int] = mapped_column(Integer, index=True)
+    rating: Mapped[int] = mapped_column(Integer)  # 1..5
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+
+
+class CampaignCode(Base):
+    """
+    كود خصم خاص بحملة إعلانية مع وسم تتبّع المصدر.
+    نفس منطق الكوبون لكن بترميز (حركة#حملة) ليعرف الأدمن كم طلب
+    جلبت كل حملة إعلانية — التناسب مع «دفعة النمو» في البوت.
+    """
+
+    __tablename__ = "campaign_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    tracking: Mapped[str] = mapped_column(String(64), default="", index=True)
+    discount_type: Mapped[str] = mapped_column(String(16), default="percent")
+    discount_value: Mapped[Decimal] = mapped_column(MONEY)
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    min_order_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    usages: Mapped[list["CampaignCodeUsage"]] = relationship(back_populates="campaign")
+
+
+class CampaignCodeUsage(Base):
+    __tablename__ = "campaign_code_usages"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "user_id", name="uq_campaign_user"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaign_codes.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    discount_applied: Mapped[Decimal] = mapped_column(MONEY)
+    used_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    campaign: Mapped["CampaignCode"] = relationship(back_populates="usages")
+
+
+class TopupGiftRequest(Base):
+    """
+    طلب «اشحن لأهلك» — تحويلات الشتات.
+    المستخدم يختار مشغّل الجوال في الوطن والمبلغ ورقم المستلم،
+    والطلب يصل للوحة الأدمن ليُعتمد (المشغل لا يكمل الشبكة تلقائياً).
+    """
+
+    __tablename__ = "topup_gift_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    operator: Mapped[str] = mapped_column(String(32))  # mtn / syriatel
+    recipient_number: Mapped[str] = mapped_column(String(32))
+    amount_usd: Mapped[Decimal] = mapped_column(MONEY)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected
+    admin_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    admin_chat_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reject_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship(foreign_keys=[user_id])

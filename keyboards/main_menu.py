@@ -75,11 +75,12 @@ def deposit_menu_kb(
     usdt_manual_enabled: bool = True,
     shamcash_auto_enabled: bool = True,
     usdt_auto_enabled: bool = True,
+    mobile_credit_enabled: bool = False,
     other_enabled: bool = True,
     language: str = "ar",
 ) -> InlineKeyboardMarkup:
     """
-    قائمة طرق شحن الرصيد (6 طرق).
+    قائمة طرق شحن الرصيد (حتى 7 طرق).
     كل طريقة تظهر فقط إذا كانت مفعلة من لوحة الأدمن.
     """
     t = lambda key: I18nService.t(key, language)  # noqa: E731
@@ -115,6 +116,12 @@ def deposit_menu_kb(
             callback_data="deposit:usdt_manual", style="primary",
         )
 
+    if mobile_credit_enabled:
+        b.button(
+            text="📲 رصيد جوال",
+            callback_data="deposit:mobile_credit", style="primary",
+        )
+
     if other_enabled:
         b.button(
             text=t("deposit_method_other"),
@@ -126,7 +133,7 @@ def deposit_menu_kb(
         callback_data="back_to_main",
     )
 
-    b.adjust(2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 1)
     return b.as_markup()
 
 

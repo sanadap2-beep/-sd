@@ -973,6 +973,18 @@ async def confirm_buy(
     await session.commit()
     await session.refresh(order)
 
+    try:
+        from services.weekly_challenge_service import WeeklyChallengeService
+
+        await WeeklyChallengeService.record_event(
+            session, db_user.id, amount=sell_price or Decimal("0"), event="orders"
+        )
+        await WeeklyChallengeService.record_event(
+            session, db_user.id, amount=sell_price or Decimal("0"), event="spend_usd"
+        )
+    except Exception:
+        logger.exception("فشل تحديث تقدم التحدي الأسبوعي")
+
     status_msg = await callback.message.answer(
         f"✅ <b>تم شراء الرقم بنجاح!</b>\n\n"
         f"📱 الرقم: <code>{buy_result.phone_number}</code>\n"

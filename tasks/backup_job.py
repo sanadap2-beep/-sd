@@ -55,7 +55,18 @@ async def daily_backup(bot):
     """
     يأخذ نسخة احتياطية من قاعدة البيانات
     ويرسلها لقناة البكاب.
+
+    ت gating بميزة db_backup_telegram:
+    - إن كانت معطلة لا يُنفَّذ شيء.
+    - chat_id المُستخدَم: إن وُجد في config الميزة يُفضَّل على
+      settings.BACKUP_CHANNEL_ID.
     """
+    from services.feature_service import FeatureService
+
+    if not await FeatureService.enabled("db_backup_telegram"):
+        logger.info(".daily_backup: ميزة db_backup_telegram معطلة — تم التخطي.")
+        return
+
     notifier = NotificationService(bot)
 
     db_path = _database_path()
@@ -89,10 +100,12 @@ async def daily_backup(bot):
         with snapshot_path.open("rb") as f:
             db_bytes = f.read()
 
+        chat_id = await FeatureService.config("db_backup_telegram", "chat_id", "")
         success = await notifier.notify_backup_channel(
             document_bytes=db_bytes,
             filename=filename,
             caption=caption,
+            chat_id_override=chat_id,
         )
 
         if success:

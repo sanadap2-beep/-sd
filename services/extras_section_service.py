@@ -36,12 +36,16 @@ EXTRAS_SECTIONS: dict[str, tuple[str, str]] = {
 EXTRAS_ENTRIES: tuple[tuple[str, str, str, str | None, str], ...] = (
     # 🎁 المكافآت والولاء
     ("loyalty", "🎁 برنامج الولاء", "menu:loyalty", None, REWARDS),
+    ("daily_spin", "🎰 عجلة الحظ اليومية", "engage:spin", "daily_spin", REWARDS),
+    ("weekly_challenges", "🏅 تحديات أسبوعية", "engage:challenges", "weekly_challenges", REWARDS),
+    ("top_buyers", "🏆 أبطال الأسبوع", "engage:leaderboard", "top_buyers", REWARDS),
     ("challenges", "🎯 التحديات", "menu:challenges", None, REWARDS),
     ("gift", "🎁 بطاقة هدية", "menu:gift", None, REWARDS),
     ("points_currency", "⭐ نقاطي", "points:home", "points_currency", REWARDS),
     ("tasks_system", "🎯 المهام", "tasks:home", "tasks_system", REWARDS),
     ("task_to_credit", "🧾 مهام مقابل رصيد", "extras:task2credit", "task_to_credit", REWARDS),
     ("revenue_sharing_tokens", "💹 أسهم حصة الإحالة", "extras:revshare", "revenue_sharing_tokens", REWARDS),
+    ("topup_gift", "🎁 اشحن لأهلك", "extras:topup_gift", "mobile_topup_gift", REWARDS),
 
     # 📢 السوق والإعلانات
     ("peer_marketplace", "🏪 سوق المستخدمين Escrow", "market:home", "peer_marketplace", MARKET),
@@ -65,6 +69,11 @@ EXTRAS_ENTRIES: tuple[tuple[str, str, str, str | None, str], ...] = (
     ("vip_number_certificates", "👑 شهادات VIP", "extras:vip", "vip_number_certificates", TOOLS),
     ("game_price_tracker", "🎮 أسعار الألعاب", "extras:gameprices", "game_price_tracker", TOOLS),
     ("ai_agent_layer", "🤖 الوكيل الذكي", "extras:ai", "ai_agent_layer", TOOLS),
+    ("price_alerts", "🔔 إنذارات السعر", "engage:price_alerts", "price_alerts", TOOLS),
+    ("number_resale_market", "🔄 سوق الأرقام المستعملة", "engage:resale", "number_resale_market", TOOLS),
+    ("provider_reviews", "⭐ تقييم المزودين", "engage:reviews", "provider_reviews", TOOLS),
+    ("enhanced_user_profile", "👤 ملفي المفصل", "engage:profile", "enhanced_user_profile", TOOLS),
+    ("monthly_report", "📊 التقرير الشهري", "engage:report", "monthly_report", TOOLS),
 )
 
 EXTRAS_KEYS = {key for key, _l, _a, _f, _s in EXTRAS_ENTRIES}
