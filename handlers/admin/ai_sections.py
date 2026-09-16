@@ -76,7 +76,7 @@ async def ai_list(callback: CallbackQuery, session):
     await callback.answer()
 
 
-@router.callback_query(_TOGGLE_RE)
+@router.callback_query(F.data.regexp(_TOGGLE_RE))
 async def ai_toggle(callback: CallbackQuery, session):
     section_id = int(callback.data.split(":")[2])
     section = await AiSectionService.get(session, section_id)
@@ -104,7 +104,7 @@ async def ai_new_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(_EDIT_RE)
+@router.callback_query(F.data.regexp(_EDIT_RE))
 async def ai_edit_start(callback: CallbackQuery, session, state: FSMContext):
     section_id = int(callback.data.split(":")[2])
     section = await AiSectionService.get(session, section_id)
@@ -187,7 +187,7 @@ async def ai_kind_text_reject(message: Message):
     await message.answer("⚠️ اختر النوع من الأزرار أعلاه (💻 برمجة أو 💬 دردشة).")
 
 
-@router.callback_query(_KIND_RE)
+@router.callback_query(F.data.regexp(_KIND_RE))
 async def ai_kind_selected(callback: CallbackQuery, state: FSMContext):
     kind = callback.data.split(":")[-1]
     if kind not in ("coding", "chat"):
