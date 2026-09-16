@@ -264,7 +264,7 @@ async def wa_bridge_test(callback: CallbackQuery):
 # ══════════════ المشتركون ══════════════
 
 
-@router.callback_query(_PAGE_RE)
+@router.callback_query(F.data.regexp(_PAGE_RE))
 async def wa_users(callback: CallbackQuery, session):
     page = int(callback.data.split(":")[2])
     per_page = 15

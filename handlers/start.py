@@ -60,6 +60,7 @@ async def _ai_section_visible(session) -> bool:
     from sqlalchemy import func, select
 
     from database.models import AiSection
+    from services.feature_service import FeatureService
 
     if not await FeatureService.enabled("ai_sections"):
         return False
