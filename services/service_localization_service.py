@@ -20,7 +20,6 @@ import re
 
 from services.smm_catalog import (
     SMM_APP_SPECS,
-    SMM_KIND_SPECS,
     classify_smm_kind,
     normalize_label,
     resolve_smm_app,
@@ -67,7 +66,6 @@ _STORE_BRAND_AR: dict[str, str] = {
     "rocket league": "روكيت ليج",
     "brawl stars": "براول ستارز",
     "clash squad": "كلاش سكواد",
-    "call of duty": "كول أوف ديوتي",
     # اشتراكات/تطبيقات
     "discord nitro": "ديسكورد نيترو",
     "chatgpt plus": "شات جي بي تي بلس",
@@ -218,7 +216,6 @@ _QUALIFIER_AR = {
     "stories": "قصص",
     "post": "منشور",
     "posts": "منشورات",
-    "post": "منشور",
     "follow": "متابعة",
     "join": "انضمام",
     "download": "تحميل",
@@ -297,6 +294,8 @@ _STORE_WORD_AR: dict[str, str] = {
     "skells": "سكيلات",
     "token": "توكن",
     "tokens": "توكنز",
+    # «Call of Duty Mobile 80 CP» → «كول أوف ديوتي موبايل 80 CP»
+    "mobile": "موبايل",
     # تواصل ورسائل
     "otp": "تأكيد",
     "verification": "توثيق",
@@ -457,11 +456,15 @@ def arabicize_service_name(
         or classify_smm_kind(haystack)
     )
 
-    # اسم بلا منصة/نوع SMM معروف (منتجات المتاجر العامة مثل "Free Fire
+    # اسم بلا منصة SMM معروفة (منتجات المتاجر/الألعاب العامة مثل "Free Fire
     # Diamonds 100" أو "Netflix Premium 1 Month") → ترجمة متاجر عامة:
     # علامات تجارية + كلمات مألوفة. إن لم يقع أي تغيير تُترك الكلمة
     # الأصلية كما هي (نحمي أسماء الباقات غير المعروفة).
-    if app is None and kind is None:
+    #
+    # العلامة التجارية تتقدم على نوع SMM المصادَف: «Google Play Gift Card»
+    # كانت تُصنَّف «مشاهدات» لأن ``play`` من أسماء نوع المشاهدات، فيخرج
+    # للزبون اسم مشوّه («مشاهدات Google هدية Card USD (25)»).
+    if app is None and (kind is None or _matches_store_brand(raw)):
         return _arabicize_store_name(raw)
 
     # نحذف مسميات المنصة والنوع من النص قبل ترجمة ما تبقى
@@ -497,6 +500,15 @@ def arabicize_service_name(
 
     # (app or kind) مضمون الوجود هنا، فلا يكون الناتج فارغاً
     return " ".join(p for p in parts if p).strip()[:200]
+
+
+def _matches_store_brand(raw: str) -> bool:
+    """هل يحوي الاسم علامة تجارية معروفة من سجل المتاجر/الألعاب؟
+
+    تُستخدم لتقديم مسار المتاجر على تصنيف SMM المصادَف (مثل ``play``
+    في «Google Play» الذي كان يُحسب نوع «مشاهدات»).
+    """
+    return any(pattern.search(raw) for pattern, _arabic in _STORE_BRAND_RES)
 
 
 def _arabicize_store_name(raw: str) -> str:

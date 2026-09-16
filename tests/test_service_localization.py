@@ -302,3 +302,38 @@ async def test_publish_respects_admin_name():
             session, svc, sub.id, sell_price=Decimal("15"), name_ar="متابعين حقيقيين"
         )
         assert product.name_ar == "متابعين حقيقيين"
+
+
+# ══════════════ أسماء شحن الألعاب: العلامة التجارية أولاً ══════════════
+
+
+def test_arabicize_store_brand_wins_over_smm_kind():
+    """«Google Play» ليست «مشاهدات»: ``play`` من أسماء نوع المشاهدات.
+
+    قبل الإصلاح كان الناتج: «مشاهدات Google هدية Card USD (25)».
+    """
+    out = arabicize_service_name("Google Play Gift Card 25 USD", "Cards")
+    assert "جوجل بلاي" in out
+    assert "بطاقة هدية" in out
+    assert "دولار" in out
+    assert "مشاهدات" not in out
+    assert "Google" not in out and "Card" not in out
+
+
+def test_arabicize_games_topup_names():
+    assert "ببجي موبايل" in arabicize_service_name("PUBG Mobile 60 UC", "Games")
+    assert "فري فاير" in arabicize_service_name("Free Fire 100 Diamonds", "Games")
+    assert "موبايل ليجندز" in arabicize_service_name(
+        "Mobile Legends 86 Diamonds", "Games"
+    )
+    # «Mobile» المتبقية بعد العلامة التجارية تُترجم هي الأخرى
+    cod = arabicize_service_name("Call of Duty Mobile 80 CP", "Games")
+    assert "كول أوف ديوتي" in cod
+    assert "موبايل" in cod
+    assert "Mobile" not in cod
+
+
+def test_arabicize_smm_kind_still_wins_without_brand():
+    """أسماء الرشق الحقيقية تبقى على مسار SMM (العلامة التجارية غير موجودة)."""
+    assert arabicize_service_name("YouTube Views 10000", "YouTube") == "مشاهدات يوتيوب (10000)"
+    assert arabicize_service_name("TikTok Plays 5000", "TikTok") == "مشاهدات تيك توك (5000)"
