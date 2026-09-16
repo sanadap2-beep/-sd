@@ -251,3 +251,32 @@ class CurrencyService:
             return usd_text
         converted = await CurrencyService.format_user_amount(amount, db_user, session)
         return f"{usd_text} (≈ {converted})"
+
+    @staticmethod
+    async def syp_note(
+        amount_usd,
+        db_user,
+        session=None,
+    ) -> str:
+        """ملحق «≈ X ل.س» بجانب السعر بالدولار — ميزة syp_display.
+
+        يُظهر ما يعادل المبلغ بالليرة السورية عند سعر الصرف الحالي حتى لو
+        كانت عملة عرض المستخدم هي الدولار. إن كانت العملة أصلًا SYP أو
+        الميزة معطلة لا يُضاف شيء (السعر معروض مسبقاً).
+        """
+        try:
+            from services.feature_service import FeatureService
+
+            if not await FeatureService.enabled("syp_display"):
+                return ""
+            currency = CurrencyService.normalize_display_currency(
+                getattr(db_user, "display_currency", "USD")
+            )
+            if currency == "SYP":
+                return ""
+            amount = amount_usd if isinstance(amount_usd, Decimal) else Decimal(str(amount_usd))
+            rate = await CurrencyService.get_display_rate(session, "SYP")
+            syp = (amount * rate).quantize(Decimal("1"))
+            return f" (≈ {syp:,} ل.س)"
+        except Exception:
+            return ""

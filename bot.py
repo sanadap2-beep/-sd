@@ -60,10 +60,13 @@ from handlers import (
     ready_codes,
     ai_sections as user_ai_sections,
     whatsapp as user_whatsapp,
+    engagement as user_engagement,
     fallback,
 )
 from handlers.deposit_methods import router as deposit_methods_router
 from handlers.games import router as games_router
+from handlers.deposit_credit import router as deposit_credit_router
+from handlers.topup_gift import router as topup_gift_router
 from handlers.error_reports import router as error_reports_router
 from handlers.admin import (
     panel as admin_panel,
@@ -114,9 +117,13 @@ from handlers.admin import (
     pulled_services as admin_pulled_services,
     ai_sections as admin_ai_sections,
     whatsapp as admin_whatsapp,
+    product_routes as admin_product_routes,
     ledger as admin_ledger,
     partner_catalog as admin_partner_catalog,
     live_feed as admin_live_feed,
+    engagement as admin_engagement,
+    campaign_codes as admin_campaign_codes,
+    topup_gifts as admin_topup_gifts,
 )
 
 from tasks.order_monitor import (
@@ -130,6 +137,12 @@ from tasks.watch_job import check_product_watches
 from tasks.backup_job import daily_backup
 from tasks.sponsored_ads_job import process_sponsored_ads
 from tasks.special_offers_job import process_special_offers
+from tasks.engagement_jobs import (
+    send_monthly_reports,
+    offer_expiry_cycle,
+    price_alert_cycle,
+    weekly_challenge_cycle,
+)
 from services.feature_service import FeatureService
 from services.smm_sections_service import SmmSectionsService
 from services.subscriptions_sync_service import SubscriptionsSyncService
@@ -187,6 +200,8 @@ def register_routers():
     dp.include_router(referral.router)
     dp.include_router(deposit.router)
     dp.include_router(deposit_methods_router)
+    dp.include_router(deposit_credit_router)
+    dp.include_router(topup_gift_router)
     dp.include_router(transfer.router)
     dp.include_router(withdrawal.router)
     dp.include_router(notifications.router)
@@ -211,6 +226,7 @@ def register_routers():
     dp.include_router(user_points.router)
     dp.include_router(user_extras.router)
     dp.include_router(user_store.router)
+    dp.include_router(user_engagement.router)
     dp.include_router(inline_search.router)
     dp.include_router(games_router)
     dp.include_router(ready_codes.router)
@@ -270,6 +286,10 @@ def register_routers():
     dp.include_router(admin_sponsored_ads.router)
     dp.include_router(admin_special_offers.router)
     dp.include_router(admin_live_feed.router)
+    dp.include_router(admin_engagement.router)
+    dp.include_router(admin_product_routes.router)
+    dp.include_router(admin_campaign_codes.router)
+    dp.include_router(admin_topup_gifts.router)
 
     # أزرار إشعارات الأخطاء (زر «تم تصليح الخطأ») — قبل fallback ليصل إليها الضغط أولاً.
     dp.include_router(error_reports_router)
@@ -465,6 +485,20 @@ async def prune_feature_events():
         logger.info("حُذفت %s من أحداث القياس القديمة.", removed)
 
 
+async def failover_decay_cycle():
+    """يتلاشى عدّاد فشل auto_failover مع الوقت لمنع الإغلاق الدائم."""
+    from services.auto_failover_service import AutoFailoverService
+
+    if not await AutoFailoverService.enabled():
+        return
+    try:
+        removed = await AutoFailoverService.decay()
+        if removed:
+            logger.info("auto_failover: تلاشت %d عدادات فشل.", removed)
+    except Exception:
+        logger.exception("فشل دورة تلاشي عدادات auto_failover")
+
+
 async def start_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
 
@@ -640,6 +674,50 @@ async def start_scheduler() -> AsyncIOScheduler:
         "interval",
         minutes=5,
         args=[bot],
+    )
+
+    # ميزات التفاعل الجديدة.
+    scheduler.add_job(
+        send_monthly_reports,
+        "cron",
+        hour=9,
+        minute=0,
+        args=[bot],
+    )
+
+    scheduler.add_job(
+        offer_expiry_cycle,
+        "interval",
+        minutes=15,
+        args=[bot],
+    )
+
+    scheduler.add_job(
+        price_alert_cycle,
+        "interval",
+        minutes=max(
+            1,
+            await FeatureService.config_int("price_alerts", "check_interval_minutes", 5),
+        ),
+        args=[bot],
+    )
+
+    scheduler.add_job(
+        weekly_challenge_cycle,
+        "interval",
+        hours=1,
+    )
+
+    # auto_failover: تلاشي عدادات الفشل تدريجياً حسب إعداد الميزة.
+    scheduler.add_job(
+        failover_decay_cycle,
+        "interval",
+        minutes=max(
+            10,
+            await FeatureService.config_int(
+                "auto_failover", "decay_interval_minutes", 60
+            ),
+        ),
     )
 
     scheduler.start()

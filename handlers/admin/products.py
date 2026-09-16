@@ -505,6 +505,12 @@ async def prod_view(callback: CallbackQuery, session):
     if product.api_provider:
         provider_name = product.api_provider.name
 
+    backup_count = 0
+    if product.api_provider_id:
+        from services.catalog_routing_service import CatalogRoutingService
+
+        backup_count = max(0, len(await CatalogRoutingService.routes_for(session, product)) - 1)
+
     reqs = []
     if product.requires_player_id:
         reqs.append("🎮 Player ID")
@@ -532,6 +538,7 @@ async def prod_view(callback: CallbackQuery, session):
         f"📈 الربح: {product.price_usd - product.cost_price_usd}$\n"
         f"💵 هامش الربح: <b>{effective_margin}%</b> (من: {margin_source})\n"
         f"🔌 المزود: {provider_name}\n"
+        f"🔁 المزودون الاحتياطيون: {backup_count}\n"
         f"🔢 آيدي الخدمة: {product.provider_service_id or '—'}\n"
         f"⏱️ الوقت التقريبي: {product.estimated_time or '—'}\n"
         f"📥 متطلبات: {req_text}\n"

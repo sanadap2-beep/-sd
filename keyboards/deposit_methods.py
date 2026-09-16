@@ -15,10 +15,11 @@ def deposit_methods_kb(
     usdt_manual_enabled: bool = False,
     shamcash_auto_enabled: bool = False,
     usdt_auto_enabled: bool = False,
+    mobile_credit_enabled: bool = False,
     other_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """
-    قائمة طرق الشحن (حتى 6 أزرار).
+    قائمة طرق الشحن (حتى 7 أزرار).
     الأزرار تظهر فقط إذا كانت مفعلة من لوحة الأدمن.
     """
     b = InlineKeyboardBuilder()
@@ -53,6 +54,12 @@ def deposit_methods_kb(
             callback_data="deposit:usdt_manual", style="primary",
         )
 
+    if mobile_credit_enabled:
+        b.button(
+            text="📲 رصيد جوال",
+            callback_data="deposit:mobile_credit", style="primary",
+        )
+
     if other_enabled:
         b.button(
             text="📞 طرق دفع أخرى",
@@ -64,7 +71,7 @@ def deposit_methods_kb(
         callback_data="back_to_main",
     )
 
-    b.adjust(2, 2, 2, 1)
+    b.adjust(2, 2, 2, 2, 1)
     return b.as_markup()
 
 

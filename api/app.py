@@ -559,12 +559,13 @@ async def clear_cart(
 async def checkout_cart(
     current_user: User = Depends(get_current_user),
     session=Depends(get_session),
+    coupon_code: str | None = None,
 ):
     if await AbuseGuardService.is_blocked(session, current_user.id):
         raise HTTPException(status_code=429, detail="تم إيقاف العملية مؤقتاً للمراجعة")
     try:
         async with OperationLockService.acquire(f"cart-checkout:{current_user.id}"):
-            result = await CartService.checkout(session, current_user.id)
+            result = await CartService.checkout(session, current_user.id, coupon_code=coupon_code)
     except OperationBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     completed = [
@@ -577,7 +578,7 @@ async def checkout_cart(
         for _item, checkout in result["completed"]
     ]
     failed = [{"product_id": item.product_id, "error": error} for item, error in result["failed"]]
-    return {"completed": completed, "failed": failed}
+    return {"completed": completed, "failed": failed, "total_saved_usd": result["total_saved_usd"]}
 
 
 @app.post("/api/v1/checkout", response_model=CheckoutOut)
@@ -596,6 +597,7 @@ async def checkout(
                 payload.product_id,
                 payload.target.strip(),
                 payload.quantity,
+                coupon_code=payload.coupon_code,
             )
     except OperationBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

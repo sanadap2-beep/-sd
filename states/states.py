@@ -294,6 +294,11 @@ class AdminProductStates(StatesGroup):
     confirming_delete = State()
 
 
+class AdminProductRouteStates(StatesGroup):
+    waiting_service_id = State()
+    waiting_priority = State()
+
+
 # ══════════════ الأدمن - المزودين ══════════════
 
 
@@ -347,6 +352,11 @@ class AdminCouponStates(StatesGroup):
     waiting_max_uses = State()
     waiting_min_order = State()
     waiting_expires_days = State()
+
+
+class UserCartStates(StatesGroup):
+    """حالة إدخال كوبون عند إتمام السلة."""
+    waiting_coupon = State()
 
 
 class AdminStarsStates(StatesGroup):
@@ -576,3 +586,38 @@ class AdminSmmProductsStates(StatesGroup):
     """منتجات قسم الرشق: انتظار نسبة الربح للقسم/التطبيق المحدد."""
 
     waiting_margin = State()
+
+
+class MobileCreditDepositStates(StatesGroup):
+    """الشحن برصيد الجوال: رقم الجوال ثم المبلغ ثم صورة الإثبات."""
+
+    waiting_provider_number = State()
+    waiting_amount = State()
+    waiting_proof_photo = State()
+
+
+class TopupGiftStates(StatesGroup):
+    """«اشحن لأهلك»: المشغل ثم المبلغ ثم رقم المستلم."""
+
+    waiting_operator = State()
+    waiting_amount = State()
+    waiting_recipient = State()
+    waiting_note = State()
+
+
+class AdminCampaignCodeStates(StatesGroup):
+    """إنشاء كود حملة من لوحة الأدمن."""
+
+    waiting_code = State()
+    waiting_tracking = State()
+    waiting_discount_type = State()
+    waiting_discount_value = State()
+    waiting_max_uses = State()
+    waiting_min_order = State()
+    waiting_expires_days = State()
+
+
+class AdminTopupGiftStates(StatesGroup):
+    """مراجعة طلبات «اشحن لأهلك»."""
+
+    waiting_reject_reason = State()

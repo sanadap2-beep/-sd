@@ -540,4 +540,12 @@ async def init_db() -> None:
                     )
                 )
 
+        # ── زرع جوائز عجلة الحظ وقاعدة مكافأة الشحن الافتراضية ──
+        # (آمنة: تعمل مرة واحدة فقط ولا تكرر شيئاً على الترقية.)
+        from services.spin_service import SpinService
+        from services.deposit_bonus_service import DepositBonusService
+
+        await SpinService.seed_default_prizes(session)
+        await DepositBonusService.seed_default_rule(session)
+
         await session.commit()

@@ -12,6 +12,7 @@ def cart_kb(items) -> InlineKeyboardMarkup:
             callback_data=f"cart:remove:{item.product_id}", style="danger",
         )
     if items:
+        builder.button(text="🎟 إدخال كوبون خصم", callback_data="cart:coupon", style="secondary")
         builder.button(text="🧾 تنفيذ السلة", callback_data="cart:checkout", style="primary")
         builder.button(text="🧹 تفريغ السلة", callback_data="cart:clear", style="primary")
     builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")

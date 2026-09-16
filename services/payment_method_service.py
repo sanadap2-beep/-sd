@@ -24,6 +24,7 @@ PAYMENT_METHOD_SETTINGS = {
     "usdt_manual": "payment_usdt_manual_enabled",
     "shamcash_auto": "payment_shamcash_auto_enabled",
     "usdt_auto": "payment_usdt_auto_enabled",
+    "mobile_credit": "payment_mobile_credit_enabled",
     "other": "payment_other_enabled",
 }
 
@@ -99,6 +100,9 @@ async def _configuration_status(method: str) -> tuple[bool, str]:
         return False, "مفتاح PLISIO_SECRET_KEY غير مضبوط"
 
     if method == "other":
+        return True, "لا يحتاج إعداداً خارجياً"
+
+    if method == "mobile_credit":
         return True, "لا يحتاج إعداداً خارجياً"
 
     return False, "طريقة دفع غير معروفة"

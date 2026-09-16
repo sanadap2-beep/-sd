@@ -92,6 +92,12 @@ async def loyalty_daily(
         )
     else:
         await GamificationService.progress_event(session, db_user.id, "daily_checkin")
+        try:
+            from services.weekly_challenge_service import WeeklyChallengeService
+
+            await WeeklyChallengeService.record_event(session, db_user.id, event="checkins")
+        except Exception:
+            pass
         await callback.answer(
             f"🎉 حصلت على {points} نقطة! السلسلة: {streak} يوم.",
             show_alert=True,

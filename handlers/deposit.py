@@ -23,6 +23,7 @@ from services.notification_service import NotificationService
 from services.stars_service import StarsService
 from services.dynamic_service import DynamicService
 from services.input_validation_service import InputValidationError, InputValidationService
+from services.payment_method_service import payment_method_enabled
 from states.states import DepositStates
 from keyboards.admin import deposit_decision_kb
 from services.i18n_service import I18nService
@@ -73,10 +74,11 @@ async def _show_deposit_methods(target, db_user=None):
     usdt_manual = await SettingsService.get_bool('payment_usdt_manual_enabled', True) and any((settings.USDT_TRC20_ADDRESS, settings.USDT_ERC20_ADDRESS, settings.USDT_BEP20_ADDRESS))
     shamcash_auto = await SettingsService.get_bool('payment_shamcash_auto_enabled', True) and bool(settings.SAM_API_KEY and settings.SAM_API_WALLET_ADDRESS)
     usdt_auto = await SettingsService.get_bool('payment_usdt_auto_enabled', True) and bool(settings.PLISIO_SECRET_KEY)
+    mobile_credit = await payment_method_enabled("mobile_credit")
     other = await SettingsService.get_bool('payment_other_enabled', True)
     language = getattr(db_user, 'language_code', 'ar') or 'ar'
     text = I18nService.t('deposit_title', language)
-    kb = deposit_menu_kb(shamcash_manual_enabled=shamcash_manual, stars_enabled=stars, usdt_manual_enabled=usdt_manual, shamcash_auto_enabled=shamcash_auto, usdt_auto_enabled=usdt_auto, other_enabled=other, language=language)
+    kb = deposit_menu_kb(shamcash_manual_enabled=shamcash_manual, stars_enabled=stars, usdt_manual_enabled=usdt_manual, shamcash_auto_enabled=shamcash_auto, usdt_auto_enabled=usdt_auto, mobile_credit_enabled=mobile_credit, other_enabled=other, language=language)
     if isinstance(target, CallbackQuery):
         try:
             await target.message.edit_text(text, reply_markup=kb)
@@ -129,8 +131,24 @@ async def deposit_accept(callback: CallbackQuery, session, bot):
     deposit.admin_id = admin_user.id
     deposit.processed_at = datetime.utcnow()
     await session.commit()
+    try:
+        from services.deposit_bonus_service import DepositBonusService
+        bonus = await DepositBonusService.apply_for_deposit(
+            session,
+            user_id=deposit.user_id,
+            deposit_amount_usd=deposit.amount_usd,
+            deposit_id=deposit.id,
+            deposit_source='deposit_requests',
+        )
+    except Exception:
+        logger.exception(f'فشل صرف مكافأة شحن لإيداع #{deposit.id}')
+        bonus = Decimal('0')
     notifier = NotificationService(bot)
-    await notifier.notify_deposit_approved(user_telegram_id=user.telegram_id, amount_usd=str(deposit.amount_usd))
+    await notifier.notify_deposit_approved(
+        user_telegram_id=user.telegram_id,
+        amount_usd=str(deposit.amount_usd),
+        bonus_usd=str(bonus) if bonus and bonus > 0 else None,
+    )
     try:
         await callback.message.edit_caption(caption=(callback.message.caption or '') + f'\n\n✅ <b>تم القبول</b> بواسطة {callback.from_user.full_name}', reply_markup=None)
     except Exception:
