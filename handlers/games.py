@@ -478,11 +478,17 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         det = await service_details(product, session)
         live_price = await live_sell_price(product, session)
         back_callback = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
-        head = _product_head(product, '📈')
+        head = _product_head(product, '🎮' if product.requires_player_id else '📈')
         details_kb = format_details_kb(det, live_price, back_callback)
         await callback.message.edit_text(head, reply_markup=details_kb)
         await state.update_data(product_id=product_id, price_override=str(live_price))
-        if product.requires_link:
+        if product.requires_player_id:
+            # شحن الألعاب: لا يُنفَّذ الطلب عند المزود بلا Player ID.
+            # هذه الشاشة كانت تقفز للتأكيد مباشرة، فيُرسل الطلب بهدف فارغ
+            # (target='') ويُسحب رصيد الزبون بلا إمكانية تسليم.
+            await callback.message.answer(I18nService.t('send_player_id', language))
+            await state.set_state(GamesOrderStates.waiting_player_id)
+        elif product.requires_link:
             await callback.message.answer(I18nService.t('send_link', language))
             await state.set_state(SMMOrderStates.waiting_link)
         else:

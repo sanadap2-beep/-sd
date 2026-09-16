@@ -303,10 +303,13 @@ def provider_services_kb(
     """
     قائمة خدمات المزود مع Pagination.
     """
+    from services.service_localization_service import service_name_ar
+
     b = InlineKeyboardBuilder()
 
     for svc in services:
-        display_name = svc.name
+        # الاسم العربي المحفوظ وقت السحب (يسقط للاسم الأصلي للسجلات القديمة)
+        display_name = service_name_ar(svc) or svc.name
         if len(display_name) > 45:
             display_name = display_name[:42] + "..."
 

@@ -968,15 +968,27 @@ async def aprov_service_view(callback: CallbackQuery, session):
     )
     products_count = products_count_result.scalar_one()
 
+    # الاسم بالعربية (المحفوظ وقت السحب)، والأصلي تحته للمطابقة مع المزود.
+    from services.service_localization_service import (
+        display_category_name,
+        is_arabic,
+        service_name_ar,
+    )
+
+    display_name = service_name_ar(service)
+    name_lines = f"📝 الاسم: <b>{display_name}</b>\n"
+    if not is_arabic(service.name or "") and display_name != (service.name or ""):
+        name_lines += f"<i>أصلي: {service.name}</i>\n"
+
     text = (
         f"📦 <b>تفاصيل الخدمة</b>\n\n"
         f"🔌 المزود: {provider.name}\n"
         f"🆔 الآيدي: <code>{service.external_service_id}</code>\n"
-        f"📝 الاسم: <b>{service.name}</b>\n"
+        f"{name_lines}"
     )
 
     if service.category:
-        text += f"📁 التصنيف: {service.category}\n"
+        text += f"📁 التصنيف: {display_category_name(service.category)}\n"
     if service.service_type:
         text += f"🏷 النوع: {service.service_type}\n"
 
@@ -1071,16 +1083,22 @@ async def _ensure_service_subcategory(session, category: Category, service: Prov
         name = matched.name_ar
         emoji = matched.emoji
     else:
-        name = (raw_name or "منتجات عامة")[:64]
+        # اسم القسم بالعربية («Games» → «ألعاب»، «PUBG» → «ببجي»).
+        # الاسم الأصلي يبقى للمطابقة مع أقسام أُنشئت قبل التعريب
+        # حتى لا يتكرر القسم نفسه مرتين.
+        from services.service_localization_service import display_category_name
+
+        fallback = (raw_name or "منتجات عامة")[:64]
+        name = (display_category_name(raw_name) or fallback)[:64]
         emoji = category.emoji
 
     result = await session.execute(
         select(SubCategory).where(
             SubCategory.category_id == category.id,
-            SubCategory.name_ar == name,
+            SubCategory.name_ar.in_({name, (raw_name or "منتجات عامة")[:64]}),
         )
     )
-    subcategory = result.scalar_one_or_none()
+    subcategory = result.scalars().first()
     if subcategory is not None:
         if matched is not None:
             subcategory.name_ar = matched.name_ar
@@ -1138,10 +1156,16 @@ async def create_product_from_provider_service(callback: CallbackQuery, session)
     subcategory = await _ensure_service_subcategory(session, category, service)
     await session.commit()
 
+    # الاسم الذي يراه الزبون عربي دائماً: الاسم العربي المحفوظ وقت السحب،
+    # والاسم الأصلي يبقى في ProviderService.name للمطابقة مع المزود.
+    # (كان يُنسخ الاسم الإنجليزي هنا، فيظهر «PUBG Mobile 60 UC» للزبون
+    # رغم أن مسار «الخدمات المسحوبة» ينشره «ببجي موبايل 60 UC».)
+    from services.service_localization_service import service_name_ar
+
     product = await DynamicService.create_product(
         session=session,
         sub_category_id=subcategory.id,
-        name_ar=service.name[:128],
+        name_ar=(service_name_ar(service) or service.name)[:128],
         description=(service.description or f"منتج مستورد تلقائياً من {provider.name}")[:500],
         price_usd=sell_price,
         cost_price_usd=cost,
