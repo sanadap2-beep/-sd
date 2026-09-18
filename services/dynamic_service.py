@@ -405,7 +405,8 @@ class DynamicService:
             select(Product)
             .where(Product.id == product_id)
             .options(
-                selectinload(Product.sub_category),
+                selectinload(Product.sub_category).selectinload(SubCategory.category),
+                selectinload(Product.sub_category).selectinload(SubCategory.parent),
                 selectinload(Product.api_provider),
             )
         )
@@ -439,6 +440,14 @@ class DynamicService:
                 if requires_quantity
                 else ProductDisplayType.FIXED_TOTAL
             )
+        # وقت اكتمال خدمات الرشق موحد: 1 - 25 دقيقة.
+        if (requires_link or requires_quantity) and not estimated_time:
+            try:
+                from services.smm_price_service import SMM_DEFAULT_ETA
+
+                estimated_time = SMM_DEFAULT_ETA
+            except Exception:
+                estimated_time = "1 - 25 دقيقة"
         product = Product(
             sub_category_id=sub_category_id,
             name_ar=name_ar,

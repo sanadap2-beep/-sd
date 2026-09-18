@@ -82,7 +82,7 @@ async def inline_product_search(inline_query: InlineQuery):
             # Fallback for tests/local setups without a resolvable username.
             button = InlineKeyboardButton(
                 text="🛒 شراء المنتج",
-                callback_data=f"prod:{product.id}",
+                callback_data=f"prod:{product.id}", style="success",
             )
         results.append(
             InlineQueryResultArticle(

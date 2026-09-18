@@ -702,6 +702,7 @@ class PulledServicesService:
                 provider_service_id=service.external_service_id,
                 name_ar=name_ar,
                 description=(service.description or "")[:500] or None,
+                estimated_time="1 - 25 دقيقة",
                 price_usd=sell,
                 cost_price_usd=rate,
                 pricing_type=ProductPricingType.MARGIN_PERCENT,

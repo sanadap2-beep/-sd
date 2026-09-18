@@ -419,7 +419,7 @@ async def engage_review_pick(callback: CallbackQuery, session, db_user: User):
     for o in orders:
         lines.append(f"• #{o.id} — {o.service} ({o.country_code})")
         buttons.append(
-            [InlineKeyboardButton(text=f"⭐ #{o.id} {o.service}", callback_data=f"engage:review_order:{o.id}")]
+            [InlineKeyboardButton(text=f"⭐ #{o.id} {o.service}", callback_data=f"engage:review_order:{o.id}", style="primary")]
         )
     buttons.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="engage:reviews")])
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)

@@ -551,7 +551,7 @@ def admin_campaign_codes_kb(campaigns) -> InlineKeyboardMarkup:
             text=f"{status} {c.code}{tracking} ({c.used_count}/{c.max_uses})",
             callback_data=f"admin:campaign_view:{c.id}", style="primary",
         )
-    b.button(text="➕ إنشاء كود حملة", callback_data="admin:campaign_add", style="primary")
+    b.button(text="➕ إنشاء كود حملة", callback_data="admin:campaign_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
     b.adjust(1)
     return b.as_markup()

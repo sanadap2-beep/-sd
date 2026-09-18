@@ -107,7 +107,7 @@ async def _show_home(callback: CallbackQuery, session, db_user: User):
                     price=f"{pkg['price_usd']:g}$",
                 ),
                 callback_data=f"wa:buy:{pkg['days']}",
-                style="success",
+                style="primary",
             )
         if sub is not None:
             b.button(

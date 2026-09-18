@@ -36,7 +36,7 @@ async def points_home(callback: CallbackQuery, session, db_user: User):
     summary = await TaskService.user_summary(session, db_user.id)
 
     rows = [[InlineKeyboardButton(text="🎯 اكسب نقاطاً من المهام", callback_data="tasks:home")]]
-    rows.append([InlineKeyboardButton(text="💱 استبدال النقاط رصيداً", callback_data="points_redeem")])
+    rows.append([InlineKeyboardButton(text="💱 استبدال النقاط رصيداً", callback_data="points_redeem", style="primary")])
     rows.append([InlineKeyboardButton(text="⬅️", callback_data="menu:main")])
 
     await callback.message.edit_text(

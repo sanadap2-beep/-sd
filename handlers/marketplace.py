@@ -53,11 +53,11 @@ async def market_home(callback: CallbackQuery, db_user, session):
         return
     profile = await MarketProfileService.get(session, db_user.id)
     if profile is None:
-        await callback.message.edit_text(I18nService.t('ux_marketplace_79_2', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('ux_marketplace_84_3', _auto_lang(locals())), callback_data='market_profile_create')], [InlineKeyboardButton(text=I18nService.t('ux_marketplace_85_4', _auto_lang(locals())), callback_data='back_to_main')]]))
+        await callback.message.edit_text(I18nService.t('ux_marketplace_79_2', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('ux_marketplace_84_3', _auto_lang(locals())), callback_data='market_profile_create', style="success")], [InlineKeyboardButton(text=I18nService.t('ux_marketplace_85_4', _auto_lang(locals())), callback_data='back_to_main')]]))
         await callback.answer()
         return
     language = _lang(db_user)
-    rows = [[InlineKeyboardButton(text=I18nService.t('market_browse', language), callback_data='market_browse:all:0')], [InlineKeyboardButton(text=I18nService.t('market_sell', language), callback_data='market_sell')], [InlineKeyboardButton(text=I18nService.t('market_my_listings', language), callback_data='market_mine')], [InlineKeyboardButton(text=I18nService.t('market_my_purchases', language), callback_data='market_bought')], [InlineKeyboardButton(text='⬅️', callback_data='menu:main')]]
+    rows = [[InlineKeyboardButton(text=I18nService.t('market_browse', language), callback_data='market_browse:all:0', style="success")], [InlineKeyboardButton(text=I18nService.t('market_sell', language), callback_data='market_sell', style="success")], [InlineKeyboardButton(text=I18nService.t('market_my_listings', language), callback_data='market_mine', style="success")], [InlineKeyboardButton(text=I18nService.t('market_my_purchases', language), callback_data='market_bought', style="success")], [InlineKeyboardButton(text='⬅️', callback_data='menu:main')]]
     await callback.message.edit_text(f"{I18nService.t('market_home_title', language)}{I18nService.t('ux_marketplace_100_5', _auto_lang(locals()))}{profile.alias}{I18nService.t('ux_marketplace_100_6', _auto_lang(locals()))}{profile.successful_sales}{I18nService.t('ux_marketplace_100_7', _auto_lang(locals()))}{profile.failed_sales}\n\n{I18nService.t('market_home_desc', language)}{I18nService.t('ux_marketplace_100_8', _auto_lang(locals()))}", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
 
@@ -99,14 +99,14 @@ async def browse(callback: CallbackQuery, session, db_user):
     listings, total = await MarketplaceService.browse(session, kind, int(page))
     language = _lang(db_user)
     if not listings:
-        await callback.message.edit_text(I18nService.t('ux_marketplace_168_15', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_sell', language), callback_data='market_sell')], [InlineKeyboardButton(text='⬅️', callback_data='market:home')]]))
+        await callback.message.edit_text(I18nService.t('ux_marketplace_168_15', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_sell', language), callback_data='market_sell', style="success")], [InlineKeyboardButton(text='⬅️', callback_data='market:home')]]))
         await callback.answer()
         return
-    kind_rows = [[InlineKeyboardButton(text='🌐 الكل', callback_data='market_browse:all:0'), InlineKeyboardButton(text='🎮 حسابات', callback_data='market_browse:game_account:0'), InlineKeyboardButton(text='🔑 أكواد', callback_data='market_browse:digital_code:0')], [InlineKeyboardButton(text='🛠 خدمات', callback_data='market_browse:service:0'), InlineKeyboardButton(text='📱 أرقام', callback_data='market_browse:sms_number:0'), InlineKeyboardButton(text='📦 أخرى', callback_data='market_browse:other:0')]]
+    kind_rows = [[InlineKeyboardButton(text='🌐 الكل', callback_data='market_browse:all:0', style="success"), InlineKeyboardButton(text='🎮 حسابات', callback_data='market_browse:game_account:0', style="primary"), InlineKeyboardButton(text='🔑 أكواد', callback_data='market_browse:digital_code:0', style="success")], [InlineKeyboardButton(text='🛠 خدمات', callback_data='market_browse:service:0', style="success"), InlineKeyboardButton(text='📱 أرقام', callback_data='market_browse:sms_number:0', style="success"), InlineKeyboardButton(text='📦 أخرى', callback_data='market_browse:other:0', style="success")]]
     rows = list(kind_rows)
     for listing in listings:
         total_price = await MarketplaceService.total_price(listing)
-        rows.append([InlineKeyboardButton(text=f"{_KIND_LABELS.get(listing.kind, '📦')} {listing.title[:20]} — {total_price}$", callback_data=f'market_view:{listing.id}')])
+        rows.append([InlineKeyboardButton(text=f"{_KIND_LABELS.get(listing.kind, '📦')} {listing.title[:20]} — {total_price}$", callback_data=f'market_view:{listing.id}', style="success")])
     nav = []
     if int(page) > 0:
         nav.append(InlineKeyboardButton(text='◀️', callback_data=f'market_browse:{kind}:{int(page) - 1}'))
@@ -139,13 +139,13 @@ async def view_listing(callback: CallbackQuery, session, db_user):
     seller_profile = await MarketProfileService.get(session, listing.seller_id)
     seller_stats = MarketProfileService.stats(seller_profile)
     rows = []
-    rows.append([InlineKeyboardButton(text=f"👤 ملف البائع: {seller_stats['alias']}", callback_data=f'market_seller:{listing.seller_id}:{listing.id}')])
+    rows.append([InlineKeyboardButton(text=f"👤 ملف البائع: {seller_stats['alias']}", callback_data=f'market_seller:{listing.seller_id}:{listing.id}', style="success")])
     if listing.seller_id == db_user.id:
-        rows.append([InlineKeyboardButton(text='🗑 سحب إعلاني', callback_data=f'market_cancel:{listing.id}')])
+        rows.append([InlineKeyboardButton(text='🗑 سحب إعلاني', callback_data=f'market_cancel:{listing.id}', style="danger")])
     else:
-        rows.append([InlineKeyboardButton(text=I18nService.t('market_buy_button', language), callback_data=f'market_askbuy:{listing.id}:cash')])
+        rows.append([InlineKeyboardButton(text=I18nService.t('market_buy_button', language), callback_data=f'market_askbuy:{listing.id}:cash', style="success")])
         if await PointsService.enabled() and (db_user.loyalty_points or 0) > 0:
-            rows.append([InlineKeyboardButton(text=I18nService.t('market_buy_with_points', language), callback_data=f'market_askbuy:{listing.id}:points')])
+            rows.append([InlineKeyboardButton(text=I18nService.t('market_buy_with_points', language), callback_data=f'market_askbuy:{listing.id}:points', style="primary")])
     rows.append([InlineKeyboardButton(text='⬅️', callback_data='market_browse:all:0')])
     delivery_note = '🔐 <b>تسليم فوري وآلي</b> — الكود مشفر عندنا ويصلك لحظة الدفع.' if listing.secret_payload else '🤝 <b>بوساطة الإدارة</b> — أموالك محجوزة حتى يؤكد الأدمن التسليم.'
     await callback.message.edit_text(f"{_KIND_LABELS.get(listing.kind, '📦')} <b>{listing.title}</b>\n\n📝 {(listing.description or '—')[:1500]}{I18nService.t('ux_marketplace_277_19', _auto_lang(locals()))}{total}{I18nService.t('ux_marketplace_277_20', _auto_lang(locals()))}{seller_stats['alias']}</b> · {seller_stats['tier']}{I18nService.t('ux_marketplace_277_21', _auto_lang(locals()))}{seller_stats['success_rate']}%</b> ({seller_stats['successful_sales']}{I18nService.t('ux_marketplace_277_22', _auto_lang(locals()))}{seller_stats['failed_sales']}{I18nService.t('ux_marketplace_277_23', _auto_lang(locals()))}{listing.view_count}\n\n{delivery_note}\n\n" + ('' if enough else f"{I18nService.t('ux_marketplace_285_24', _auto_lang(locals()))}{balance}{I18nService.t('ux_marketplace_285_25', _auto_lang(locals()))}{total}{I18nService.t('ux_marketplace_285_26', _auto_lang(locals()))}"), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -169,7 +169,7 @@ async def seller_profile_view(callback: CallbackQuery, session):
         lines.append('\nلا توجد معروضات نشطة أخرى حالياً.')
     rows = []
     for item in active[:5]:
-        rows.append([InlineKeyboardButton(text=f'فتح #{item.id} {item.title[:20]}', callback_data=f'market_view:{item.id}')])
+        rows.append([InlineKeyboardButton(text=f'فتح #{item.id} {item.title[:20]}', callback_data=f'market_view:{item.id}', style="success")])
     if back_listing_id:
         rows.append([InlineKeyboardButton(text='⬅️ رجوع للمعروض', callback_data=f'market_view:{back_listing_id}')])
     rows.append([InlineKeyboardButton(text='⬅️ السوق', callback_data='market:home')])
@@ -194,7 +194,7 @@ async def ask_buy(callback: CallbackQuery, session, db_user):
         quote = await PointsService.quote(session, db_user.id, total)
         if quote['points_used'] > 0:
             summary = f"\n⭐ ستُدفع {quote['points_used']} نقطة ({quote['points_usd']}$)\n💵 والباقي {quote['cash_usd']}$ من رصيدك"
-    rows = [[InlineKeyboardButton(text='✅ تأكيد الشراء', callback_data=f'market_buy:{listing.id}:{mode}')], [InlineKeyboardButton(text=I18nService.t('market_buy_cancel', language), callback_data=f'market_view:{listing.id}')]]
+    rows = [[InlineKeyboardButton(text='✅ تأكيد الشراء', callback_data=f'market_buy:{listing.id}:{mode}', style="primary")], [InlineKeyboardButton(text=I18nService.t('market_buy_cancel', language), callback_data=f'market_view:{listing.id}', style="success")]]
     await callback.message.edit_text(I18nService.t('market_buy_confirm', language, title=listing.title, total=f'{total}', balance=f'{balance}') + summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
 
@@ -217,7 +217,7 @@ async def do_buy(callback: CallbackQuery, session, db_user, bot):
             code = None
         if code:
             await MarketplaceService.mark_delivered(session, transaction.id, db_user.id)
-            await callback.message.edit_text(I18nService.t('market_secret_revealed', language, code=code) + I18nService.t('ux_marketplace_437_29', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('ux_marketplace_441_30', _auto_lang(locals())), callback_data=f'market_good:{transaction.id}')], [InlineKeyboardButton(text=I18nService.t('ux_marketplace_442_31', _auto_lang(locals())), callback_data=f'market_bad:{transaction.id}')]]))
+            await callback.message.edit_text(I18nService.t('market_secret_revealed', language, code=code) + I18nService.t('ux_marketplace_437_29', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('ux_marketplace_441_30', _auto_lang(locals())), callback_data=f'market_good:{transaction.id}', style="success")], [InlineKeyboardButton(text=I18nService.t('ux_marketplace_442_31', _auto_lang(locals())), callback_data=f'market_bad:{transaction.id}', style="success")]]))
             await notifier.notify_admin(f'✅ العملية #{transaction.id} سُلّمت آلياً.\nبانتظار تأكيد المشتري أو فتح نزاع.')
             return
     await callback.message.edit_text(I18nService.t('market_bought', language, tx_id=transaction.id) + I18nService.t('ux_marketplace_454_32', _auto_lang(locals())))
@@ -264,7 +264,7 @@ async def buyer_reports_bad(callback: CallbackQuery, session, db_user, bot):
     tx = await session.get(MarketTransaction, tx_id)
     listing = await session.get(MarketListing, tx.listing_id) if tx else None
     await callback.message.edit_text(f"{I18nService.t('ux_marketplace_529_47', _auto_lang(locals()))}{tx_id}{I18nService.t('ux_marketplace_529_48', _auto_lang(locals()))}")
-    await NotificationService(bot).notify_admin(f"⚠️ <b>بلاغ معلومات خاطئة في سوق المستخدمين</b>\n\n🆔 العملية: #{tx_id}\n📄 الإعلان: {(listing.title if listing else '—')}\n👤 البائع: <code>{(tx.seller_id if tx else '—')}</code>\n🛒 المشتري: <code>{db_user.id}</code>\n💰 المبلغ المحجوز: {(tx.total_charged_usd if tx else '—')}$\n\nاختر استرجاع المال للشاري أو الانتظار للتحقق.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='↩️ إعادة المال للشاري', callback_data=f'mkt_refund:{tx_id}')], [InlineKeyboardButton(text='⏳ الانتظار للتحقق', callback_data=f'mkt_wait:{tx_id}')], [InlineKeyboardButton(text='🔎 فتح العملية', callback_data=f'mkt_tx:{tx_id}')]]))
+    await NotificationService(bot).notify_admin(f"⚠️ <b>بلاغ معلومات خاطئة في سوق المستخدمين</b>\n\n🆔 العملية: #{tx_id}\n📄 الإعلان: {(listing.title if listing else '—')}\n👤 البائع: <code>{(tx.seller_id if tx else '—')}</code>\n🛒 المشتري: <code>{db_user.id}</code>\n💰 المبلغ المحجوز: {(tx.total_charged_usd if tx else '—')}$\n\nاختر استرجاع المال للشاري أو الانتظار للتحقق.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='↩️ إعادة المال للشاري', callback_data=f'mkt_refund:{tx_id}', style="danger")], [InlineKeyboardButton(text='⏳ الانتظار للتحقق', callback_data=f'mkt_wait:{tx_id}')], [InlineKeyboardButton(text='🔎 فتح العملية', callback_data=f'mkt_tx:{tx_id}')]]))
     await callback.answer(I18nService.t('ux_marketplace_548_49', _auto_lang(locals())))
 
 @router.callback_query(F.data == 'market_sell')
@@ -272,7 +272,7 @@ async def sell_start(callback: CallbackQuery, state: FSMContext):
     if not await MarketplaceService.enabled():
         await callback.answer(I18nService.t('ux_marketplace_557_50', _auto_lang(locals())), show_alert=True)
         return
-    rows = [[InlineKeyboardButton(text=label, callback_data=f'market_kind:{key}')] for key, label in _KIND_LABELS.items()]
+    rows = [[InlineKeyboardButton(text=label, callback_data=f'market_kind:{key}', style="success")] for key, label in _KIND_LABELS.items()]
     rows.append([InlineKeyboardButton(text='⬅️', callback_data='market:home')])
     await callback.message.edit_text(I18nService.t('ux_marketplace_565_51', _auto_lang(locals())) + I18nService.t('market_kind_question', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
@@ -328,7 +328,7 @@ async def sell_price(message: Message, state: FSMContext):
         await state.set_state(MarketCreateStates.waiting_proof)
         return await message.answer(I18nService.t('market_ask_proof', 'ar'))
     await state.set_state(MarketCreateStates.waiting_photos)
-    await message.answer(I18nService.t('market_ask_photos', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_photos_done', 'ar'), callback_data='market_photos_done')]]))
+    await message.answer(I18nService.t('market_ask_photos', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_photos_done', 'ar'), callback_data='market_photos_done', style="success")]]))
 
 @router.message(MarketCreateStates.waiting_secret)
 async def sell_secret(message: Message, state: FSMContext):
@@ -337,7 +337,7 @@ async def sell_secret(message: Message, state: FSMContext):
         return await message.answer(I18nService.t('ux_marketplace_649_58', _auto_lang(locals())))
     await state.update_data(secret=secret)
     await state.set_state(MarketCreateStates.waiting_photos)
-    await message.answer(I18nService.t('ux_marketplace_653_59', _auto_lang(locals())) + I18nService.t('market_ask_photos', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_photos_done', 'ar'), callback_data='market_photos_done')]]))
+    await message.answer(I18nService.t('ux_marketplace_653_59', _auto_lang(locals())) + I18nService.t('market_ask_photos', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_photos_done', 'ar'), callback_data='market_photos_done', style="success")]]))
 
 @router.message(MarketCreateStates.waiting_proof)
 async def sell_proof(message: Message, state: FSMContext):
@@ -346,7 +346,7 @@ async def sell_proof(message: Message, state: FSMContext):
         return await message.answer(I18nService.t('ux_marketplace_666_60', _auto_lang(locals())))
     await state.update_data(proof=proof)
     await state.set_state(MarketCreateStates.waiting_photos)
-    await message.answer(I18nService.t('market_ask_photos', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_photos_done', 'ar'), callback_data='market_photos_done')]]))
+    await message.answer(I18nService.t('market_ask_photos', 'ar'), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('market_photos_done', 'ar'), callback_data='market_photos_done', style="success")]]))
 
 @router.message(MarketCreateStates.waiting_photos, F.photo)
 async def sell_photo(message: Message, state: FSMContext):
@@ -417,7 +417,7 @@ async def my_purchases(callback: CallbackQuery, session, db_user):
         listing = await session.get(MarketListing, tx.listing_id)
         lines.append(f"#{tx.id} {(listing.title[:20] if listing else '—')} — {tx.total_charged_usd}$ · {status_labels.get(tx.status, tx.status.value)}")
         if tx.status in (EscrowStatus.FUNDED, EscrowStatus.DELIVERED):
-            rows.append([InlineKeyboardButton(text=f'⚠️ فتح نزاع #{tx.id}', callback_data=f'market_dispute:{tx.id}')])
+            rows.append([InlineKeyboardButton(text=f'⚠️ فتح نزاع #{tx.id}', callback_data=f'market_dispute:{tx.id}', style="success")])
     rows.append([InlineKeyboardButton(text='⬅️', callback_data='market:home')])
     await callback.message.edit_text(I18nService.t('ux_marketplace_835_70', _auto_lang(locals())) + '\n'.join(lines) + I18nService.t('ux_marketplace_836_71', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()

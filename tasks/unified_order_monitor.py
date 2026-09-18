@@ -13,6 +13,8 @@ from sqlalchemy.orm import selectinload
 
 from database.engine import async_session_maker
 from database.models import (
+    Product,
+    SubCategory,
     UnifiedOrder,
     UnifiedOrderStatus,
     TransactionType,
@@ -46,7 +48,12 @@ async def check_unified_orders(bot):
                 )
             )
             .options(
-                selectinload(UnifiedOrder.product),
+                selectinload(UnifiedOrder.product).selectinload(
+                    Product.sub_category
+                ).selectinload(SubCategory.category),
+                selectinload(UnifiedOrder.product).selectinload(
+                    Product.sub_category
+                ).selectinload(SubCategory.parent),
                 selectinload(UnifiedOrder.api_provider),
                 selectinload(UnifiedOrder.user),
             )
@@ -186,11 +193,26 @@ async def _handle_completed(session, order, user, product_name, notifier):
         ),
     )
 
+    from services.smm_catalog import button_label as _smm_label
+
+    _sub = order.product.sub_category if order.product is not None else None
+    _cat = _sub.category if _sub is not None else None
     await notifier.notify_successful_unified_order(
         username=user.username,
         full_name=user.full_name,
         product_name=product_name,
         price_usd=str(order.price_usd),
+        order_id=order.id,
+        quantity=order.quantity,
+        target=order.target,
+        app_name=_smm_label(_cat.name_ar, _cat.emoji) if _cat is not None else None,
+        section_name=_smm_label(_sub.name_ar, _sub.emoji) if _sub is not None else None,
+        service_name=product_name,
+        user_telegram_id=user.telegram_id,
+        is_smm=bool(
+            order.product is not None
+            and (order.product.requires_link or order.product.requires_quantity)
+        ),
     )
 
     logger.info(f"الطلب الموحد #{order.id} اكتمل بنجاح.")

@@ -8,6 +8,9 @@ from database.models import ProviderService
 from services.margin_service import MarginService
 logger = logging.getLogger(__name__)
 
+# الوقت الموحد لاكتمال طلبات خدمات الرشق (1 - 25 دقيقة).
+SMM_DEFAULT_ETA = "1 - 25 دقيقة"
+
 def _raw(raw_data):
     if not raw_data:
         return {}
@@ -41,10 +44,16 @@ async def live_sell_price(product, session):
 async def service_details(product, session):
     svc = await session.get(ProviderService, product.provider_service_ref_id) if product.provider_service_ref_id else None
     if svc is None:
-        return {}
+        return {"estimated_time": SMM_DEFAULT_ETA}
     raw = _raw(svc.raw_data)
     # التعبئة قد تُخزَّن كمدة (شهر/يوم) في raw_data أو كقيمة دعم refill.
     refill_period = _get(raw, "refill_period", "refill_time", "period", "package", default="")
+    # وقت اكتمال طلبات الرشق موحد: بين 1 و 25 دقيقة.
+    estimated = _get(raw, "time", "estimated_time", "EstimatedTime", default="")
+    if not estimated or estimated == "-":
+        estimated = SMM_DEFAULT_ETA
+    else:
+        estimated = SMM_DEFAULT_ETA
     return {
         "type": svc.service_type or _get(raw, "type", "service_type"),
         "name": svc.name, "rate": svc.rate_usd,
@@ -55,11 +64,14 @@ async def service_details(product, session):
         "speed": _get(raw, "speed", "Speed", "rate_per_hour"),
         "quality": _get(raw, "quality", "Quality", "qty"),
         "drop_rate": _get(raw, "drop", "drop_rate", "DropRate"),
-        "estimated_time": _get(raw, "time", "estimated_time", "EstimatedTime"),
+        "estimated_time": estimated,
     }
 
 def format_details(details, sell_price):
     refill = details.get("refill_period") or ("✅" if details.get("refill") else "❌")
+    eta = details.get("estimated_time") or SMM_DEFAULT_ETA
+    if eta == "-":
+        eta = SMM_DEFAULT_ETA
     return (
         f"📦 <b>{details.get('name', 'خدمة')}</b>\n\n"
         f"• النوع: <b>{details.get('type', '-')}</b>\n"
@@ -70,7 +82,7 @@ def format_details(details, sell_price):
         f"• النزول: <b>{details.get('drop_rate', '-')}</b>\n"
         f"• الحد الأدنى: <b>{details.get('min', '-')}</b>\n"
         f"• الحد الأقصى: <b>{details.get('max', '-')}</b>\n"
-        f"• الوقت: <b>{details.get('estimated_time', '-')}</b>\n"
+        f"• الوقت: <b>{eta}</b>\n"
         + (f"\n📝 <i>{details.get('description')}</i>" if details.get("description") else "")
     )
 
@@ -85,6 +97,9 @@ def format_details_kb(details, sell_price, back_callback: str) -> InlineKeyboard
     """
     refill = details.get("refill_period") or ("✅" if details.get("refill") else "❌")
     price_label = f"${_fmt_price(sell_price)}"
+    eta_value = details.get("estimated_time") or SMM_DEFAULT_ETA
+    if eta_value == "-":
+        eta_value = SMM_DEFAULT_ETA
 
     rows = [
         (details.get("type", "-"), "⭐ النوع :"),
@@ -95,7 +110,7 @@ def format_details_kb(details, sell_price, back_callback: str) -> InlineKeyboard
         (details.get("drop_rate", "-"), "📉 النزول :"),
         (str(details.get("min", "-")), "🔴 الحد الأدنى :"),
         (str(details.get("max", "-")), "🟢 الحد الأقصى :"),
-        (details.get("estimated_time", "-"), "⏰ الوقت :"),
+        (eta_value, "⏰ الوقت :"),
     ]
 
     b = InlineKeyboardBuilder()

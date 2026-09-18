@@ -32,6 +32,23 @@ def _mask_username(username: str | None, full_name: str | None) -> str:
     return f"{visible_start}***{visible_end}"
 
 
+def _mask_link(link: str | None) -> str:
+    """إخفاء الرابط للقناة العامة: 7 نقاط + آخر 10 أحرف."""
+    s = (link or "").strip()
+    if not s:
+        return "—"
+    tail = s[-10:] if len(s) >= 10 else s
+    return f"{'•' * 7}{tail}"
+
+
+def _mask_customer(telegram_id) -> str:
+    """إخفاء آيدي العميل: أول 4 أرقام + •••• + آخر رقمين."""
+    digits = "".join(ch for ch in str(telegram_id or "") if ch.isdigit())
+    if len(digits) >= 6:
+        return f"{digits[:4]}••••{digits[-2:]}"
+    return "••••••"
+
+
 class NotificationService:
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -220,7 +237,7 @@ class NotificationService:
             ),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="⭐ قيّم المزود", callback_data=f"engage:review_order:{order_id}")]
+                    [InlineKeyboardButton(text="⭐ قيّم المزود", callback_data=f"engage:review_order:{order_id}", style="primary")]
                 ]
             ),
             notification_type="order",
@@ -377,10 +394,46 @@ class NotificationService:
         full_name: str | None,
         product_name: str,
         price_usd: str,
+        *,
+        order_id: int | None = None,
+        quantity: int | None = None,
+        target: str | None = None,
+        app_name: str | None = None,
+        section_name: str | None = None,
+        service_name: str | None = None,
+        user_telegram_id=None,
+        is_smm: bool = False,
     ) -> None:
         """
         يرسل إشعار شراء منتج (لعبة/تطبيق/SMM) ناجح للقناة العامة.
+
+        طلبات الرشق (is_smm=True) تُنشر بالقالب الموحد:
+        التطبيق/القسم/الخدمة/رقم الطلب/العدد/السعر بالنقاط/الرابط والعميل
+        (مخفيان جزئياً).
         """
+        if is_smm and order_id is not None:
+            from decimal import Decimal, InvalidOperation
+
+            try:
+                price_label = f"{Decimal(str(price_usd)).normalize():f}"
+            except (InvalidOperation, ValueError, AttributeError):
+                price_label = str(price_usd)
+            sep = "▬" * 16
+            text = (
+                "🔔 <b>عملية رشق جديدة</b>\n"
+                f"{sep}\n"
+                f"🎬 التطبيق : {esc(app_name or '—')}\n"
+                f"🧩 القسم : {esc(section_name or '—')}\n"
+                f"🛒 الخدمة : {esc(service_name or product_name)}\n"
+                f"🆔 رقم الطلب : {order_id}\n"
+                f"🗣️ العدد المطلوب : {quantity if quantity is not None else '—'}\n"
+                f"💵 سعر الطلب : {price_label}$\n"
+                f"🔗 الرابط : {esc(_mask_link(target))}\n"
+                f"🆔 العميل : {esc(_mask_customer(user_telegram_id))}\n"
+                f"{sep}"
+            )
+            await self.notify_public_channel(text)
+            return
         masked = _mask_username(username, full_name)
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         text = (

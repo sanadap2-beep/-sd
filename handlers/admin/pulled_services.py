@@ -1303,7 +1303,7 @@ async def pulled_storesync_run(callback: CallbackQuery, session):
         "«📦 إدارة المنتجات».",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="📂 فتح القسم", callback_data=f"cat:{category.id}")],
+                [InlineKeyboardButton(text="📂 فتح القسم", callback_data=f"cat:{category.id}", style="success")],
                 [InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:pulled_services")],
             ]
         ),

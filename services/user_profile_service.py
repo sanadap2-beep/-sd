@@ -12,7 +12,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database.models import NumberOrder, SpecialOfferOrder, User
 from services.feature_service import FeatureService
@@ -84,6 +84,16 @@ class UserProfileService:
             if last_activity is None or (order_time and order_time > last_activity):
                 last_activity = order_time
 
+        # عدد الإحالات باستعلام عدّ صريح — الوصول لعلاقة user.referrals
+        # داخل AsyncSession يرفع MissingGreenlet (تحميل كسول غير مدعوم).
+        referral_count = int(
+            (
+                await session.execute(
+                    select(func.count(User.id)).where(User.referrer_id == user_id)
+                )
+            ).scalar_one()
+        )
+
         return {
             "user": user,
             "total_orders": total_orders,
@@ -99,7 +109,7 @@ class UserProfileService:
             "last_activity_at": last_activity,
             "joined_at": user.joined_at,
             "balance": user.balance,
-            "referral_count": len(list(user.referrals)) if user.referrals else 0,
+            "referral_count": referral_count,
         }
 
     @staticmethod

@@ -184,7 +184,7 @@ async def admin_deposit_rules_home(callback: CallbackQuery, session):
         lines.append("لا قواعد حالياً.")
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="➕ قاعدة جديدة", callback_data="admin_engage:deposit_new")],
+            [InlineKeyboardButton(text="➕ قاعدة جديدة", callback_data="admin_engage:deposit_new", style="primary")],
             [InlineKeyboardButton(text="⬅️ رجوع", callback_data="feat_home")],
         ]
     )
