@@ -305,6 +305,7 @@ class AdminProductRouteStates(StatesGroup):
 class AdminPulledServicesStates(StatesGroup):
     waiting_sell_price = State()
     waiting_search = State()
+    waiting_bulk_margin = State()
 
 
 class AdminPartnerPickStates(StatesGroup):
