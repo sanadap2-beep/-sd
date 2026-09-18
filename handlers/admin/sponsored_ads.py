@@ -71,10 +71,10 @@ async def admin_ad_view(callback: CallbackQuery, session):
     rows = []
     if ad.status == "pending":
         rows.append([InlineKeyboardButton(text="✅ قبول ونشر", callback_data=f"admin:ad_accept:{ad.id}")])
-        rows.append([InlineKeyboardButton(text="❌ رفض وإرجاع المال", callback_data=f"admin:ad_reject:{ad.id}")])
+        rows.append([InlineKeyboardButton(text="❌ رفض وإرجاع المال", callback_data=f"admin:ad_reject:{ad.id}", style="danger")])
     if ad.status == "active":
         rows.append([InlineKeyboardButton(text="📝 تعديل النص", callback_data=f"admin:ad_edit:{ad.id}")])
-        rows.append([InlineKeyboardButton(text="🗑 حذف الإعلان", callback_data=f"admin:ad_delete:{ad.id}")])
+        rows.append([InlineKeyboardButton(text="🗑 حذف الإعلان", callback_data=f"admin:ad_delete:{ad.id}", style="danger")])
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:ads")])
     await callback.message.edit_text(
         f"📢 <b>إعلان #{ad.id}</b>\n\n"

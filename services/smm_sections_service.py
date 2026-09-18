@@ -341,6 +341,9 @@ class SmmSectionsService:
                                 existing.status = ProductStatus.ACTIVE
                                 report["products_reactivated"] += 1
                             existing.sort_order = position * 10
+                            # توحيد وقت الاكتمال للمنتجات القديمة أيضاً.
+                            if existing.estimated_time != "1 - 25 دقيقة":
+                                existing.estimated_time = "1 - 25 دقيقة"
                             report["reordered"] += 1
                         else:
                             report["skipped_existing"] += 1
@@ -367,6 +370,7 @@ class SmmSectionsService:
                         provider_service_id=service.external_service_id,
                         name_ar=product_name,
                         description=(service.description or service.category or "")[:500] or None,
+                        estimated_time="1 - 25 دقيقة",
                         price_usd=sell_price,
                         cost_price_usd=Decimal(str(service.rate_usd or 0)),
                         fulfillment_type=ProductFulfillmentType.API,

@@ -60,7 +60,7 @@ async def withdrawal_view(callback: CallbackQuery, session):
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="✅ تم الدفع", callback_data=f"admin:withdraw_paid:{req.id}")],
-                [InlineKeyboardButton(text="❌ رفض وإرجاع الرصيد", callback_data=f"admin:withdraw_reject:{req.id}")],
+                [InlineKeyboardButton(text="❌ رفض وإرجاع الرصيد", callback_data=f"admin:withdraw_reject:{req.id}", style="danger")],
                 [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:withdrawals")],
             ]
         ),

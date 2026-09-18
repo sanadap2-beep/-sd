@@ -161,7 +161,7 @@ def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineKeyboar
         b.button(
             text=public_server_label(index, bool(getattr(server, "is_working", False))),
             callback_data=f"num_server_pick:{service_code}:{server.id}",
-            style="primary",
+            style="success",
         )
     b.button(text="🔙 رجوع", callback_data="num_hub")
     b.adjust(1)

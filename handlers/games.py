@@ -114,6 +114,11 @@ def _glang(db_user) -> str:
 
 def _eta_line(product, language: str = "ar") -> str:
     """سطر الوقت التقريبي للاكتمال إن وُجد."""
+    from services.smm_price_service import SMM_DEFAULT_ETA
+
+    # خدمات الرشق (رابط/كمية) وقتها موحد: بين 1 و 25 دقيقة.
+    if getattr(product, "requires_link", False) or getattr(product, "requires_quantity", False):
+        return f"\n{I18nService.t('eta_label', language)}: {SMM_DEFAULT_ETA}"
     eta = getattr(product, "estimated_time", None)
     if eta:
         return f"\n{I18nService.t('eta_label', language)}: {esc(str(eta))}"
@@ -1009,7 +1014,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=[
                             [InlineKeyboardButton(text="✅ أرسل البيانات يدوياً", callback_data=f"admin:sub_send:{order.id}")],
-                            [InlineKeyboardButton(text="❌ إلغاء + استرجاع", callback_data=f"admin:order_refund_ask:{order.id}")],
+                            [InlineKeyboardButton(text="❌ إلغاء + استرجاع", callback_data=f"admin:order_refund_ask:{order.id}", style="danger")],
                         ]
                     ),
                 )
@@ -1078,13 +1083,30 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             "❌ لا يمكنك تنفيذه؟ «ألغِه» لاسترجاع رصيد المستخدم.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="✅ نفّذته — أُشعر المستخدم", callback_data=f"admin:order_complete:{order.id}")],
-                    [InlineKeyboardButton(text="❌ أَلْغِه — استرجاع", callback_data=f"admin:order_refund_ask:{order.id}")],
-                    [InlineKeyboardButton(text="👁 تفاصيل الطلب", callback_data=f"admin:order_view:{order.id}")],
+                    [InlineKeyboardButton(text="✅ نفّذته — أُشعر المستخدم", callback_data=f"admin:order_complete:{order.id}", style="primary")],
+                    [InlineKeyboardButton(text="❌ أَلْغِه — استرجاع", callback_data=f"admin:order_refund_ask:{order.id}", style="danger")],
+                    [InlineKeyboardButton(text="👁 تفاصيل الطلب", callback_data=f"admin:order_view:{order.id}", style="primary")],
                 ]
             ),
         )
     else:
         await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {esc(target or '—')}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}", notification_type="order")
-    await notifier.notify_successful_unified_order(username=db_user.username, full_name=db_user.full_name, product_name=product.name_ar, price_usd=str(final_price))
+    from services.smm_catalog import button_label as _smm_label
+
+    _sub = product.sub_category
+    _cat = _sub.category if _sub is not None else None
+    await notifier.notify_successful_unified_order(
+        username=db_user.username,
+        full_name=db_user.full_name,
+        product_name=product.name_ar,
+        price_usd=str(final_price),
+        order_id=order.id,
+        quantity=quantity,
+        target=target,
+        app_name=_smm_label(_cat.name_ar, _cat.emoji) if _cat is not None else None,
+        section_name=_smm_label(_sub.name_ar, _sub.emoji) if _sub is not None else None,
+        service_name=product.name_ar,
+        user_telegram_id=db_user.telegram_id,
+        is_smm=bool(product.requires_link or product.requires_quantity),
+    )
     await state.clear()

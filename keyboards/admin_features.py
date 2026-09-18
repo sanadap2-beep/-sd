@@ -72,7 +72,7 @@ def feature_detail_kb(spec: FeatureSpec, enabled: bool) -> InlineKeyboardMarkup:
         )
     if spec.key == "deposit_bonuses":
         rows.append(
-            [InlineKeyboardButton(text="🎁 إدارة قواعد المكافآت", callback_data="admin_engage:deposit_rules")]
+            [InlineKeyboardButton(text="🎁 إدارة قواعد المكافآت", callback_data="admin_engage:deposit_rules", style="primary")]
         )
     if spec.key == "weekly_challenges":
         rows.append(

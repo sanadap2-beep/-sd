@@ -53,7 +53,7 @@ async def cockpit(callback: CallbackQuery, session):
             InlineKeyboardButton(text="🛡 الحارس", callback_data="bonus:sentinel"),
         ],
         [
-            InlineKeyboardButton(text="↩️ الاسترجاع", callback_data="bonus:refund"),
+            InlineKeyboardButton(text="↩️ الاسترجاع", callback_data="bonus:refund", style="danger"),
             InlineKeyboardButton(text="🧩 الإضافات", callback_data="admin:features"),
         ],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:main")],

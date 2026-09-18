@@ -20,7 +20,7 @@ router.callback_query.filter(IsAdmin())
 def _admin_home_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ إضافة عرض جديد", callback_data="admin:so_new")],
-        [InlineKeyboardButton(text="🧑‍💼 طلبات العروض اليدوية", callback_data="admin:so_manual_orders")],
+        [InlineKeyboardButton(text="🧑‍💼 طلبات العروض اليدوية", callback_data="admin:so_manual_orders", style="primary")],
         [InlineKeyboardButton(text="🔥 العروض النشطة", callback_data="admin:so_active")],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:main")],
     ])
@@ -224,7 +224,7 @@ async def offer_view(callback: CallbackQuery, session):
         f"تصويتات التمديد: {offer.extend_votes}/50\nالوقت المتبقي: {left}\n\n"
         f"{offer.description or '—'}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗑 حذف العرض فوراً", callback_data=f"admin:so_delete:{offer.id}")],
+            [InlineKeyboardButton(text="🗑 حذف العرض فوراً", callback_data=f"admin:so_delete:{offer.id}", style="danger")],
             [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:special_offers")],
         ]),
     )
@@ -250,7 +250,7 @@ async def manual_orders(callback: CallbackQuery, session):
         await callback.message.edit_text("لا توجد طلبات عروض يدوية معلقة.", reply_markup=_admin_home_kb())
         await callback.answer()
         return
-    rows = [[InlineKeyboardButton(text=f"#{o.id} عرض #{o.offer_id} · {o.price_usd}$", callback_data=f"admin:so_order:{o.id}")] for o in orders]
+    rows = [[InlineKeyboardButton(text=f"#{o.id} عرض #{o.offer_id} · {o.price_usd}$", callback_data=f"admin:so_order:{o.id}", style="primary")] for o in orders]
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:special_offers")])
     await callback.message.edit_text("🧑‍💼 <b>طلبات العروض اليدوية</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
@@ -269,8 +269,8 @@ async def manual_order_view(callback: CallbackQuery, session):
         f"المطلوب من المستخدم:\n<code>{order.target}</code>\n"
         f"السعر: {order.price_usd}$",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ تم تنفيذ العرض بنجاح", callback_data=f"admin:so_order_done:{order.id}")],
-            [InlineKeyboardButton(text="↩️ تعذر التنفيذ واسترجاع", callback_data=f"admin:so_order_refund:{order.id}")],
+            [InlineKeyboardButton(text="✅ تم تنفيذ العرض بنجاح", callback_data=f"admin:so_order_done:{order.id}", style="primary")],
+            [InlineKeyboardButton(text="↩️ تعذر التنفيذ واسترجاع", callback_data=f"admin:so_order_refund:{order.id}", style="danger")],
             [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:so_manual_orders")],
         ]),
     )

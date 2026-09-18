@@ -69,11 +69,11 @@ async def coupon_code_received(message: Message, state: FSMContext, session):
     b = InlineKeyboardBuilder()
     b.button(
         text="📊 نسبة مئوية (%)",
-        callback_data="admin:coupon_dtype:percent",
+        callback_data="admin:coupon_dtype:percent", style="primary",
     )
     b.button(
         text="💵 مبلغ ثابت ($)",
-        callback_data="admin:coupon_dtype:fixed",
+        callback_data="admin:coupon_dtype:fixed", style="primary",
     )
     b.adjust(1)
     await message.answer(

@@ -269,9 +269,9 @@ async def feature_option_save(message: Message, state: FSMContext, session, db_u
 def _bulk_discounts_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🟢 خصومات خفيفة", callback_data="feat_bulk_preset:light")],
-            [InlineKeyboardButton(text="🔥 خصومات تسويقية", callback_data="feat_bulk_preset:growth")],
-            [InlineKeyboardButton(text="👑 خصومات تجار", callback_data="feat_bulk_preset:wholesale")],
+            [InlineKeyboardButton(text="🟢 خصومات خفيفة", callback_data="feat_bulk_preset:light", style="success")],
+            [InlineKeyboardButton(text="🔥 خصومات تسويقية", callback_data="feat_bulk_preset:growth", style="success")],
+            [InlineKeyboardButton(text="👑 خصومات تجار", callback_data="feat_bulk_preset:wholesale", style="success")],
             [InlineKeyboardButton(text="✍️ تعديل يدوي سهل", callback_data="feat_bulk_manual")],
             [InlineKeyboardButton(text="⬅️ رجوع", callback_data="feat_item:bulk_numbers")],
         ]

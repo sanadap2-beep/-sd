@@ -95,7 +95,7 @@ async def special_view(callback: CallbackQuery, session, db_user):
         f"⏳ المتبقي: {left}\n\n"
         f"📝 {offer.description or '—'}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🛒 شراء العرض", callback_data=f"special:buy:{offer.id}")],
+            [InlineKeyboardButton(text="🛒 شراء العرض", callback_data=f"special:buy:{offer.id}", style="primary")],
             [InlineKeyboardButton(text="⬅️ العروض", callback_data="special:home")],
         ]),
     )
@@ -150,7 +150,7 @@ async def special_target(message: Message, state: FSMContext, session, db_user):
         f"💰 السعر: {price}\n"
         f"🎯 المطلوب: <code>{target}</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ تأكيد الشراء", callback_data="special:confirm")],
+            [InlineKeyboardButton(text="✅ تأكيد الشراء", callback_data="special:confirm", style="primary")],
             [InlineKeyboardButton(text="❌ إلغاء", callback_data="special:home")],
         ]),
     )
@@ -204,8 +204,8 @@ async def special_confirm(callback: CallbackQuery, state: FSMContext, session, d
             f"🎯 المطلوب: <code>{target}</code>\n"
             f"💰 السعر: {order.price_usd}$",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ تم التنفيذ", callback_data=f"admin:so_order_done:{order.id}")],
-                [InlineKeyboardButton(text="↩️ تعذر واسترجاع", callback_data=f"admin:so_order_refund:{order.id}")],
+                [InlineKeyboardButton(text="✅ تم التنفيذ", callback_data=f"admin:so_order_done:{order.id}", style="primary")],
+                [InlineKeyboardButton(text="↩️ تعذر واسترجاع", callback_data=f"admin:so_order_refund:{order.id}", style="danger")],
             ]),
         )
     await callback.answer("✅ تم الشراء.")
