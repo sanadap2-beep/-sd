@@ -201,7 +201,11 @@ class DynamicService:
 
     @staticmethod
     async def get_active_leaf_sub_categories(session) -> list[SubCategory]:
-        """كل الأقسام الفرعية القابلة لاستقبال منتجات (بلا أقسام داخلية)."""
+        """كل الأقسام الفرعية القابلة لاستقبال منتجات (بلا أقسام داخلية).
+
+        الورقة = قسم لا يملك أبناءً (مثل «ببجي» و«فري فاير» داخل «شحن ألعاب»).
+        القسم الأب الذي يملك أقساماً داخلية لا يُنشر فيه مباشرة.
+        """
         result = await session.execute(
             select(SubCategory)
             .options(
@@ -212,8 +216,12 @@ class DynamicService:
             .order_by(SubCategory.sort_order, SubCategory.id)
         )
         subs = list(result.scalars().all())
-        parents_ids = {sub.id for sub in subs if sub.parent_sub_category_id is not None}
-        return [sub for sub in subs if sub.id not in parents_ids]
+        has_children = {
+            sub.parent_sub_category_id
+            for sub in subs
+            if sub.parent_sub_category_id is not None
+        }
+        return [sub for sub in subs if sub.id not in has_children]
 
     @staticmethod
     async def find_child_section_by_kind(

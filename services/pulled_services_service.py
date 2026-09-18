@@ -301,18 +301,33 @@ class PulledServicesService:
         from services.service_localization_service import service_name_ar
 
         margin = Decimal(str(margin_percent or 0))
-        report = {"created": 0, "skipped_existing": 0, "skipped_unpriced": 0, "total": 0}
+        report = {
+            "created": 0,
+            "skipped_existing": 0,
+            "skipped_unpriced": 0,
+            "repriced": 0,
+            "total": 0,
+        }
 
         per_page = 200
         page = 0
         position = 0
-        existing_ids_rows = await session.execute(
-            select(Product.provider_service_ref_id).where(
-                Product.sub_category_id == sub_category_id,
-                Product.api_provider_id == provider_id,
+        existing_rows = (
+            await session.execute(
+                select(Product).where(
+                    Product.sub_category_id == sub_category_id,
+                    Product.api_provider_id == provider_id,
+                )
             )
-        )
-        existing_refs = {r for (r,) in existing_ids_rows.all() if r is not None}
+        ).scalars().all()
+        existing_by_ref = {
+            p.provider_service_ref_id: p for p in existing_rows if p.provider_service_ref_id
+        }
+
+        def _sell_for(rate: Decimal) -> Decimal:
+            return (rate * (Decimal("100") + margin) / Decimal("100")).quantize(
+                Decimal("0.0001"), rounding=ROUND_HALF_UP
+            )
 
         while position < max_items:
             services, total = await PulledServicesService.list_group_services(
@@ -322,17 +337,25 @@ class PulledServicesService:
             if not services:
                 break
             for service in services:
-                if service.id in existing_refs:
-                    report["skipped_existing"] += 1
-                    continue
                 rate = Decimal(str(service.rate_usd or 0))
                 if rate <= 0:
                     report["skipped_unpriced"] += 1
                     continue
+                known = existing_by_ref.get(service.id)
+                if known is not None:
+                    # منشور مسبقاً في نفس القسم (ربما بهامش غلط قديم):
+                    # حدّث هامشه وسعره بالهامش الجديد بدل التكرار.
+                    known.cost_price_usd = rate
+                    known.price_usd = _sell_for(rate)
+                    known.pricing_type = ProductPricingType.MARGIN_PERCENT
+                    known.profit_margin_percent = margin
+                    known.margin_manual = True
+                    if known.status != ProductStatus.ACTIVE:
+                        known.status = ProductStatus.ACTIVE
+                    report["repriced"] += 1
+                    continue
                 name_ar = (service_name_ar(service) or "خدمة")[:128]
-                sell = (rate * (Decimal("100") + margin) / Decimal("100")).quantize(
-                    Decimal("0.0001"), rounding=ROUND_HALF_UP
-                )
+                sell = _sell_for(rate)
                 product = Product(
                     sub_category_id=sub_category_id,
                     api_provider_id=provider_id,
@@ -344,7 +367,10 @@ class PulledServicesService:
                     cost_price_usd=rate,
                     pricing_type=ProductPricingType.MARGIN_PERCENT,
                     profit_margin_percent=margin,
-                    margin_manual=False,
+                    # هامش صريح اختاره الأدمن وقت النشر → له الأولوية دائماً.
+                    # بدونه يتجاهل resolve_product_margin هامش المنتج ويورث
+                    # هامش القسم/العالمي (50% افتراضياً) فيظهر سعر أعلى.
+                    margin_manual=True,
                     fulfillment_type=ProductFulfillmentType.API,
                     min_quantity=int(service.min_quantity or 1),
                     max_quantity=int(service.max_quantity or 1),
@@ -361,7 +387,7 @@ class PulledServicesService:
                     is_auto_published=False,
                 )
                 session.add(product)
-                existing_refs.add(service.id)
+                existing_by_ref[service.id] = product
                 report["created"] += 1
                 position += 1
                 if report["created"] % 100 == 0:
@@ -563,7 +589,10 @@ class PulledServicesService:
         # إصلاح قسم الرشق: نحفظ الهامش الضمني المستخلص من
         # (سعر البيع مقابل التكلفة) حتى يصبح الهامش مطبقاً وظاهراً
         # وقابلاً للتعديل، ولا يبقى المنتج بلا هامش يُحتسب عليه.
+        # margin_manual=True لأن السعر اختيار صريح من الأدمن وله الأولوية
+        # على هامش القسم/العالمي عند عرض السعر النهائي.
         await MarginService.attach_implicit_margin(product)
+        product.margin_manual = True
         await session.commit()
         return product
 

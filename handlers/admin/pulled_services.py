@@ -697,8 +697,8 @@ async def pulled_bulk_pick_sub(callback: CallbackQuery, session, state: FSMConte
         bulk_category=category,
     )
     b = InlineKeyboardBuilder()
-    for sub in subs[:20]:
-        label = f"{sub.emoji or ''} {sub.name_ar}".strip()[:50]
+    for sub in subs[:30]:
+        label = f"{sub.emoji or ''} {_sub_label(sub)}".strip()[:60]
         b.button(text=label, callback_data=f"ps:pbs:{sub.id}")
     b.button(text="🔙 رجوع", callback_data=f"ps:pg:{provider_id}:{group}")
     b.adjust(1)
@@ -711,6 +711,21 @@ async def pulled_bulk_pick_sub(callback: CallbackQuery, session, state: FSMConte
         "تبقى مخفية حتى تنشرها.",
         reply_markup=b.as_markup(),
     )
+
+
+def _sub_label(sub) -> str:
+    """تسمية هرمية: القسم الرئيسي / الأب / القسم (مثل: الألعاب / شحن ألعاب / ببجي)."""
+    cat = getattr(sub, "category", None)
+    parent = getattr(sub, "parent", None)
+    parts = []
+    cat_name = getattr(cat, "name_ar", None)
+    if cat_name:
+        parts.append(cat_name)
+    parent_name = getattr(parent, "name_ar", None)
+    if parent_name:
+        parts.append(parent_name)
+    parts.append(sub.name_ar or "")
+    return " / ".join(p for p in parts if p)
 
 
 @router.callback_query(F.data.startswith("ps:pbs:"))
@@ -780,7 +795,7 @@ async def pulled_bulk_margin_received(message: Message, session, state: FSMConte
         f"📂 قسمك: <b>{sub.name_ar}</b>\n"
         f"💰 الهامش: <b>{margin}%</b>\n\n"
         f"🆕 منتجات جديدة: <b>{report['created']}</b>\n"
-        f"⏭ موجودة مسبقاً (لم تُكرر): <b>{report['skipped_existing']}</b>\n"
+        f"🔄 صُحح سعرها بالهامش الجديد: <b>{report.get('repriced', 0)}</b>\n"
         f"🚫 بلا سعر (تُجوهلت): <b>{report['skipped_unpriced']}</b>\n\n"
         "الأسماء منشورة بالعربية، ويمكنك تعديل أي سعر/هامش لاحقاً من إدارة المنتجات."
     )
