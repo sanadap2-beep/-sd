@@ -19,7 +19,7 @@ def _info_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🛒 كيف تشتري من السوق", callback_data="info:market_buy", style="primary")],
         [InlineKeyboardButton(text="💰 كيف تبيع في السوق", callback_data="info:market_sell")],
         [InlineKeyboardButton(text="📱 شرح الأرقام", callback_data="info:numbers")],
-        [InlineKeyboardButton(text="🔥 العروض الخاصة", callback_data="info:special")],
+        [InlineKeyboardButton(text="🔥 العروض الخاصة", callback_data="info:special", style="success")],
         [InlineKeyboardButton(text="📢 الإعلانات المدفوعة", callback_data="info:ads")],
         [InlineKeyboardButton(text="🔔 الإشعارات", callback_data="info:notifications")],
         [InlineKeyboardButton(text="⬅️ رجوع للقائمة الرئيسية", callback_data="back_to_main")],

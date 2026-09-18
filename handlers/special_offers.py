@@ -48,7 +48,7 @@ async def special_home(callback: CallbackQuery, session, db_user):
         if timer_enabled and offer.ends_at:
             countdown = f" ⏱{_countdown_text(offer.ends_at)}"
         lines.append(f"#{offer.id} {mode} · <b>{offer.name}</b> — {price}{countdown}")
-        rows.append([InlineKeyboardButton(text=f"🔥 {offer.name[:28]} · {price}", callback_data=f"special:view:{offer.id}")])
+        rows.append([InlineKeyboardButton(text=f"🔥 {offer.name[:28]} · {price}", callback_data=f"special:view:{offer.id}", style="success")])
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="back_to_main")])
     await callback.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
@@ -151,7 +151,7 @@ async def special_target(message: Message, state: FSMContext, session, db_user):
         f"🎯 المطلوب: <code>{target}</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ تأكيد الشراء", callback_data="special:confirm", style="primary")],
-            [InlineKeyboardButton(text="❌ إلغاء", callback_data="special:home")],
+            [InlineKeyboardButton(text="❌ إلغاء", callback_data="special:home", style="success")],
         ]),
     )
 

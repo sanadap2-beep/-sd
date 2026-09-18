@@ -17,7 +17,7 @@ def _kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔌 ربط المزودين", callback_data="admin:guide:providers")],
         [InlineKeyboardButton(text="📦 إضافة المنتجات", callback_data="admin:guide:products")],
         [InlineKeyboardButton(text="🏪 سوق المستخدمين", callback_data="admin:guide:market")],
-        [InlineKeyboardButton(text="🔥 العروض الخاصة", callback_data="admin:guide:special")],
+        [InlineKeyboardButton(text="🔥 العروض الخاصة", callback_data="admin:guide:special", style="success")],
         [InlineKeyboardButton(text="📢 الإعلانات", callback_data="admin:guide:ads")],
         [InlineKeyboardButton(text="💳 الشحن والسحب", callback_data="admin:guide:finance")],
         [InlineKeyboardButton(text="🔔 الإشعارات والقنوات", callback_data="admin:guide:notifs")],
