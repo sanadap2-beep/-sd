@@ -2,172 +2,24 @@
 
 يُشغَّل يدوياً:  python scripts/apply_button_styles.py
 لا يلمس أزرار التنقّل (رجوع/صفحات/القائمة الرئيسية) فتبقى بالنمط الافتراضي.
+
+جداول التصنيف مستوردة من keyboards/style_utils.py (المصدر الوحيد).
 """
 
 from __future__ import annotations
 
 import pathlib
-import re
 import sys
 
 import libcst as cst
 import libcst.matchers as m
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 KEYBOARDS = ROOT / "keyboards"
 
-SUCCESS = "success"
-PRIMARY = "primary"
-DANGER = "danger"
-
-# ── تصنيف حسب callback_data (يُطابَق كـ prefix/substring) ──
-NAV_EXACT = {
-    "back_to_main",
-    "noop",
-    "ignore",
-    "close",
-    "store:home",
-}
-NAV_PATTERNS = (
-    r"^back",
-    r":back$",
-    r":back:",
-    r"^page:",
-    r":page:",
-    r"_page:",
-    r"^nav:",
-    r"page",
-)
-
-# ── ضبط حدود الكلمات ──
-# بدون هذا الحارس التقط نمط "reset" كلمة "preset" فصُبغت أزرار قوالب
-# إنشاء المزود (admin:aprov_custom_preset:*) بالأحمر بدل الأخضر، مع أنها
-# أزرار إنشاء لا حذف. أي نمط يبدأ بحرف يجب أن يبدأ عند حدّ كلمة حقيقي
-# (بداية النص، أو بعد ":" / "_" / "-") وإلا يُعتبر جزءاً من كلمة أطول.
-_WORD_PREFIX = r"(?<![A-Za-z0-9])"
-
-
-def _bounded(pattern: str) -> str:
-    """يمنع مطابقة النمط داخل كلمة أطول: ``reset`` لا يطابق ``preset``.
-
-    الحارس يستثني فقط الحروف والأرقام قبل النمط — لا الشرطة السفلية ولا
-    النقطتين، لأن ``admin:order_refund`` و``num_cancel`` فواصلها الحقيقية
-    هي ``:`` و``_`` ويجب أن تبقى مطابقة.
-
-    الأنماط المثبّتة أصلاً (تبدأ بـ ^ أو : أو _ أو -) تُترك كما هي.
-    """
-    if pattern.startswith(("^", ":", "_", "-", r"\b")):
-        return pattern
-    return _WORD_PREFIX + pattern
-
-
-DANGER_PATTERNS = (
-    r"terms",
-    r"cancel",
-    r"delete",
-    r"del:",
-    r"_del",
-    r"remove",
-    r"revoke",
-    r"void",
-    r"ban",
-    r"reject",
-    r"refund",
-    r"reset",
-    r"maintenance_on",
-    r"warn",
-)
-
-PRIMARY_PATTERNS = (
-    r"account",
-    r"balance",
-    r"deposit",
-    r"transfer",
-    r"points",
-    r"loyalty",
-    r"orders",
-    r"order",
-    r"my_",
-    r"wallet",
-    r"pay",
-    r"coupon",
-    r"gift",
-    r"redeem",
-    r"promo",
-    r"referral",
-    r"agent",
-    r"fund",
-    r"invoice",
-    r"rates",
-    r"margin",
-    r"stats",
-    r"cart",
-    r"checkout",
-    r"buy",
-    r"confirm",
-)
-
-SUCCESS_PATTERNS = (
-    r"^store",
-    r"^shop",
-    r"^cat",
-    r"^prod",
-    r"^subcat",
-    r"^num",
-    r"^svc",
-    r"^service",
-    r"^games",
-    r"^smm",
-    r"^market",
-    r"^extras",
-    r"^menu:search",
-    r"add$",
-    r"_add",
-    r":add",
-    r"create",
-    r"enable",
-    # «preset» = زر إنشاء بقوالب جاهزة، وليس حذفاً (قريب من "reset").
-    r"preset",
-    r"^admin:main$",
-)
-
-# الأنماط بعد ضبط الحدود: تُبنى مرة واحدة عند الاستيراد.
-NAV_PATTERNS = tuple(_bounded(p) for p in NAV_PATTERNS)
-DANGER_PATTERNS = tuple(_bounded(p) for p in DANGER_PATTERNS)
-PRIMARY_PATTERNS = tuple(_bounded(p) for p in PRIMARY_PATTERNS)
-SUCCESS_PATTERNS = tuple(_bounded(p) for p in SUCCESS_PATTERNS)
-
-
-NAV_TEXT_MARKERS = ("🔙", "🏠", "◀", "▶", "⬅", "➡", "⏮", "⏭", "«", "»", "رجوع", "عودة", "السابق", "التالي", "back", "next", "prev", "home")
-
-
-def is_nav_text(text: str) -> bool:
-    low = text.strip().lower()
-    return any(marker in low for marker in NAV_TEXT_MARKERS)
-
-
-def classify(callback: str, text_hint: str = "") -> str | None:
-    """يصنّف callback_data إلى لون زر، أو None لترك الزر بالنمط الافتراضي."""
-    if text_hint and is_nav_text(text_hint):
-        return None
-    cb = callback.strip().lower()
-    if not cb:
-        return None
-    if cb in NAV_EXACT and cb != "store:home":
-        return None
-    for pat in NAV_PATTERNS:
-        if re.search(pat, cb):
-            return None
-    for pat in DANGER_PATTERNS:
-        if re.search(pat, cb):
-            return DANGER
-    for pat in PRIMARY_PATTERNS:
-        if re.search(pat, cb):
-            return PRIMARY
-    for pat in SUCCESS_PATTERNS:
-        if re.search(pat, cb):
-            return SUCCESS
-    return None
+from keyboards.style_utils import classify  # noqa: E402
 
 
 def _literal_callback(node: cst.BaseExpression) -> str | None:

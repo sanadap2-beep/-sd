@@ -582,6 +582,16 @@ async def ai_answer(message: Message, state: FSMContext, session, db_user: User)
 # ══════════════ الطلب الصوتي ══════════════
 
 
+def _voice_route_button(label: str, callback_data: str) -> InlineKeyboardButton:
+    """زر التوجيه الصوتي بلون المخطط (إن وُجد) — الـ callback ديناميكي."""
+    from keyboards.style_utils import style_for_callback
+
+    style = style_for_callback(callback_data, label)
+    if style:
+        return InlineKeyboardButton(text=label, callback_data=callback_data, style=style)
+    return InlineKeyboardButton(text=label, callback_data=callback_data)
+
+
 @router.message(F.voice)
 async def voice_message(message: Message, session, db_user: User, bot):
     """يستقبل تسجيلاً صوتياً ويحوّله طلباً — إن كانت الميزة مفعّلة."""
@@ -640,7 +650,7 @@ async def voice_message(message: Message, session, db_user: User, bot):
         f"🎙 سمعت: «{text}»\n➡️ {label}",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=label, callback_data=routes[intent["intent"]])]
+                [_voice_route_button(label, routes[intent["intent"]])]
             ]
         ),
     )

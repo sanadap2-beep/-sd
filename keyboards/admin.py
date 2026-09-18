@@ -106,10 +106,16 @@ def admin_main_kb() -> InlineKeyboardMarkup:
 
 def admin_tab_kb(tab: str) -> InlineKeyboardMarkup:
     """Keyboard for one of the four admin tabs."""
+    from keyboards.style_utils import style_for_callback
+
     b = InlineKeyboardBuilder()
     _title, items = ADMIN_TABS.get(tab, ADMIN_TABS["finance"])
     for label, callback_data in items:
-        b.button(text=label, callback_data=callback_data)
+        _style = style_for_callback(callback_data, label)
+        if _style:
+            b.button(text=label, callback_data=callback_data, style=_style)
+        else:
+            b.button(text=label, callback_data=callback_data)
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup()
