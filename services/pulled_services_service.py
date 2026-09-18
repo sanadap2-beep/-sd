@@ -11,7 +11,7 @@ import unicodedata
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from database.models import (
@@ -57,6 +57,47 @@ _SEARCH_SPLIT_RE = re.compile(r"[\s,;،؛]+")
 
 
 class PulledServicesService:
+    # ─────────── فرز الألعاب عن الباقي ───────────
+    # أي خدمة يظهر في (الاسم/التصنيف/النوع) أحد هذه المفاتيح تُعتبر لعبة.
+    # الباقي (رشق/اشتراكات/بطاقات...) يذهب لمجموعة "other".
+    GAME_KEYWORDS: tuple[str, ...] = (
+        "free fire", "freefire", "pubg", "mobile legends", "mlbb",
+        "fortnite", "valorant", "fifa", "roblox", "minecraft",
+        "call of duty", "cod mobile", "codm", "genshin", "honor of kings",
+        "clash of clans", "clash royale", "clash squad", "brawl stars",
+        "blood strike", "efootball", "pes mobile", "fc mobile",
+        "league of legends", "wild rift", "apex", "ludo", "8 ball",
+        "gaming", "game top", "top up game", "diamonds", "diamand",
+        "uc pubg", "cp cod", "diamond game",
+        "ببجي", "فري فاير", "موبايل ليجندز", "العاب", "ألعاب", "لعبة",
+        "شحن العاب", "شحن لعبة", "جواهر", "شدات", "ماسات",
+    )
+
+    GROUP_GAMES = "games"
+    GROUP_OTHER = "other"
+
+    @staticmethod
+    def _game_like_filters():
+        """شروط SQL لاكتشاف خدمات الألعاب (LIKE على الاسم/التصنيف/النوع)."""
+        conds = []
+        for kw in PulledServicesService.GAME_KEYWORDS:
+            pattern = f"%{kw}%"
+            conds.append(func.lower(ProviderService.name).like(pattern))
+            conds.append(func.lower(ProviderService.category).like(pattern))
+            conds.append(func.lower(ProviderService.service_type).like(pattern))
+        return or_(*conds)
+
+    @staticmethod
+    def is_game_service(service: ProviderService) -> bool:
+        """تصنيف خدمة واحدة (للاستخدام في الذاكرة بعد الجلب)."""
+        hay = " ".join(
+            part for part in (
+                (service.name or ""),
+                (service.category or ""),
+                (service.service_type or ""),
+            ) if part
+        ).lower()
+        return any(kw in hay for kw in PulledServicesService.GAME_KEYWORDS)
     @staticmethod
     def classify(service: ProviderService) -> tuple[str, str]:
         return classify_smm_service(service.name, service.category, service.service_type)
@@ -144,6 +185,198 @@ class PulledServicesService:
         page = max(0, page)
         start = page * per_page
         return matched[start : start + per_page], total
+
+    # ─────────── فرز المزود: ألعاب / باقي + نشر جماعي ───────────
+
+    @staticmethod
+    async def provider_group_counts(
+        session, provider_id: int
+    ) -> dict[str, int]:
+        """عدد خدمات الألعاب مقابل الباقي لمزود واحد (استعلامان COUNT فقط)."""
+        base = (
+            ProviderService.api_provider_id == provider_id,
+            ProviderService.status == ProviderServiceStatus.ACTIVE,
+        )
+        games_q = select(func.count(ProviderService.id)).where(
+            *base, PulledServicesService._game_like_filters()
+        )
+        total_q = select(func.count(ProviderService.id)).where(*base)
+        total = (await session.execute(total_q)).scalar_one()
+        games = (await session.execute(games_q)).scalar_one()
+        games = int(games or 0)
+        total = int(total or 0)
+        return {"games": games, "other": max(0, total - games), "total": total}
+
+    @staticmethod
+    async def provider_group_categories(
+        session, provider_id: int, group: str, limit: int = 200
+    ) -> list[tuple[str, int]]:
+        """تصنيفات المزود داخل مجموعة (ألعاب/باقي) مع العدد — GROUP BY سريع."""
+        rows = (
+            await session.execute(
+                select(
+                    ProviderService.category,
+                    func.count(ProviderService.id).label("count"),
+                )
+                .where(
+                    ProviderService.api_provider_id == provider_id,
+                    ProviderService.status == ProviderServiceStatus.ACTIVE,
+                )
+                .group_by(ProviderService.category)
+                .order_by(func.count(ProviderService.id).desc())
+                .limit(limit)
+            )
+        ).all()
+        out: list[tuple[str, int]] = []
+        for category, count in rows:
+            label = (category or "بدون تصنيف").strip() or "بدون تصنيف"
+            hay = label.lower()
+            is_game = any(kw in hay for kw in PulledServicesService.GAME_KEYWORDS)
+            if group == PulledServicesService.GROUP_GAMES and not is_game:
+                continue
+            if group == PulledServicesService.GROUP_OTHER and is_game:
+                continue
+            out.append((label, int(count)))
+        return out
+
+    @staticmethod
+    async def list_group_services(
+        session,
+        provider_id: int,
+        group: str,
+        category: str | None = None,
+        page: int = 0,
+        per_page: int = SERVICES_PER_PAGE,
+    ) -> tuple[list[ProviderService], int]:
+        """خدمات مزود داخل مجموعة (+ تصنيف اختياري)، مرتبة من الأرخص، مع صفحات DB."""
+        filters = [
+            ProviderService.api_provider_id == provider_id,
+            ProviderService.status == ProviderServiceStatus.ACTIVE,
+        ]
+        game_cond = PulledServicesService._game_like_filters()
+        if group == PulledServicesService.GROUP_GAMES:
+            filters.append(game_cond)
+        else:
+            filters.append(~game_cond)
+        if category and category != "بدون تصنيف":
+            filters.append(ProviderService.category == category)
+        elif category == "بدون تصنيف":
+            filters.append(ProviderService.category.is_(None))
+
+        total = (
+            await session.execute(select(func.count(ProviderService.id)).where(*filters))
+        ).scalar_one()
+        total = int(total or 0)
+        page = max(0, page)
+        rows = (
+            await session.execute(
+                select(ProviderService)
+                .where(*filters)
+                .order_by(ProviderService.rate_usd.asc(), ProviderService.id.asc())
+                .limit(per_page)
+                .offset(page * per_page)
+            )
+        ).scalars().all()
+        return list(rows), total
+
+    @staticmethod
+    async def publish_group_to_subcategory(
+        session,
+        provider_id: int,
+        group: str,
+        sub_category_id: int,
+        margin_percent: Decimal,
+        category: str | None = None,
+        max_items: int = 2000,
+    ) -> dict:
+        """نشر جماعي لمجموعة/تصنيف في قسم من اختيارك.
+
+        - الاسم بالعربية تلقائياً وقت النشر.
+        - السعر = تكلفة المزود × (1 + الهامش/100).
+        - يتجاوز المنشور مسبقاً في نفس القسم (لا تكرار).
+        - دفعات + yield حتى لا يعلق البوت مع المئات.
+        """
+        import asyncio
+
+        from services.service_localization_service import service_name_ar
+
+        margin = Decimal(str(margin_percent or 0))
+        report = {"created": 0, "skipped_existing": 0, "skipped_unpriced": 0, "total": 0}
+
+        per_page = 200
+        page = 0
+        position = 0
+        existing_ids_rows = await session.execute(
+            select(Product.provider_service_ref_id).where(
+                Product.sub_category_id == sub_category_id,
+                Product.api_provider_id == provider_id,
+            )
+        )
+        existing_refs = {r for (r,) in existing_ids_rows.all() if r is not None}
+
+        while position < max_items:
+            services, total = await PulledServicesService.list_group_services(
+                session, provider_id, group, category, page=page, per_page=per_page
+            )
+            report["total"] = total
+            if not services:
+                break
+            for service in services:
+                if service.id in existing_refs:
+                    report["skipped_existing"] += 1
+                    continue
+                rate = Decimal(str(service.rate_usd or 0))
+                if rate <= 0:
+                    report["skipped_unpriced"] += 1
+                    continue
+                name_ar = (service_name_ar(service) or "خدمة")[:128]
+                sell = (rate * (Decimal("100") + margin) / Decimal("100")).quantize(
+                    Decimal("0.0001"), rounding=ROUND_HALF_UP
+                )
+                product = Product(
+                    sub_category_id=sub_category_id,
+                    api_provider_id=provider_id,
+                    provider_service_ref_id=service.id,
+                    provider_service_id=service.external_service_id,
+                    name_ar=name_ar,
+                    description=(service.description or service.category or "")[:500] or None,
+                    price_usd=sell,
+                    cost_price_usd=rate,
+                    pricing_type=ProductPricingType.MARGIN_PERCENT,
+                    profit_margin_percent=margin,
+                    margin_manual=False,
+                    fulfillment_type=ProductFulfillmentType.API,
+                    min_quantity=int(service.min_quantity or 1),
+                    max_quantity=int(service.max_quantity or 1),
+                    requires_link=bool(service.requires_link),
+                    requires_player_id=bool(service.requires_player_id),
+                    requires_quantity=bool(service.requires_quantity),
+                    display_type=(
+                        ProductDisplayType.PER_1000
+                        if service.requires_quantity
+                        else ProductDisplayType.FIXED_TOTAL
+                    ),
+                    sort_order=position * 10,
+                    status=ProductStatus.ACTIVE,
+                    is_auto_published=False,
+                )
+                session.add(product)
+                existing_refs.add(service.id)
+                report["created"] += 1
+                position += 1
+                if report["created"] % 100 == 0:
+                    await session.flush()
+                    await asyncio.sleep(0)
+                if position >= max_items:
+                    break
+            await session.flush()
+            await asyncio.sleep(0)
+            page += 1
+            if len(services) < per_page:
+                break
+
+        await session.commit()
+        return report
 
     # ─────────── البحث عن خدمة محددة ───────────
 

@@ -300,6 +300,8 @@ def _providers_kb(rows: list[tuple[ApiProvider, int, int, bool]]) -> InlineKeybo
 
 def _provider_detail_kb(provider_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    b.button(text="🎮 خدمات الألعاب لحال", callback_data=f"ps:pg:{provider_id}:games")
+    b.button(text="📦 باقي الخدمات لحال", callback_data=f"ps:pg:{provider_id}:other")
     b.button(text="🔎 بحث في خدمات هذا المزود", callback_data=f"ps:psr:{provider_id}")
     b.button(text="📃 كل خدمات المزود (الأرخص ← الأغلى)", callback_data=f"ps:plist:{provider_id}:0")
     b.button(
@@ -437,15 +439,22 @@ async def pulled_provider_detail(callback: CallbackQuery, session, state: FSMCon
     ).scalar_one()
     active = "🟢 مفعّل" if provider.is_active else "🔴 معطّل"
     await callback.answer()
+    try:
+        groups = await PulledServicesService.provider_group_counts(session, provider.id)
+        group_line = f"🎮 الألعاب: <b>{groups['games']}</b> · 📦 الباقي: <b>{groups['other']}</b>\n"
+    except Exception:
+        group_line = ""
     await callback.message.edit_text(
         f"🔌 <b>{provider.name}</b>\n\n"
         f"الحالة: {active}\n"
         f"🆔 ID: <code>{provider.id}</code>\n"
         f"📥 الخدمات المسحوبة: <b>{svc_count}</b>\n"
+        f"{group_line}"
         f"📦 المنتجات المنشورة: <b>{prod_count}</b>\n"
         f"🧩 البروتوكول: {provider.protocol_type.value if provider.protocol_type else '—'}\n"
         f"🏷 النوع: {provider.type.value if provider.type else '—'}\n\n"
-        "اختر عملاً واحداً — مسح كل المنتجات ثم إعادة السحب صارت بضغطتين.",
+        "اختر «🎮 خدمات الألعاب» أو «📦 باقي الخدمات»، تصفح تصنيفاتها، "
+        "ثم انشر ما تريد في قسمك بهامش ربح — الأسماء بالعربية تلقائياً.",
         reply_markup=_provider_detail_kb(provider.id),
     )
 
@@ -478,6 +487,305 @@ async def pulled_provider_services_list(callback: CallbackQuery, session, state:
     )
 
 
+# ─────────── فرز المزود: ألعاب لحال / باقي لحال + نشر جماعي ───────────
+# أسماء التصنيفات عربية وطويلة ولا تتسع في callback_data (حد 64 بايت)،
+# لذلك نخزن قائمة التصنيفات لكل أدمن ونمرر فهرسها فقط.
+_GROUP_CAT_CACHE: dict[tuple[int, int, str], tuple[float, list[str]]] = {}
+_GROUP_CAT_TTL = 1800.0
+
+
+def _group_cat_set(user_id: int, provider_id: int, group: str, cats: list[str]) -> None:
+    import time
+
+    now = time.time()
+    for key, (stamp, _cats) in list(_GROUP_CAT_CACHE.items()):
+        if now - stamp > _GROUP_CAT_TTL:
+            _GROUP_CAT_CACHE.pop(key, None)
+    _GROUP_CAT_CACHE[(user_id, provider_id, group)] = (now, list(cats))
+
+
+def _group_cat_get(user_id: int, provider_id: int, group: str) -> list[str] | None:
+    import time
+
+    cached = _GROUP_CAT_CACHE.get((user_id, provider_id, group))
+    if cached is None:
+        return None
+    stamp, cats = cached
+    if time.time() - stamp > _GROUP_CAT_TTL:
+        _GROUP_CAT_CACHE.pop((user_id, provider_id, group), None)
+        return None
+    return cats
+
+
+def _group_title(group: str) -> str:
+    return "🎮 خدمات الألعاب" if group == "games" else "📦 باقي الخدمات"
+
+
+def _group_cats_kb(
+    provider_id: int, group: str, cats: list[tuple[str, int]], total: int
+) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(
+        text=f"⭐ كل {_group_title(group)} ({total})",
+        callback_data=f"ps:pgc:{provider_id}:{group}:-1:0",
+    )
+    for idx, (label, count) in enumerate(cats[:30]):
+        short = label[:32]
+        b.button(
+            text=f"{short} ({count})",
+            callback_data=f"ps:pgc:{provider_id}:{group}:{idx}:0",
+        )
+    b.button(text="🔙 تفاصيل المزود", callback_data=f"ps:prov:{provider_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def _group_services_kb(
+    provider_id: int,
+    group: str,
+    cat_idx: int,
+    services,
+    page: int,
+    total: int,
+) -> InlineKeyboardMarkup:
+    from services.service_localization_service import service_name_ar
+
+    b = InlineKeyboardBuilder()
+    for service in services:
+        rate = service.rate_usd or 0
+        name = service_name_ar(service)[:36]
+        b.button(text=f"{rate}$ · {name}", callback_data=f"ps:sv:{service.id}")
+    last_page = max(0, (total - 1) // SERVICES_PER_PAGE)
+    nav = []
+    if page > 0:
+        b.button(
+            text="◀️ السابق",
+            callback_data=f"ps:pgc:{provider_id}:{group}:{cat_idx}:{page - 1}",
+        )
+        nav.append(1)
+    if page < last_page:
+        b.button(
+            text="التالي ▶️",
+            callback_data=f"ps:pgc:{provider_id}:{group}:{cat_idx}:{page + 1}",
+        )
+        nav.append(1)
+    b.button(
+        text="📤 نشر الكل في قسم بهامش ربح %",
+        callback_data=f"ps:pbulk:{provider_id}:{group}:{cat_idx}",
+    )
+    b.button(text="🔙 التصنيفات", callback_data=f"ps:pg:{provider_id}:{group}")
+    rows = [1] * len(services)
+    if nav:
+        rows.append(len(nav))
+    rows.extend([1, 1])
+    b.adjust(*rows)
+    return b.as_markup()
+
+
+@router.callback_query(F.data.startswith("ps:pg:"))
+async def pulled_provider_group(callback: CallbackQuery, session, state: FSMContext):
+    """شاشة الفرز: الألعاب لحال والباقي لحال مع تصنيفات وعدد."""
+    await state.clear()
+    parts = callback.data.split(":")
+    try:
+        provider_id = int(parts[2])
+        group = parts[3]
+    except (IndexError, ValueError):
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    if group not in ("games", "other"):
+        await callback.answer("مجموعة غير معروفة", show_alert=True)
+        return
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    counts = await PulledServicesService.provider_group_counts(session, provider_id)
+    cats = await PulledServicesService.provider_group_categories(session, provider_id, group)
+    _group_cat_set(callback.from_user.id, provider_id, group, [c for c, _n in cats])
+    await callback.answer()
+    await callback.message.edit_text(
+        f"🔌 <b>{provider.name}</b> · {_group_title(group)}\n\n"
+        f"🎮 الألعاب: <b>{counts['games']}</b> · 📦 الباقي: <b>{counts['other']}</b>\n"
+        f"هذه المجموعة: <b>{counts.get(group, 0)}</b> خدمة مخفية عن المتجر.\n\n"
+        "اختر تصنيفاً لتصفح خدماته من الأرخص للأغلى، أو اختر «كل المجموعة».\n"
+        "النشر لا يتم هنا — تختار الخدمات ثم قسمك ثم هامش الربح، "
+        "والأسماء تُنشر بالعربية تلقائياً.",
+        reply_markup=_group_cats_kb(provider_id, group, cats, counts.get(group, 0)),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:pgc:"))
+async def pulled_provider_group_category(
+    callback: CallbackQuery, session, state: FSMContext
+):
+    """خدمات مجموعة/تصنيف واحد مع زر النشر الجماعي."""
+    await state.clear()
+    parts = callback.data.split(":")
+    try:
+        provider_id = int(parts[2])
+        group = parts[3]
+        cat_idx = int(parts[4])
+        page = max(0, int(parts[5]))
+    except (IndexError, ValueError):
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    cats = _group_cat_get(callback.from_user.id, provider_id, group)
+    if cats is None:
+        fresh = await PulledServicesService.provider_group_categories(
+            session, provider_id, group
+        )
+        cats = [c for c, _n in fresh]
+        _group_cat_set(callback.from_user.id, provider_id, group, cats)
+    category = None if cat_idx < 0 else (cats[cat_idx] if 0 <= cat_idx < len(cats) else None)
+    if cat_idx >= 0 and category is None:
+        await callback.answer("التصنيف انتهت صلاحيته — أعد فتح المجموعة.", show_alert=True)
+        return
+    services, total = await PulledServicesService.list_group_services(
+        session, provider_id, group, category, page=page
+    )
+    last_page = max(0, (total - 1) // SERVICES_PER_PAGE)
+    await callback.answer()
+    cat_label = "كل المجموعة" if category is None else category
+    await callback.message.edit_text(
+        f"🔌 <b>{provider.name}</b> · {_group_title(group)}\n"
+        f"📂 التصنيف: <b>{cat_label}</b>\n"
+        f"📊 {total} خدمة · من الأرخص للأغلى\n"
+        f"📄 صفحة {page + 1}/{last_page + 1}\n\n"
+        "اضغط أي خدمة لنشرها مفردة، أو استخدم زر النشر الجماعي بالأسفل.",
+        reply_markup=_group_services_kb(
+            provider_id, group, cat_idx, services, page, total
+        ),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:pbulk:"))
+async def pulled_bulk_pick_sub(callback: CallbackQuery, session, state: FSMContext):
+    """بدء النشر الجماعي: اختيار قسمك الذي ستُنشر فيه الخدمات."""
+    parts = callback.data.split(":")
+    try:
+        provider_id = int(parts[2])
+        group = parts[3]
+        cat_idx = int(parts[4])
+    except (IndexError, ValueError):
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    cats = _group_cat_get(callback.from_user.id, provider_id, group)
+    if cats is None:
+        fresh = await PulledServicesService.provider_group_categories(
+            session, provider_id, group
+        )
+        cats = [c for c, _n in fresh]
+        _group_cat_set(callback.from_user.id, provider_id, group, cats)
+    category = None if cat_idx < 0 else (cats[cat_idx] if 0 <= cat_idx < len(cats) else None)
+    subs = await PulledServicesService.destination_subcategories(session)
+    if not subs:
+        await callback.answer("لا توجد أقسام — أنشئ قسماً أولاً.", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(
+        bulk_provider_id=provider_id,
+        bulk_group=group,
+        bulk_category=category,
+    )
+    b = InlineKeyboardBuilder()
+    for sub in subs[:20]:
+        label = f"{sub.emoji or ''} {sub.name_ar}".strip()[:50]
+        b.button(text=label, callback_data=f"ps:pbs:{sub.id}")
+    b.button(text="🔙 رجوع", callback_data=f"ps:pg:{provider_id}:{group}")
+    b.adjust(1)
+    await callback.answer()
+    cat_label = "كل المجموعة" if category is None else category
+    await callback.message.edit_text(
+        f"📂 <b>اختر قسمك</b> الذي ستُنشر فيه {_group_title(group)}\n"
+        f"📂 التصنيف: <b>{cat_label}</b>\n\n"
+        "المنتجات الجديدة ستظهر فيه فقط بعد النشر — الخدمات المسحوبة "
+        "تبقى مخفية حتى تنشرها.",
+        reply_markup=b.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("ps:pbs:"))
+async def pulled_bulk_pick_margin(callback: CallbackQuery, session, state: FSMContext):
+    """بعد اختيار القسم: طلب هامش الربح %."""
+    try:
+        sub_id = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("بيانات غير صالحة", show_alert=True)
+        return
+    data = await state.get_data()
+    if not data.get("bulk_provider_id"):
+        await callback.answer("انتهت الجلسة — أعد من جديد.", show_alert=True)
+        return
+    await state.update_data(bulk_sub_id=sub_id)
+    await state.set_state(AdminPulledServicesStates.waiting_bulk_margin)
+    await callback.answer()
+    await callback.message.edit_text(
+        "💰 <b>هامش الربح %</b>\n\n"
+        "أرسل رقماً فقط (مثال: <code>30</code> يعني التكلفة + 30%).\n"
+        "السعر = تكلفة المزود × (1 + الهامش/100).\n"
+        "الأسماء ستُنشر بالعربية تلقائياً."
+    )
+
+
+@router.message(AdminPulledServicesStates.waiting_bulk_margin)
+async def pulled_bulk_margin_received(message: Message, session, state: FSMContext):
+    from decimal import Decimal, InvalidOperation
+
+    from database.models import SubCategory
+
+    data = await state.get_data()
+    provider_id = data.get("bulk_provider_id")
+    group = data.get("bulk_group")
+    category = data.get("bulk_category")
+    sub_id = data.get("bulk_sub_id")
+    try:
+        margin = Decimal((message.text or "").strip().replace("%", ""))
+    except (InvalidOperation, ValueError, AttributeError):
+        await message.answer("⚠️ أرسل رقماً صحيحاً (مثال: 30).")
+        return
+    if margin < -95 or margin > 1000:
+        await message.answer("⚠️ الهامش يجب أن يكون بين -95 و 1000.")
+        return
+    provider = await session.get(ApiProvider, provider_id) if provider_id else None
+    sub = await session.get(SubCategory, sub_id) if sub_id else None
+    if provider is None or sub is None:
+        await state.clear()
+        await message.answer("⚠️ المزود أو القسم لم يعد موجوداً.")
+        return
+    progress = await message.answer("⏳ جارٍ النشر الجماعي... قد يستغرق دقيقة مع المئات.")
+    try:
+        report = await PulledServicesService.publish_group_to_subcategory(
+            session, provider_id, group, sub_id, margin, category
+        )
+    except Exception:
+        logger.exception("فشل النشر الجماعي لمزود %s", provider_id)
+        await progress.edit_text("❌ فشل النشر الجماعي. راجع السجل.")
+        await state.clear()
+        return
+    await state.clear()
+    cat_label = "كل المجموعة" if not category else category
+    await progress.edit_text(
+        "✅ <b>تم النشر الجماعي</b>\n\n"
+        f"🔌 المزود: <b>{provider.name}</b>\n"
+        f"📂 التصنيف: <b>{cat_label}</b>\n"
+        f"📂 قسمك: <b>{sub.name_ar}</b>\n"
+        f"💰 الهامش: <b>{margin}%</b>\n\n"
+        f"🆕 منتجات جديدة: <b>{report['created']}</b>\n"
+        f"⏭ موجودة مسبقاً (لم تُكرر): <b>{report['skipped_existing']}</b>\n"
+        f"🚫 بلا سعر (تُجوهلت): <b>{report['skipped_unpriced']}</b>\n\n"
+        "الأسماء منشورة بالعربية، ويمكنك تعديل أي سعر/هامش لاحقاً من إدارة المنتجات."
+    )
+
+
 @router.callback_query(F.data.startswith("ps:psr:"))
 async def pulled_provider_search_start(callback: CallbackQuery, session, state: FSMContext):
     provider_id = int(callback.data.split(":")[2])
@@ -485,15 +793,21 @@ async def pulled_provider_search_start(callback: CallbackQuery, session, state: 
     if provider is None:
         await callback.answer("المزود غير موجود.", show_alert=True)
         return
-    services = await PulledServicesService.load_active(session)
-    own_only = [s for s in services if s.api_provider_id == provider.id]
+    own_count = (
+        await session.execute(
+            select(func.count(ProviderService.id)).where(
+                ProviderService.api_provider_id == provider.id,
+                ProviderService.status == ProviderServiceStatus.ACTIVE,
+            )
+        )
+    ).scalar_one()
     await state.clear()
     await state.update_data(search_provider_id=provider_id)
     await state.set_state(AdminPulledServicesStates.waiting_search)
     await callback.answer()
     await callback.message.edit_text(
         f"🔎 <b>ابحث في خدمات «{provider.name}»</b>\n\n"
-        f"لديك <b>{len(own_only)}</b> خدمة مسحوبة من هذا المزود فقط.\n\n"
+        f"لديك <b>{int(own_count)}</b> خدمة مسحوبة من هذا المزود فقط.\n\n"
         "اكتب الاسم أو التصنيف أو آيدي الخدمة عند المزود:"
         "\n• <code>pubg</code>\n• <code>متتبع</code>\n• <code>9002</code>"
         "\n\nالنتائج ضمن كتالوج هذا المزود فقط.",
@@ -676,11 +990,17 @@ def _get_search(user_id: int) -> tuple[str, list[int], int | None] | None:
 async def pulled_search_start(callback: CallbackQuery, session, state: FSMContext):
     """🔎 بحث مباشر عن خدمة محددة بالاسم/التصنيف/الآيدي."""
     await state.clear()
-    services = await PulledServicesService.load_active(session)
+    total_count = (
+        await session.execute(
+            select(func.count(ProviderService.id)).where(
+                ProviderService.status == ProviderServiceStatus.ACTIVE
+            )
+        )
+    ).scalar_one()
     await state.set_state(AdminPulledServicesStates.waiting_search)
     await callback.message.edit_text(
         "🔎 <b>ابحث عن خدمة محددة</b>\\n\\n"
-        f"لديك <b>{len(services)}</b> خدمة مسحوبة مخفية عن المتجر.\\n\\n"
+        f"لديك <b>{int(total_count)}</b> خدمة مسحوبة مخفية عن المتجر.\\n\\n"
         "اكتب ما تبحث عنه — الاسم أو التصنيف أو آيدي الخدمة عند المزود:\\n"
         "• <code>pubg</code>\\n"
         "• <code>تيك توك متابعين</code> (أكثر من كلمة: كلها يجب أن توجد)\\n"
@@ -760,11 +1080,17 @@ async def pulled_search_page(callback: CallbackQuery, session, state: FSMContext
     cached = _get_search(callback.from_user.id)
     if cached is None:
         await callback.answer("انتهت صلاحية البحث — أعد كتابته.", show_alert=True)
-        services = await PulledServicesService.load_active(session)
+        total_count = (
+            await session.execute(
+                select(func.count(ProviderService.id)).where(
+                    ProviderService.status == ProviderServiceStatus.ACTIVE
+                )
+            )
+        ).scalar_one()
         await state.set_state(AdminPulledServicesStates.waiting_search)
         await callback.message.edit_text(
             "🔎 <b>ابحث عن خدمة محددة</b>\\n\\n"
-            f"لديك <b>{len(services)}</b> خدمة مسحوبة مخفية عن المتجر.\\n\\n"
+            f"لديك <b>{int(total_count)}</b> خدمة مسحوبة مخفية عن المتجر.\\n\\n"
             "اكتب الاسم أو التصنيف أو آيدي الخدمة عند المزود.",
             reply_markup=_search_intro_kb(),
         )
