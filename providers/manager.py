@@ -368,5 +368,9 @@ class ProviderManager:
         """يجلب قائمة المزودين المهيأين (لديهم API Key)."""
         return list(self._providers.keys())
 
+    def get_instance(self, provider: ProviderName):
+        """مثيل المزود المهيأ أو None — للفحص التشخيصي."""
+        return self._providers.get(provider)
+
 
 provider_manager = ProviderManager()

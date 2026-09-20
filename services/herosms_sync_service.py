@@ -580,7 +580,9 @@ async def sync_herosms_countries(
             name_ar, flag = _label_for(eng)
             slug = _slugify(eng)
 
-            # البحث عن دولة موجودة بنفس كود HeroSMS
+            # البحث عن دولة موجودة بنفس كود HeroSMS حصراً.
+            # ممنوع الدمج العابر للمزودين: كل مزود له صفوفه الخاصة حتى لو
+            # تكررت الدولة — حذف الكل وإعادة السحب لا يخلط الأكواد أبداً.
             res = await session.execute(
                 select(Country).where(Country.herosms_code == cid)
             )
@@ -602,21 +604,8 @@ async def sync_herosms_countries(
                     report.updated.append(f"{country.flag} {country.name_ar}")
                 continue
 
-            # البحث عن دولة موجودة بالـ slug لدمج الكود
-            res_slug = await session.execute(
-                select(Country).where(Country.code == slug)
-            )
-            country_by_slug = res_slug.scalar_one_or_none()
-            if country_by_slug is not None and not country_by_slug.herosms_code:
-                country_by_slug.herosms_code = cid
-                if activate and has_stock and not country_by_slug.is_active:
-                    country_by_slug.is_active = True
-                    report.activated += 1
-                report.merged.append(f"{country_by_slug.flag} {country_by_slug.name_ar}")
-                continue
-
-            # معرّف فريد للدولة الجديدة
-            final_slug = f"{slug}_{cid}"
+            # دولة جديدة: معرف فريد باسم المزود لمنع أي التباس
+            final_slug = f"herosms_{slug}_{cid}"
             is_active = bool(activate and has_stock)
             new_country = Country(
                 code=final_slug,
