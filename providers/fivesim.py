@@ -9,8 +9,9 @@
   انتهى التحويل القديم (‎/100).
 - الرد قد يكون ``null`` عند غياب المخزون/الدولة.
 
-لذلك ``fivesim_code`` للدول صار رقماً (``"16"``) وليس اسماً (``"england"``).
-الأكواد الاسمية القديمة تُكتشف وتُستبدل تلقائياً عند إعادة السحب.
+لذلك ``fivesim_code`` للدول هو الاسم (slug) حسب التوثيق الرسمي
+(``"england"``) — صالح للأسعار والشراء معاً.
+ملاحظة: روسيا وسوريا محذوفتان من كتالوج 5sim (غير متوفرتين).
 """
 
 import logging
@@ -24,6 +25,12 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 FIVESIM_BASE = "https://5sim.net/v1/"
+
+# حد 5sim: 100 طلب/ثانية لكل IP ثم حظر مؤقت — نمرر الطلبات عبر
+# بوابة واحدة حتى لا يحظر السحب/اللوحة أنفسهما بالطلبات المتوازية.
+import asyncio as _asyncio
+
+_FIVESIM_SEMAPHORE = _asyncio.Semaphore(5)
 
 
 class ProviderAPIError(Exception):
@@ -41,20 +48,21 @@ class FiveSimProvider(BaseProvider):
 
     async def _request(self, method: str, path: str, **kwargs):
         url = FIVESIM_BASE + path
-        async with aiohttp.ClientSession(headers=self.headers) as session:
-            async with session.request(
-                method,
-                url,
-                timeout=aiohttp.ClientTimeout(total=20),
-                **kwargs,
-            ) as resp:
-                text = await resp.text()
-                if resp.status != 200:
-                    raise ProviderAPIError(f"5sim error {resp.status}: {text[:200]}")
-                try:
-                    return await resp.json(content_type=None)
-                except Exception:
-                    return text
+        async with _FIVESIM_SEMAPHORE:
+            async with aiohttp.ClientSession(headers=self.headers) as session:
+                async with session.request(
+                    method,
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                    **kwargs,
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        raise ProviderAPIError(f"5sim error {resp.status}: {text[:200]}")
+                    try:
+                        return await resp.json(content_type=None)
+                    except Exception:
+                        return text
 
     @staticmethod
     def _to_usd(value) -> Decimal | None:
@@ -164,6 +172,9 @@ class FiveSimProvider(BaseProvider):
             mapped = "cancelled"
         elif status in ("TIMEOUT", "EXPIRED"):
             mapped = "expired"
+        elif status == "BANNED":
+            # الرقم مستخدم مسبقاً — إنهاء الطلب بدل تعليقه للأبد
+            mapped = "cancelled"
 
         return OrderStatusResult(
             status=mapped,

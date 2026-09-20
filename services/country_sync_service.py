@@ -2,10 +2,11 @@
 سحب الدول تلقائياً من مزودي 5sim و GrizzlySMS — بنفس نمط سحب HeroSMS.
 
 الفكرة:
-1) جلب كتالوج الدول من المزود (5sim: guest/countries / Grizzly: getCountries).
-2) فحص المخزون لكل دولة لخدمتي واتساب وتيليجرام بالتوازي.
-3) إنشاء/دمج سجلات الدول مع تعريب الاسم والعلم (نفس خريطة HeroSMS).
-4) تفعيل الدول التي فيها مخزون تلقائياً.
+1) 5sim: طلب واحد لكل منتج (``guest/prices?product=whatsapp``) يكشف
+   مخزون كل الدول دفعة واحدة — طلبان فقط بدل 300 (يتجنب حد 5sim
+   والحظر المؤقت). Grizzly: فحص getPrices بإيقاع هادئ.
+2) إنشاء/دمج سجلات الدول مع تعريب الاسم والعلم (نفس خريطة HeroSMS).
+3) تفعيل الدول التي فيها مخزون تلقائياً.
 
 الدمج الذكي (حتى لا تتكرر الدول):
 - أولاً: بحث بكود المزود (fivesim_code / grizzly_code).
@@ -45,9 +46,6 @@ FIVESIM_SERVICE_CODES: dict[str, str] = {
     "telegram": "telegram",
 }
 
-# أعلى رقم دولة مفحوص في 5sim (الترقيم متوافق مع sms-activate ويتمدد دورياً)
-FIVESIM_MAX_COUNTRY_ID = 260
-
 GRIZZLY_SERVICE_CODES: dict[str, str] = {
     "whatsapp": "wa",
     "telegram": "tg",
@@ -68,7 +66,6 @@ class CountrySyncReport:
     activated: int = 0
     skipped_no_stock: int = 0
     failed: int = 0
-    repaired: int = 0
 
     def summary(self) -> str:
         lines = [
@@ -82,8 +79,6 @@ class CountrySyncReport:
             f"🟢 دول تم تفعيلها لوجود مخزون: <b>{self.activated}</b>",
             f"⚪ دول بدون مخزون (معطلة): <b>{self.skipped_no_stock}</b>",
         ]
-        if self.repaired:
-            lines.append(f"🔧 دول أُصلحت أكوادها القديمة: <b>{self.repaired}</b>")
         if self.added:
             lines.append("")
             lines.append("<b>أبرز الدول المضافة:</b>")
@@ -130,48 +125,48 @@ async def _ensure_number_services(
     return resolved
 
 
-async def _fetch_fivesim_catalog(provider) -> tuple[list[dict], str, dict[str, str]]:
-    """كتالوج 5sim: أسماء من guest/countries + فحص رقمي 0..MAX.
+async def _fetch_fivesim_catalog(
+    provider,
+    products: list[str],
+) -> tuple[dict[str, dict], str, dict[str, str]]:
+    """مخزون 5sim بطلب واحد لكل منتج: ``guest/prices?product=whatsapp``.
 
-    الـ API الجديد يطلب رقم الدولة في الأسعار، والرد مفتاحه اسم الدولة،
-    لذلك نفحص الأرقام مباشرة ونبني خريطة {رقم: slug} من الرد نفسه.
-    يرجع (entries, source, slug_to_eng) حيث كل entry:
-    ``{"id": "16", "slug": "england", "node": {...}}``.
+    طلبان فقط يكشفان كل الدول (واتساب + تيليجرام) بدل 300 طلب —
+    هذا يتجنب حد 5sim (100 طلب/ثانية) والحظر المؤقت الذي كان يُفشل السحب.
+    يرجع (stock, source, slug_to_eng) حيث:
+    ``stock = {slug: {product: operators_node}}``.
     """
-    slug_to_eng: dict[str, str] = {}
+    stock: dict[str, dict] = {}
     try:
         data = await provider._request("GET", "guest/countries")
-        if isinstance(data, dict):
-            for slug, info in data.items():
-                info = info or {}
-                slug_to_eng[str(slug)] = str(info.get("text_en") or slug)
+        slug_to_eng = {
+            str(slug): str((info or {}).get("text_en") or slug)
+            for slug, info in (data or {}).items()
+        } if isinstance(data, dict) else {}
     except Exception as exc:
-        logger.warning(f"فشل كتالوج أسماء 5sim ({exc}) — المتابعة بالـ slugs من الأسعار")
+        logger.warning(f"فشل كتالوج أسماء 5sim ({exc})")
+        slug_to_eng = {}
 
-    entries: list[dict] = []
-    semaphore = asyncio.Semaphore(10)
-
-    async def _probe(num: int):
+    ok = 0
+    for product in products:
         try:
-            async with semaphore:
-                data = await provider.get_country_prices(str(num))
-        except Exception:
-            return
-        if not isinstance(data, dict) or not data:
-            return
-        slugs = [k for k, v in data.items() if isinstance(v, dict)]
-        if len(slugs) != 1:
-            return
-        entries.append({"id": str(num), "slug": slugs[0], "node": data[slugs[0]]})
-
-    await asyncio.gather(*(_probe(i) for i in range(FIVESIM_MAX_COUNTRY_ID + 1)))
-    entries.sort(key=lambda e: int(e["id"]))
+            data = await provider._request("GET", f"guest/prices?product={product}")
+        except Exception as exc:
+            logger.warning(f"فشل أسعار 5sim لمنتج {product} ({exc})")
+            continue
+        node = data.get(str(product)) if isinstance(data, dict) else None
+        if not isinstance(node, dict):
+            continue
+        ok += 1
+        for slug, ops in node.items():
+            if isinstance(ops, dict):
+                stock.setdefault(str(slug), {})[product] = ops
     source = (
-        "5sim guest/prices API (ترقيم رقمي)"
-        if entries
-        else "5sim guest/countries API"
+        f"5sim guest/prices?product (طلبان: {ok}/{len(products)} ناجح)"
+        if stock
+        else "5sim guest/prices?product"
     )
-    return entries, source, slug_to_eng
+    return stock, source, slug_to_eng
 
 
 def _fivesim_node_has_stock(node: dict, product: str) -> bool:
@@ -266,11 +261,16 @@ async def _store_countries(
             if existing is not None:
                 changed = False
                 just_merged = False
-                if not getattr(existing, code_field, None):
+                current = getattr(existing, code_field, None)
+                if not current:
                     setattr(existing, code_field, cid)
                     changed = True
                     just_merged = True
                     report.merged.append(f"{existing.flag} {existing.name_ar}")
+                elif code_field == "fivesim_code" and current != cid:
+                    # إصلاح كود رقمي من سحب سابق — الرسمي هو الاسم (slug)
+                    setattr(existing, code_field, cid)
+                    changed = True
                 if (
                     not existing.name_ar
                     or existing.name_ar.startswith("HeroSMS")
@@ -319,60 +319,36 @@ async def sync_fivesim_countries(
     wanted_services: list[str] | None = None,
     activate: bool = True,
     provider=None,
-    concurrency: int = 10,
 ) -> CountrySyncReport:
-    """سحب دول 5sim: فحص رقمي + مخزون واتساب/تيليجرام + حفظ + إصلاح الأكواد القديمة."""
+    """سحب دول 5sim: طلب لكل منتج (واتساب/تيليجرام) + حفظ/دمج + تفعيل.
+
+    أكواد الدول أسماء (slugs) حسب التوثيق الرسمي — صالحة للأسعار والشراء.
+    """
     from providers.fivesim import FiveSimProvider
 
     wanted_services = wanted_services or list(FIVESIM_SERVICE_CODES)
     service_codes = await _ensure_number_services(session, FIVESIM_SERVICE_CODES, "fivesim_code")
+    products = [service_codes[s] for s in wanted_services if service_codes.get(s)]
 
     report = CountrySyncReport(provider_label="5sim", service_codes=wanted_services)
     provider = provider or FiveSimProvider()
 
-    catalog, source, slug_to_eng = await _fetch_fivesim_catalog(provider)
+    stock, source, slug_to_eng = await _fetch_fivesim_catalog(provider, products)
     report.catalog_source = source
-    if not catalog:
+    if not stock:
         return report
-    report.fetched_countries = len(catalog)
+    report.fetched_countries = len(stock)
 
     availability: dict[str, bool] = {}
     english_names: dict[str, str] = {}
-    for entry in catalog:
-        cid = entry["id"]
-        slug = entry["slug"]
-        english_names[cid] = slug_to_eng.get(slug, slug.replace("_", " ").title())
-        node = entry["node"]
-        has_any = False
-        for s_code in wanted_services:
-            product = service_codes.get(s_code)
-            if product and _fivesim_node_has_stock(node, product):
-                has_any = True
-                break
-        availability[cid] = has_any
+    for slug, node in stock.items():
+        english_names[slug] = slug_to_eng.get(slug, slug.replace("_", " ").title())
+        availability[slug] = any(
+            _fivesim_node_has_stock(node, p) for p in products
+        )
 
     await _store_countries(session, report, "fivesim_code", english_names, availability, activate)
-    report.repaired += await _repair_stale_codes(session, "fivesim_code")
     return report
-
-
-async def _repair_stale_codes(session, code_field: str) -> int:
-    """يمسح أكواد المزود القديمة غير الرقمية (مثل slugs ‏5sim المنتهية).
-
-    هذه الأكواد تفشل حتماً عند المزود (400) وتُظهر سيرفرات فارغة،
-    لذلك تُصفَّر لتُملأ من جديد بالسحب الصحيح بدل كسر العرض.
-    """
-    result = await session.execute(select(Country))
-    fixed = 0
-    for country in result.scalars().all():
-        val = getattr(country, code_field, None)
-        if val and not str(val).isdigit():
-            setattr(country, code_field, None)
-            fixed += 1
-    if fixed:
-        await session.commit()
-        logger.info(f"أُصلحت {fixed} دولة بكود {code_field} قديم غير رقمي")
-    return fixed
 
 
 async def sync_grizzly_countries(
@@ -408,6 +384,7 @@ async def sync_grizzly_countries(
             return
         english_names[cid] = eng
         async with semaphore:
+            await asyncio.sleep(0.2)  # إيقاع هادئ: فحص مئات الدول دفعة واحدة
             try:
                 has_any = False
                 for s_code in wanted_services:
