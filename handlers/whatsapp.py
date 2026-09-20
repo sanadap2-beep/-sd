@@ -107,7 +107,7 @@ async def _show_home(callback: CallbackQuery, session, db_user: User):
                     price=f"{pkg['price_usd']:g}$",
                 ),
                 callback_data=f"wa:buy:{pkg['days']}",
-                style="success",
+                style="primary",
             )
         if sub is not None:
             b.button(
@@ -156,7 +156,7 @@ async def wa_home(callback: CallbackQuery, session, db_user: User | None = None)
     await _show_home(callback, session, db_user)
 
 
-@router.callback_query(_BUY_RE)
+@router.callback_query(F.data.regexp(_BUY_RE))
 async def wa_buy(callback: CallbackQuery, session, db_user: User | None = None):
     if not await _feature_on():
         await callback.answer(I18nService.t("wa_disabled", _lang(db_user)), show_alert=True)
@@ -319,7 +319,7 @@ async def wa_refresh(callback: CallbackQuery, session, db_user: User | None = No
     await wa_menu(callback, session, db_user)
 
 
-@router.callback_query(_ACT_RE)
+@router.callback_query(F.data.regexp(_ACT_RE))
 async def wa_action(callback: CallbackQuery, session, db_user: User | None = None):
     """ضغطة زر من قائمة البوت الثاني → تنفيذ عبر الجسر."""
     if not await _feature_on():

@@ -162,7 +162,7 @@ def _servers_kb(service_code: str, servers: list[NumberServer]) -> InlineKeyboar
         b.button(
             text=public_server_label(index, bool(getattr(server, "is_working", False))),
             callback_data=f"num_server_pick:{service_code}:{server.id}",
-            style="primary",
+            style="success",
         )
     b.button(text="🔙 رجوع", callback_data="num_hub")
     b.adjust(1)
@@ -973,6 +973,18 @@ async def confirm_buy(
     session.add(order)
     await session.commit()
     await session.refresh(order)
+
+    try:
+        from services.weekly_challenge_service import WeeklyChallengeService
+
+        await WeeklyChallengeService.record_event(
+            session, db_user.id, amount=sell_price or Decimal("0"), event="orders"
+        )
+        await WeeklyChallengeService.record_event(
+            session, db_user.id, amount=sell_price or Decimal("0"), event="spend_usd"
+        )
+    except Exception:
+        logger.exception("فشل تحديث تقدم التحدي الأسبوعي")
 
     status_msg = await callback.message.answer(
         f"✅ <b>تم شراء الرقم بنجاح!</b>\n\n"

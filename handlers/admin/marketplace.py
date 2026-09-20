@@ -67,7 +67,7 @@ async def market_home(callback: CallbackQuery, session):
         [InlineKeyboardButton(text="⚠️ النزاعات المفتوحة", callback_data="mkt_disputes")],
         [InlineKeyboardButton(text="🔒 عمليات محجوزة", callback_data="mkt_escrow")],
         [InlineKeyboardButton(text="🏪 الإعلانات المنشورة", callback_data="mkt_listings")],
-        [InlineKeyboardButton(text="🟢 إعلاناتي المنشورة", callback_data="admin:main")],
+        [InlineKeyboardButton(text="🟢 إعلاناتي المنشورة", callback_data="admin:main", style="success")],
     ]
     await callback.message.edit_text(
         "🏪 <b>سوق المستخدمين</b>\n\n"
@@ -136,7 +136,7 @@ async def review_listing(callback: CallbackQuery, session):
 
     rows = [
         [InlineKeyboardButton(text="✅ السماح بالنشر (تحديد العمولة)", callback_data=f"mkt_comm:{listing.id}")],
-        [InlineKeyboardButton(text="❌ رفض الإعلان", callback_data=f"mkt_reject:{listing.id}")],
+        [InlineKeyboardButton(text="❌ رفض الإعلان", callback_data=f"mkt_reject:{listing.id}", style="danger")],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="mkt_pending")],
     ]
     await callback.message.edit_text(
@@ -305,11 +305,11 @@ async def transaction_detail(callback: CallbackQuery, session):
 
     rows = []
     if tx.status == EscrowStatus.FUNDED:
-        rows.append([InlineKeyboardButton(text="📤 تأكيد أن البائع سلّم", callback_data=f"mkt_deliver:{tx.id}")])
+        rows.append([InlineKeyboardButton(text="📤 تأكيد أن البائع سلّم", callback_data=f"mkt_deliver:{tx.id}", style="primary")])
     if tx.status in (EscrowStatus.FUNDED, EscrowStatus.DELIVERED):
         rows.append([
             InlineKeyboardButton(text="✅ إفراج للبائع", callback_data=f"mkt_release:{tx.id}"),
-            InlineKeyboardButton(text="↩️ استرداد للمشتري", callback_data=f"mkt_refund:{tx.id}"),
+            InlineKeyboardButton(text="↩️ استرداد للمشتري", callback_data=f"mkt_refund:{tx.id}", style="danger"),
         ])
     if listing and listing.secret_payload:
         rows.append([InlineKeyboardButton(text="🔑 عرض الكود (وسيط)", callback_data=f"mkt_peek:{tx.id}")])

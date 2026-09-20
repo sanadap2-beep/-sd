@@ -49,12 +49,12 @@ def _markup(state: dict) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text=("✅ إشعارات الاسترجاع/الفشل: مفعّلة" if refund else "⚪ إشعارات الاسترجاع/الفشل: موقفة"),
-                callback_data="live:refund",
+                callback_data="live:refund", style="danger",
             )
         ],
         [
-            InlineKeyboardButton(text="🔔 تجربة إشعار شراء", callback_data="live:test_buy"),
-            InlineKeyboardButton(text="🔔 تجربة إشعار استرجاع", callback_data="live:test_refund"),
+            InlineKeyboardButton(text="🔔 تجربة إشعار شراء", callback_data="live:test_buy", style="primary"),
+            InlineKeyboardButton(text="🔔 تجربة إشعار استرجاع", callback_data="live:test_refund", style="danger"),
         ],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="admin:main")],
     ]

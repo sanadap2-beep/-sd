@@ -79,6 +79,7 @@ class CheckoutIn(BaseModel):
     product_id: int
     target: str = ""
     quantity: int = Field(default=1, ge=1, le=1_000_000)
+    coupon_code: str | None = None
 
 
 class CheckoutOut(BaseModel):

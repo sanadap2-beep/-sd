@@ -161,6 +161,11 @@ async def _handle_code_received(session, order, status_result, notifier, bot):
         f"📩 النص الكامل:\n{status_result.full_text or '—'}"
     )
 
+    service = await get_number_service_by_code(session, order.service)
+    country = await get_country_by_code(session, order.country_code)
+    svc_name = service.name_ar if service else order.service
+    country_name = country.name_ar if country else order.country_code
+
     if order.status_chat_id and order.status_message_id:
         try:
             await bot.edit_message_text(
@@ -170,7 +175,11 @@ async def _handle_code_received(session, order, status_result, notifier, bot):
                 reply_markup=code_received_kb(order.id),
             )
         except TelegramBadRequest:
-            await notifier.notify_user(user.telegram_id, code_text)
+            await notifier.notify_code_card(
+                user.telegram_id, svc_name, country_name, order.phone_number,
+                status_result.sms_code, extra=status_result.full_text,
+                reply_markup=code_received_kb(order.id),
+            )
     else:
         await notifier.notify_code_card(
             user.telegram_id, svc_name, country_name, order.phone_number,
@@ -196,15 +205,24 @@ async def _handle_code_received(session, order, status_result, notifier, bot):
     await GamificationService.progress_event(session, user.id, "purchase")
 
     # ── إرسال الإشعار بالقالب الجديد إلى القناة العامة ──
-    service = await get_number_service_by_code(session, order.service)
-    country = await get_country_by_code(session, order.country_code)
-
     await notifier.notify_successful_number_order(
         order=order,
         country=country,
         service=service,
         user=user,
     )
+
+    # ── دعوة تقييم المزود بعد اكتمال الطلب ──
+    from services.provider_review_service import ProviderReviewService
+
+    if await ProviderReviewService.enabled() and not await ProviderReviewService.already_reviewed(
+        session, user.id, "number", order.id
+    ):
+        await notifier.notify_order_review_prompt(
+            user.telegram_id,
+            order_id=order.id,
+            provider=order.provider or order.service,
+        )
 
 
 async def _update_countdown(bot, order):

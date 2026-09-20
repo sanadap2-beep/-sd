@@ -30,10 +30,10 @@ def _auto_lang(scope=None) -> str:
 def _account_kb(language: str='ar') -> InlineKeyboardBuilder:
     t = lambda key: I18nService.t(key, language)
     kb = InlineKeyboardBuilder()
-    kb.button(text=t('acct_number_orders'), callback_data='my_num_orders:0')
-    kb.button(text=t('acct_other_orders'), callback_data='my_uni_orders:0')
-    kb.button(text=t('acct_transactions'), callback_data='my_transactions:0')
-    kb.button(text=t('acct_watches'), callback_data='my_watches')
+    kb.button(text=t('acct_number_orders'), callback_data='my_num_orders:0', style="primary")
+    kb.button(text=t('acct_other_orders'), callback_data='my_uni_orders:0', style="primary")
+    kb.button(text=t('acct_transactions'), callback_data='my_transactions:0', style="primary")
+    kb.button(text=t('acct_watches'), callback_data='my_watches', style="primary")
     kb.button(text=t('acct_currency'), callback_data='menu:currency')
     kb.button(text=t('acct_language'), callback_data='menu:language')
     kb.button(text=t('back_to_main'), callback_data='back_to_main')
@@ -82,6 +82,8 @@ async def _send_account(message: Message, session, db_user: User):
     total_cashback = await CashbackService.get_user_total_cashback(session, db_user.id)
     kb = _account_kb(language)
     balance_display = await CurrencyService.format_dual(db_user.balance, db_user, session)
+    balance_syp_note = await CurrencyService.syp_note(db_user.balance, db_user, session)
+    balance_line = balance_display + balance_syp_note
     # «إجمالي مشترياتك» = ما اكتمل وتفعّل فعلاً فقط (الأرقام بعد التفعيل،
     # والرشق/الألعاب بعد الاكتمال) — لا الطلبات المعلّقة ولا المسترجَعة،
     # لأن المستخدم يدفع مسبقاً وقد يُرجع رصيده إذا لم يتفعّل الطلب.
@@ -92,7 +94,19 @@ async def _send_account(message: Message, session, db_user: User):
     )
     spent_display = await CurrencyService.format_dual(realized_spent, db_user, session)
     cashback_display = await CurrencyService.format_dual(total_cashback, db_user, session)
-    await message.answer(t('account_card', user_id=db_user.telegram_id, balance=balance_display, spent=spent_display, orders=realized_orders, cashback=cashback_display, points=db_user.loyalty_points, referrals=referrals_count, joined=db_user.joined_at.strftime('%Y-%m-%d')), reply_markup=kb.as_markup())
+
+    vip_line = ""
+    try:
+        from services.feature_service import FeatureService
+        from services.vip_service import VipService
+
+        if await VipService.enabled() and await VipService.show_in_profile():
+            tier = await VipService.tier_for(realized_spent)
+            vip_line = f"👑 {('مستوى' if language.startswith('ar') else 'Tier')}: <b>{tier.name}</b> · كاشباك ×{tier.cashback_mult}\n\n"
+    except Exception:
+        pass
+
+    await message.answer(vip_line + t('account_card', user_id=db_user.telegram_id, balance=balance_line, spent=spent_display, orders=realized_orders, cashback=cashback_display, points=db_user.loyalty_points, referrals=referrals_count, joined=db_user.joined_at.strftime('%Y-%m-%d')), reply_markup=kb.as_markup())
 
 @router.callback_query(F.data == 'my_watches')
 async def my_watches(callback: CallbackQuery, session, db_user: User):
@@ -168,7 +182,7 @@ async def my_unified_orders(callback: CallbackQuery, session, db_user: User):
         lines.append(line)
     kb = InlineKeyboardBuilder()
     for order in orders:
-        kb.button(text=f'🔎 تفاصيل الطلب #{order.id}', callback_data=f'my_uni_order:{order.id}')
+        kb.button(text=f'🔎 تفاصيل الطلب #{order.id}', callback_data=f'my_uni_order:{order.id}', style="primary")
     if page > 0:
         kb.button(text='◀️ السابق', callback_data=f'my_uni_orders:{page - 1}')
     if page < total_pages - 1:
@@ -204,7 +218,7 @@ async def unified_order_detail(callback: CallbackQuery, session, db_user: User):
         review_result = await session.execute(select(ProductReview).where(ProductReview.user_id == db_user.id, ProductReview.product_id == order.product_id))
         if review_result.scalar_one_or_none() is None:
             kb.button(text='⭐ قيّم هذا المنتج', callback_data=f'review:start:{order.id}')
-    kb.button(text='🔁 إعادة الطلب', callback_data=f'repeat_order:{order.id}')
+    kb.button(text='🔁 إعادة الطلب', callback_data=f'repeat_order:{order.id}', style="primary")
     kb.button(text='🧾 الإيصال', callback_data=f'receipt:unified:{order.id}')
     kb.button(text='🔙 رجوع للطلبات', callback_data='my_uni_orders:0')
     kb.button(text='🏠 القائمة الرئيسية', callback_data='back_to_main')

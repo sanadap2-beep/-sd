@@ -171,7 +171,7 @@ async def ad_submit(callback: CallbackQuery, state: FSMContext, session, db_user
     )
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ قبول ونشر", callback_data=f"admin:ad_accept:{ad.id}")],
-        [InlineKeyboardButton(text="❌ رفض وإرجاع المال", callback_data=f"admin:ad_reject:{ad.id}")],
+        [InlineKeyboardButton(text="❌ رفض وإرجاع المال", callback_data=f"admin:ad_reject:{ad.id}", style="danger")],
     ])
     photos = SponsoredAdService.photos(ad)
     if photos:

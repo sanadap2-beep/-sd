@@ -10,6 +10,7 @@
 6) البحث في خدمات مزود معين
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -198,7 +199,12 @@ class ProviderSyncService:
 
             fetched_ids = set()
 
-            for service in services:
+            # دفعات: كل BATCH نعمل flush + نحرر الـ event loop حتى لا يعلق البوت
+            # مع مزودين عندهم 10-50 ألف خدمة. بدون sleep(0) الحلقة CPU-bound
+            # تجوّع باقي الهاندلرز فيبدو البوت معلقاً/واقفاً.
+            BATCH_SIZE = 400
+
+            for index, service in enumerate(services, start=1):
                 try:
                     fetched_ids.add(service.external_id)
 
@@ -273,20 +279,45 @@ class ProviderSyncService:
                     result.failed_services += 1
                     continue
 
-            deleted_ids = set(existing_services.keys()) - fetched_ids
-            for deleted_id in deleted_ids:
-                existing = existing_services[deleted_id]
-                if existing.status != ProviderServiceStatus.DELETED_FROM_PROVIDER:
-                    existing.status = ProviderServiceStatus.DELETED_FROM_PROVIDER
-                    result.deactivated_services += 1
+                if index % BATCH_SIZE == 0:
+                    try:
+                        await session.flush()
+                    except IntegrityError:
+                        pass
+                    # تحرير الـ event loop حتى يبقى البوت مستجيباً أثناء السحب الكبير
+                    await asyncio.sleep(0)
 
-                    products_result = await session.execute(
-                        select(Product).where(Product.provider_service_ref_id == existing.id)
-                    )
-                    affected_products = products_result.scalars().all()
-                    for product in affected_products:
-                        product.status = ProductStatus.INACTIVE
-                        result.products_affected += 1
+            try:
+                await session.flush()
+            except IntegrityError:
+                pass
+            await asyncio.sleep(0)
+
+            deleted_ids = set(existing_services.keys()) - fetched_ids
+            deleted_services = [
+                existing_services[did]
+                for did in deleted_ids
+                if existing_services[did].status != ProviderServiceStatus.DELETED_FROM_PROVIDER
+            ]
+            for existing in deleted_services:
+                existing.status = ProviderServiceStatus.DELETED_FROM_PROVIDER
+                result.deactivated_services += 1
+
+            # جلب المنتجات المتأثرة باستعلام واحد بدل N+1 (سبب رئيسي للتعليق)
+            if deleted_services:
+                deleted_row_ids = [s.id for s in deleted_services if s.id is not None]
+                if deleted_row_ids:
+                    CHUNK = 500
+                    for i in range(0, len(deleted_row_ids), CHUNK):
+                        chunk = deleted_row_ids[i : i + CHUNK]
+                        products_result = await session.execute(
+                            select(Product).where(Product.provider_service_ref_id.in_(chunk))
+                        )
+                        for product in products_result.scalars().all():
+                            product.status = ProductStatus.INACTIVE
+                            result.products_affected += 1
+                        if i + CHUNK < len(deleted_row_ids):
+                            await asyncio.sleep(0)
 
             provider.last_sync_at = datetime.utcnow()
             # total_fetched already contains existing and newly discovered

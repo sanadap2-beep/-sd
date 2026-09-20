@@ -17,7 +17,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType, StoreServer
+from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType, StoreServer, ApiProvider
 from services.store_server_service import StoreServerService
 from services.agent_service import AgentService
 from services.html_guard import esc
@@ -31,6 +31,8 @@ from services.loyalty_service import LoyaltyService
 from services.settings_service import SettingsService
 from services.coupon_service import CouponService, CouponError
 from services.cashback_service import CashbackService
+from services.campaign_service import CampaignCodeError, CampaignService
+from services.feature_service import FeatureService
 from services.product_service import ProductService
 from services.promotion_service import PromotionService
 from services.currency_service import CurrencyService
@@ -70,10 +72,41 @@ def _auto_lang(scope=None) -> str:
     return getattr(user, "language_code", "ar") or "ar"
 
 async def _dual_price(amount, db_user, session):
-    """السعر بالدولار + ما يعادله بعملة عرض المستخدم."""
+    """السعر بالدولار + ما يعادله بعملة عرض المستخدم (+ ليرة سورية إن فعلها الأدمن)."""
     if db_user is None:
         return f'${amount}'
-    return await CurrencyService.format_dual(amount, db_user, session)
+    display = await CurrencyService.format_dual(amount, db_user, session)
+    note = await CurrencyService.syp_note(amount, db_user, session)
+    return display + note
+
+
+async def _resolve_discount_code(session, code: str, user_id: int, order_amount):
+    """يحل كود الخصم: كوبون أولاً ثم كود حملة (يدعم ميزة campaign_codes).
+
+    يُرجع (kind, obj, discount) حيث kind ∈ {"coupon", "campaign"}.
+    يرمي CouponError برسالة موحدة إن لم يكن الكود صالحاً في الجهتين
+    (مع إعادة رسالة السبب الأصلي إن كان الكود معروفاً لكنه مرفوض).
+    """
+    if not await FeatureService.enabled("campaign_codes"):
+        coupon = await CouponService.validate_coupon(session, code, user_id, order_amount)
+        discount = CouponService.calculate_discount(coupon, order_amount)
+        return "coupon", coupon, discount
+
+    try:
+        coupon = await CouponService.validate_coupon(session, code, user_id, order_amount)
+        discount = CouponService.calculate_discount(coupon, order_amount)
+        return "coupon", coupon, discount
+    except CouponError as e:
+        campaign_error = None
+        try:
+            campaign = await CampaignService.validate(session, code, user_id, order_amount)
+            discount = CampaignService.calculate_discount(campaign, order_amount)
+            return "campaign", campaign, discount
+        except CampaignCodeError as ce:
+            campaign_error = ce
+        if "غير موجود" in str(e):
+            raise CouponError(str(campaign_error or e)) from None
+        raise
 
 def _glang(db_user) -> str:
     return getattr(db_user, 'language_code', 'ar') or 'ar'
@@ -81,6 +114,11 @@ def _glang(db_user) -> str:
 
 def _eta_line(product, language: str = "ar") -> str:
     """سطر الوقت التقريبي للاكتمال إن وُجد."""
+    from services.smm_price_service import SMM_DEFAULT_ETA
+
+    # خدمات الرشق (رابط/كمية) وقتها موحد: بين 1 و 25 دقيقة.
+    if getattr(product, "requires_link", False) or getattr(product, "requires_quantity", False):
+        return f"\n{I18nService.t('eta_label', language)}: {SMM_DEFAULT_ETA}"
     eta = getattr(product, "estimated_time", None)
     if eta:
         return f"\n{I18nService.t('eta_label', language)}: {esc(str(eta))}"
@@ -478,11 +516,17 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         det = await service_details(product, session)
         live_price = await live_sell_price(product, session)
         back_callback = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
-        head = _product_head(product, '📈')
+        head = _product_head(product, '🎮' if product.requires_player_id else '📈')
         details_kb = format_details_kb(det, live_price, back_callback)
         await callback.message.edit_text(head, reply_markup=details_kb)
         await state.update_data(product_id=product_id, price_override=str(live_price))
-        if product.requires_link:
+        if product.requires_player_id:
+            # شحن الألعاب: لا يُنفَّذ الطلب عند المزود بلا Player ID.
+            # هذه الشاشة كانت تقفز للتأكيد مباشرة، فيُرسل الطلب بهدف فارغ
+            # (target='') ويُسحب رصيد الزبون بلا إمكانية تسليم.
+            await callback.message.answer(I18nService.t('send_player_id', language))
+            await state.set_state(GamesOrderStates.waiting_player_id)
+        elif product.requires_link:
             await callback.message.answer(I18nService.t('send_link', language))
             await state.set_state(SMMOrderStates.waiting_link)
         else:
@@ -618,12 +662,11 @@ async def product_coupon_received(message: Message, state: FSMContext, session, 
         return
     code = message.text.strip()
     try:
-        coupon = await CouponService.validate_coupon(session, code, db_user.id, product.price_usd)
+        kind, coupon, discount = await _resolve_discount_code(session, code, db_user.id, product.price_usd)
     except CouponError as e:
         await message.answer(str(e))
         await state.clear()
         return
-    discount = CouponService.calculate_discount(coupon, product.price_usd)
     sub_cat = product.sub_category
     await message.answer(f"{I18nService.t('ux_games_553_41', _auto_lang(locals()))}{esc(coupon.code)}{I18nService.t('ux_games_553_42', _auto_lang(locals()))}{product.price_usd}{I18nService.t('ux_games_553_43', _auto_lang(locals()))}{discount}{I18nService.t('ux_games_553_44', _auto_lang(locals()))}{product.price_usd - discount}$</b>", reply_markup=product_confirm_with_coupon_kb(product_id, sub_cat.id if sub_cat else 0, coupon.code, str(discount)))
 
@@ -683,7 +726,10 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
             return
     elif fulfillment == ProductFulfillmentType.MANUAL.value:
         pass
-    elif fulfillment != ProductFulfillmentType.API.value or not product.api_provider_id or (not product.provider_service_id) or (not product.api_provider) or (not product.api_provider.is_active):
+    elif fulfillment != ProductFulfillmentType.API.value or not product.api_provider_id or (not product.provider_service_id):
+        # المزود الأساسي قد يكون معطلاً — لكن مساراً احتياطياً (تحت ميزة
+        # catalog_failover) ما يزال قادراً على التنفيذ، لذا لا نحظر هنا.
+        # يقرر المسار في _finalize_purchase عبر routes_for.
         await callback.answer(I18nService.t('ux_games_650_47', _auto_lang(locals())), show_alert=True)
         await state.clear()
         return
@@ -700,10 +746,17 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
         return
     discount = Decimal('0')
     coupon = None
+    campaign = None
     if coupon_code:
         try:
-            coupon = await CouponService.validate_coupon(session, coupon_code, db_user.id, total_price)
-            discount = CouponService.calculate_discount(coupon, total_price)
+            kind, code_obj, code_discount = await _resolve_discount_code(
+                session, coupon_code, db_user.id, total_price
+            )
+            if kind == "campaign":
+                campaign = code_obj
+            else:
+                coupon = code_obj
+            discount = code_discount
         except CouponError:
             discount = Decimal('0')
             coupon = None
@@ -711,9 +764,11 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
     if promotion_discount >= max(discount, tier_discount) and promotion_discount > 0:
         discount = promotion_discount
         coupon = None
+        campaign = None
     elif tier_discount > discount:
         discount = tier_discount
         coupon = None
+        campaign = None
         promotion = None
     elif discount > 0:
         promotion = None
@@ -725,7 +780,7 @@ async def _execute_purchase(callback: CallbackQuery, session, db_user: User, bot
         amount_display = await _dual_price(final_price, db_user, session)
         await callback.message.answer(I18nService.t('large_order_confirm', language, product=esc(product.name_ar), amount=esc(amount_display)), reply_markup=confirm_large_order_kb(f"prod_final:{product_id}:{coupon_code or 'none'}", language))
         return
-    await _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion)
+    await _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion, campaign)
 
 @router.callback_query(F.data.startswith('prod_final:'))
 async def product_final_confirm(callback: CallbackQuery, session, db_user: User, bot, state: FSMContext):
@@ -751,30 +806,41 @@ async def product_final_confirm(callback: CallbackQuery, session, db_user: User,
         return
     discount = Decimal('0')
     coupon = None
+    campaign = None
     if coupon_code:
         try:
-            coupon = await CouponService.validate_coupon(session, coupon_code, db_user.id, total_price)
-            discount = CouponService.calculate_discount(coupon, total_price)
+            kind, code_obj, code_discount = await _resolve_discount_code(
+                session, coupon_code, db_user.id, total_price
+            )
+            if kind == "campaign":
+                campaign = code_obj
+            else:
+                coupon = code_obj
+            discount = code_discount
         except CouponError:
             pass
     tier_discount, _tier_label = await TieredPricingService.discount_for(session, db_user.id, product, total_price, quantity)
     if promotion_discount >= max(discount, tier_discount) and promotion_discount > 0:
         discount = promotion_discount
         coupon = None
+        campaign = None
     elif tier_discount > discount:
         discount = tier_discount
         coupon = None
+        campaign = None
         promotion = None
     elif discount > 0:
         promotion = None
     final_price = total_price - discount
     final_price = await AgentService.apply_discount(session, db_user.id, final_price)
-    await _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion)
+    await _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion, campaign)
 
-async def _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion):
+async def _finalize_purchase(callback, session, db_user, bot, state, product, target, quantity, final_price, discount, coupon, promotion, campaign=None):
     notifier = NotificationService(bot)
     fulfillment = getattr(product.fulfillment_type, 'value', product.fulfillment_type)
-    if fulfillment == ProductFulfillmentType.API.value and (not product.api_provider_id or not product.provider_service_id or (not product.api_provider) or (not product.api_provider.is_active)):
+    if fulfillment == ProductFulfillmentType.API.value and (not product.api_provider_id or not product.provider_service_id):
+        # المزود الأساسي المعطّل لا يحظر الطلب: المسارات الاحتياطية
+        # (catalog_failover) قد تنفذ بدلاً عنه — تُفحص داخل الفرع API أدناه.
         await callback.message.answer(I18nService.t('ux_games_859_53', _auto_lang(locals())))
         await state.clear()
         return
@@ -795,7 +861,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         if metadata and metadata.get('note'):
             delivery_note = f"\n📝 ملاحظة: {esc(metadata['note'])}"
         await callback.message.answer(f"{I18nService.t('ux_games_899_54', _auto_lang(locals()))}{esc(product.name_ar)}{I18nService.t('ux_games_899_55', _auto_lang(locals()))}{order.id}{I18nService.t('ux_games_899_56', _auto_lang(locals()))}{final_price}{I18nService.t('ux_games_899_57', _auto_lang(locals()))}{esc(delivered_value)}</code>{delivery_note}{I18nService.t('ux_games_899_58', _auto_lang(locals()))}")
-        await notifier.notify_admin(f'📦 <b>تم تسليم منتج من المخزون</b>\n\n🆔 الطلب: #{order.id}\n👤 المستخدم: {db_user.telegram_id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$')
+        await notifier.notify_admin(f'📦 <b>تم تسليم منتج من المخزون</b>\n\n🆔 الطلب: #{order.id}\n👤 المستخدم: {db_user.telegram_id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$', notification_type="order")
         upsells = await UpsellService.recommend(session, product.id)
         if upsells:
             await callback.message.answer(I18nService.t('ux_games_917_59', _auto_lang(locals())), reply_markup=product_search_results_kb(upsells))
@@ -821,6 +887,15 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             await callback.message.answer(I18nService.t('ux_games_968_60', _auto_lang(locals())))
             await state.clear()
             return
+    elif campaign and discount > 0:
+        try:
+            await CampaignService.apply(session, campaign, db_user.id, discount)
+        except CampaignCodeError as exc:
+            logger.warning('تعذر تطبيق كود الحملة أثناء الطلب: %s', exc)
+            await BalanceService.add_balance(session, db_user.id, final_price, TransactionType.REFUND, description='استرجاع - تعذر تطبيق كود الحملة')
+            await callback.message.answer(I18nService.t('ux_games_968_60', _auto_lang(locals())))
+            await state.clear()
+            return
     external_order_id = None
     order_status = UnifiedOrderStatus.PENDING
     status_message = 'بانتظار تنفيذ الإدارة' if fulfillment == ProductFulfillmentType.MANUAL.value else 'بانتظار التنفيذ'
@@ -828,66 +903,46 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         pass
     elif product.api_provider_id and product.provider_service_id:
-        provider = product.api_provider
-        if provider and provider.is_active:
+        from services.catalog_routing_service import CatalogRoutingService
+        routes = await CatalogRoutingService.routes_for(session, product)
+        if not routes:
+            await callback.message.answer(I18nService.t('ux_games_859_53', _auto_lang(locals())))
+            await state.clear()
+            return
+        external_order_id = None
+        instant_raw = None
+        used_route = None
+        route_errors: list[str] = []
+        low_balance_names: list[str] = []
+        non_balance_error = False
+        for route in routes:
+            provider = await session.get(ApiProvider, route.api_provider_id)
+            if provider is None or not provider.is_active:
+                route_errors.append(f"المزود {route.api_provider_id} غير نشط")
+                continue
             try:
                 protocol = ProtocolFactory.create_from_provider(provider)
-                # الاشتراكات الرقمية (ggsoma/partner_v1): قبل إرسال الطلب للمزود
-                # نفحص رصيدَه. إذا كان غير كافٍ لا نرسل — يُشعر المشتري أن
-                # الكود سيصل خلال دقائق، وتُخطر قناة الإدارة بقبول/رفض.
                 if _is_digital_subscription_provider(provider):
                     balance_usd = await _provider_balance_usd(protocol, provider)
                     if balance_usd is not None and balance_usd < final_price:
-                        order = UnifiedOrder(
-                            user_id=db_user.id, product_id=product.id,
-                            api_provider_id=provider.id,
-                            promotion_id=promotion.id if promotion else None,
-                            target=target, quantity=quantity,
-                            price_usd=final_price, cost_price_usd=product.cost_price_usd,
-                            status=UnifiedOrderStatus.PENDING,
-                            status_message='بانتظار تنفيذ الإدارة (رصيد المزود غير كافٍ)',
-                        )
-                        session.add(order)
-                        await session.commit()
-                        await session.refresh(order)
-                        if promotion:
-                            await PromotionService.mark_used(session, promotion.id)
-                        await DynamicService.increment_product_sold(session, product.id, quantity)
-                        await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
-                        await LoyaltyService.award_purchase_points(session, db_user.id, 'unified_orders', order.id, final_price)
-                        await callback.message.answer(
-                            f"✅ <b>تم شراء {esc(product.name_ar)}</b>\n\n"
-                            f"🆔 رقم الطلب: #{order.id}\n"
-                            f"💰 المبلغ: {final_price}$\n\n"
-                            "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
-                            "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله.",
-                            reply_markup=back_to_main_kb(),
-                        )
-                        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-                        await notifier.notify_admin(
-                            "🚨 <b>رصيد المزود غير كافٍ — اشتراك رقمي</b>\n\n"
-                            f"🔌 المزود: <b>{esc(provider.name)}</b>\n"
-                            f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
-                            f"📦 المنتج: {esc(product.name_ar)}\n"
-                            f"🆔 الطلب: <b>#{order.id}</b>\n"
-                            f"🎯 الهدف: {esc(target) if target else '—'}\n"
-                            f"💰 المبلغ: {final_price}$\n\n"
-                            "✅ «أرسل البيانات يدوياً» بعد شحن رصيد المزود وجلب "
-                            "الحساب — يُشعر المستخدم فوراً.\n"
-                            "❌ «إلغاء + استرجاع» إن لم تتمكن.",
-                            reply_markup=InlineKeyboardMarkup(
-                                inline_keyboard=[
-                                    [InlineKeyboardButton(text="✅ أرسل البيانات يدوياً", callback_data=f"admin:sub_send:{order.id}")],
-                                    [InlineKeyboardButton(text="❌ إلغاء + استرجاع", callback_data=f"admin:order_refund_ask:{order.id}")],
-                                ]
-                            ),
-                        )
-                        await state.clear()
-                        return
-                result = await protocol.place_order(service_id=product.provider_service_id, target=target, quantity=quantity)
+                        route_errors.append(f"رصيد {provider.name} غير كافٍ ({balance_usd}$)")
+                        low_balance_names.append(provider.name)
+                        continue
+                result = await protocol.place_order(
+                    service_id=route.provider_service_id, target=target, quantity=quantity,
+                )
                 external_order_id = result.external_order_id
-                # مزود لحظي (اشتراكات رقمية ggsoma…): سلّم فوراً في نفس الاستجابة.
+                used_route = route
+                if not route.is_primary:
+                    try:
+                        from services.feature_service import FeatureService as _FS
+                        await _FS.track(
+                            "catalog_failover", "failover_used",
+                            user_id=db_user.id,
+                            value=f"product:{product.id}:provider:{route.api_provider_id}",
+                        )
+                    except Exception:
+                        pass
                 if str(getattr(result, 'status', '') or '').lower() == 'completed':
                     order_status = UnifiedOrderStatus.COMPLETED
                     status_message = 'مكتمل - توصيل فوري'
@@ -897,35 +952,97 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                 else:
                     order_status = UnifiedOrderStatus.PROCESSING
                     status_message = 'تم إرسال الطلب للمزود'
+                break
+            except ProtocolInsufficientFundsError as e:
+                route_errors.append(f"رصيد {getattr(provider, 'name', str(provider.id))}: {e}")
+                low_balance_names.append(getattr(provider, 'name', str(provider.id)))
+                logger.warning('فشل رصيد المزود %s للمنتج %s: %s', getattr(provider, 'id', '?'), product.id, e)
+                continue
             except ProtocolError as e:
-                logger.error(f'فشل إرسال الطلب للمزود: {e}')
-                await BalanceService.add_balance(session, db_user.id, final_price, TransactionType.REFUND, description='استرجاع - فشل الإرسال للمزود')
-                provider_name = getattr(provider, 'name', None) or 'المزود'
-                if isinstance(e, ProtocolInsufficientFundsError):
-                    await callback.message.answer(I18nService.t('provider_insufficient_funds', _glang(db_user)))
-                    await notifier.notify_admin(
-                        '🚨 <b>رصيد المزود غير كافٍ</b>\n\n'
-                        f'🔌 المزود: <b>{esc(provider_name)}</b>\n'
-                        f'📦 المنتج: {esc(product.name_ar)}\n'
-                        f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
-                        f'📊 الكمية: {quantity}\n'
-                        f'💰 المبلغ المسترجع: {final_price}$\n'
-                        f'⚠️ الرد: <code>{e}</code>\n\n'
-                        '🛠 <b>الحل:</b> اشحن رصيد المزود من لوحته، أو عطّل المنتج مؤقتاً، أو انقل الخدمة لمزود آخر لديه رصيد.'
+                non_balance_error = True
+                route_errors.append(f"المزود {getattr(provider, 'name', str(provider.id))}: {e}")
+                logger.error('فشل إرسال الطلب للمزود %s للمنتج %s: %s', getattr(provider, 'id', '?'), product.id, e)
+                try:
+                    from services.auto_failover_service import AutoFailoverService
+
+                    await AutoFailoverService.record_failure(
+                        session,
+                        product.id,
+                        route.api_provider_id,
+                        is_backup_route=not route.is_primary,
+                        bot=bot,
                     )
-                else:
-                    await callback.message.answer(I18nService.t('ux_games_1007_61', _auto_lang(locals())))
-                    await notifier.notify_admin(
-                        '🚨 <b>فشل إرسال طلب للمزود</b>\n\n'
-                        f'🔌 المزود: <b>{esc(provider_name)}</b>\n'
-                        f'📦 المنتج: <b>{esc(product.name_ar)}</b>\n'
-                        f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
-                        f'⚠️ الخطأ: <code>{e}</code>\n\n'
-                        '🛠 <b>الحل:</b> تحقق من آيدي الخدمة عند المزود، وصحة الرابط/الكمية، وحالة المزود. تم استرجاع رصيد المستخدم.'
-                    )
-                await state.clear()
-                return
-    order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message, result_data=json.dumps(instant_raw, ensure_ascii=False) if instant_raw else None, completed_at=datetime.utcnow() if instant_raw else None)
+                except Exception:
+                    pass
+                continue
+        if used_route is None:
+            all_low_balance = bool(low_balance_names) and not non_balance_error
+            if all_low_balance:
+                low_bal_prov = await session.get(ApiProvider, routes[0].api_provider_id)
+                low_bal_id = low_bal_prov.id if low_bal_prov else product.api_provider_id
+                low_bal_name = low_balance_names[0]
+                order = UnifiedOrder(
+                    user_id=db_user.id, product_id=product.id,
+                    api_provider_id=low_bal_id,
+                    promotion_id=promotion.id if promotion else None,
+                    target=target, quantity=quantity,
+                    price_usd=final_price, cost_price_usd=product.cost_price_usd,
+                    status=UnifiedOrderStatus.PENDING,
+                    status_message='بانتظار تنفيذ الإدارة (رصيد المزود غير كافٍ)',
+                )
+                session.add(order)
+                await session.commit()
+                await session.refresh(order)
+                if promotion:
+                    await PromotionService.mark_used(session, promotion.id)
+                await DynamicService.increment_product_sold(session, product.id, quantity)
+                await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
+                await LoyaltyService.award_purchase_points(session, db_user.id, 'unified_orders', order.id, final_price)
+                await callback.message.answer(
+                    f"✅ <b>تم شراء {esc(product.name_ar)}</b>\n\n"
+                    f"🆔 رقم الطلب: #{order.id}\n"
+                    f"💰 المبلغ: {final_price}$\n\n"
+                    "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
+                    "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله.",
+                    reply_markup=back_to_main_kb(),
+                )
+                from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+                await notifier.notify_admin(
+                    "🚨 <b>رصيد المزود غير كافٍ — اشتراك رقمي</b>\n\n"
+                    f"🔌 المزود: <b>{esc(low_bal_name)}</b>\n"
+                    f"👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n"
+                    f"📦 المنتج: <b>{esc(product.name_ar)}</b>\n"
+                    f"🆔 الطلب: <b>#{order.id}</b>\n"
+                    f"🎯 الهدف: {esc(target) if target else '—'}\n"
+                    f"💰 المبلغ: {final_price}$\n\n"
+                    "✅ «أرسل البيانات يدوياً» بعد شحن رصيد المزود وجلب "
+                    "الحساب — يُشعر المستخدم فوراً.\n"
+                    "❌ «إلغاء + استرجاع» إن لم تتمكن.",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="✅ أرسل البيانات يدوياً", callback_data=f"admin:sub_send:{order.id}")],
+                            [InlineKeyboardButton(text="❌ إلغاء + استرجاع", callback_data=f"admin:order_refund_ask:{order.id}", style="danger")],
+                        ]
+                    ),
+                )
+            else:
+                await BalanceService.add_balance(
+                    session, db_user.id, final_price,
+                    TransactionType.REFUND, description='استرجاع - فشل الإرسال للمزود',
+                )
+                await callback.message.answer(I18nService.t('ux_games_1007_61', _auto_lang(locals())))
+                errors_summary = " | ".join(route_errors[:3])
+                await notifier.notify_admin(
+                    '🚨 <b>فشل إرسال طلب للمزود</b>\n\n'
+                    f'📦 المنتج: <b>{esc(product.name_ar)}</b>\n'
+                    f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
+                    f'⚠️ الأخطاء: <code>{errors_summary}</code>\n\n'
+                    '🛠 <b>الحل:</b> تحقق من آيدي الخدمة عند المزود، وصحة الرابط/الكمية، '
+                    'وحالة المزود. تم استرجاع رصيد المستخدم.'
+                )
+            await state.clear()
+            return
+    order = UnifiedOrder(user_id=db_user.id, product_id=product.id, api_provider_id=used_route.api_provider_id if used_route else product.api_provider_id, promotion_id=promotion.id if promotion else None, external_order_id=external_order_id, target=target, quantity=quantity, price_usd=final_price, cost_price_usd=product.cost_price_usd, status=order_status, status_message=status_message, result_data=json.dumps(instant_raw, ensure_ascii=False) if instant_raw else None, completed_at=datetime.utcnow() if instant_raw else None)
     session.add(order)
     await session.commit()
     await session.refresh(order)
@@ -973,13 +1090,30 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             "❌ لا يمكنك تنفيذه؟ «ألغِه» لاسترجاع رصيد المستخدم.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="✅ نفّذته — أُشعر المستخدم", callback_data=f"admin:order_complete:{order.id}")],
-                    [InlineKeyboardButton(text="❌ أَلْغِه — استرجاع", callback_data=f"admin:order_refund_ask:{order.id}")],
-                    [InlineKeyboardButton(text="👁 تفاصيل الطلب", callback_data=f"admin:order_view:{order.id}")],
+                    [InlineKeyboardButton(text="✅ نفّذته — أُشعر المستخدم", callback_data=f"admin:order_complete:{order.id}", style="primary")],
+                    [InlineKeyboardButton(text="❌ أَلْغِه — استرجاع", callback_data=f"admin:order_refund_ask:{order.id}", style="danger")],
+                    [InlineKeyboardButton(text="👁 تفاصيل الطلب", callback_data=f"admin:order_view:{order.id}", style="primary")],
                 ]
             ),
         )
     else:
-        await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {esc(target or '—')}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}")
-    await notifier.notify_successful_unified_order(username=db_user.username, full_name=db_user.full_name, product_name=product.name_ar, price_usd=str(final_price))
+        await notifier.notify_admin(f"🛒 <b>طلب شراء جديد</b>\n\n👤 المستخدم: {db_user.telegram_id} (@{db_user.username or '-'})\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$\n🎯 الهدف: {esc(target or '—')}\n📊 الكمية: {quantity}\n🆔 طلب #{order.id}", notification_type="order")
+    from services.smm_catalog import button_label as _smm_label
+
+    _sub = product.sub_category
+    _cat = _sub.category if _sub is not None else None
+    await notifier.notify_successful_unified_order(
+        username=db_user.username,
+        full_name=db_user.full_name,
+        product_name=product.name_ar,
+        price_usd=str(final_price),
+        order_id=order.id,
+        quantity=quantity,
+        target=target,
+        app_name=_smm_label(_cat.name_ar, _cat.emoji) if _cat is not None else None,
+        section_name=_smm_label(_sub.name_ar, _sub.emoji) if _sub is not None else None,
+        service_name=product.name_ar,
+        user_telegram_id=db_user.telegram_id,
+        is_smm=bool(product.requires_link or product.requires_quantity),
+    )
     await state.clear()

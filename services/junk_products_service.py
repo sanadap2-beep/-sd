@@ -309,6 +309,7 @@ class JunkProductsService:
             provider_service_id=service.external_service_id,
             name_ar=name,
             description=(service.description or service.category or "")[:500] or None,
+            estimated_time="1 - 25 دقيقة",
             price_usd=sell,
             cost_price_usd=cost,
             pricing_type=ProductPricingType.MARGIN_PERCENT,

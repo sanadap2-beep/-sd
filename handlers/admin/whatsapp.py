@@ -54,7 +54,7 @@ async def wa_menu(callback: CallbackQuery):
     b.button(text="📝 الوصف والسعر", callback_data="admin:wa_desc", style="primary")
     b.button(text="🔌 الجسر (URL + سر)", callback_data="admin:wa_bridge")
     b.button(text="👥 المشتركون", callback_data="admin:wa_users:0")
-    b.button(text="📊 الإحصاءات", callback_data="admin:wa_stats")
+    b.button(text="📊 الإحصاءات", callback_data="admin:wa_stats", style="primary")
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     b.adjust(2, 2, 1)
     await callback.message.edit_text(
@@ -264,7 +264,7 @@ async def wa_bridge_test(callback: CallbackQuery):
 # ══════════════ المشتركون ══════════════
 
 
-@router.callback_query(_PAGE_RE)
+@router.callback_query(F.data.regexp(_PAGE_RE))
 async def wa_users(callback: CallbackQuery, session):
     page = int(callback.data.split(":")[2])
     per_page = 15

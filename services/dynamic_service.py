@@ -201,7 +201,11 @@ class DynamicService:
 
     @staticmethod
     async def get_active_leaf_sub_categories(session) -> list[SubCategory]:
-        """كل الأقسام الفرعية القابلة لاستقبال منتجات (بلا أقسام داخلية)."""
+        """كل الأقسام الفرعية القابلة لاستقبال منتجات (بلا أقسام داخلية).
+
+        الورقة = قسم لا يملك أبناءً (مثل «ببجي» و«فري فاير» داخل «شحن ألعاب»).
+        القسم الأب الذي يملك أقساماً داخلية لا يُنشر فيه مباشرة.
+        """
         result = await session.execute(
             select(SubCategory)
             .options(
@@ -212,8 +216,12 @@ class DynamicService:
             .order_by(SubCategory.sort_order, SubCategory.id)
         )
         subs = list(result.scalars().all())
-        parents_ids = {sub.id for sub in subs if sub.parent_sub_category_id is not None}
-        return [sub for sub in subs if sub.id not in parents_ids]
+        has_children = {
+            sub.parent_sub_category_id
+            for sub in subs
+            if sub.parent_sub_category_id is not None
+        }
+        return [sub for sub in subs if sub.id not in has_children]
 
     @staticmethod
     async def find_child_section_by_kind(
@@ -397,7 +405,8 @@ class DynamicService:
             select(Product)
             .where(Product.id == product_id)
             .options(
-                selectinload(Product.sub_category),
+                selectinload(Product.sub_category).selectinload(SubCategory.category),
+                selectinload(Product.sub_category).selectinload(SubCategory.parent),
                 selectinload(Product.api_provider),
             )
         )
@@ -431,6 +440,14 @@ class DynamicService:
                 if requires_quantity
                 else ProductDisplayType.FIXED_TOTAL
             )
+        # وقت اكتمال خدمات الرشق موحد: 1 - 25 دقيقة.
+        if (requires_link or requires_quantity) and not estimated_time:
+            try:
+                from services.smm_price_service import SMM_DEFAULT_ETA
+
+                estimated_time = SMM_DEFAULT_ETA
+            except Exception:
+                estimated_time = "1 - 25 دقيقة"
         product = Product(
             sub_category_id=sub_category_id,
             name_ar=name_ar,

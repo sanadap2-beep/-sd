@@ -186,7 +186,7 @@ async def juris_toggle(callback: CallbackQuery, session, db_user):
         session=session,
     )
     await callback.answer("🟢 مفعّلة" if rule.is_active else "⚪ موقوفة")
-    await juris_list(callback)
+    await juris_list(callback, session)
 
 
 # ══════════════ المستأجرون ══════════════
@@ -312,7 +312,7 @@ async def webhooks_clear(callback: CallbackQuery, session, db_user):
         session=session,
     )
     await callback.answer("🗑 حُذفت.")
-    await webhooks_list(callback)
+    await webhooks_list(callback, session)
 
 
 # ══════════════ عروض المزودين ══════════════
@@ -350,7 +350,7 @@ async def bids_clean(callback: CallbackQuery, session):
 
     removed = await ProviderBiddingService.cleanup_expired(session)
     await callback.answer(f"🧹 نُظفت {removed} عروض منتهية.")
-    await bids_list(callback)
+    await bids_list(callback, session)
 
 
 # ══════════════ الحجوزات ══════════════
@@ -386,7 +386,7 @@ async def holds_expire(callback: CallbackQuery, session):
 
     count = await EscrowService.expire_stale(session, 72)
     await callback.answer(f"⏰ أُفرج عن {count} حجوزات قديمة.")
-    await holds_list(callback)
+    await holds_list(callback, session)
 
 
 # ══════════════ الغرف ══════════════

@@ -125,8 +125,23 @@ class StarsService:
             payment_reference=(f"telegram_stars:{payment.telegram_payment_charge_id}"),
         )
 
+        bonus_usd = Decimal("0")
+        try:
+            from services.deposit_bonus_service import DepositBonusService
+
+            bonus_usd = await DepositBonusService.apply_for_deposit(
+                session,
+                user_id=db_user.id,
+                deposit_amount_usd=amount_usd,
+                deposit_id=package.id,
+                deposit_source="stars",
+            )
+        except Exception:
+            logger.exception("فشل صرف مكافأة شحن نجوم للمستخدم %s", db_user.id)
+
         notifier = NotificationService(bot)
 
+        bonus_line = f"\n🎁 مكافأة شحن: <b>+{bonus_usd}$</b>" if bonus_usd and bonus_usd > 0 else ""
         await notifier.notify_user(
             telegram_id=db_user.telegram_id,
             text=(
@@ -134,7 +149,8 @@ class StarsService:
                 f"⭐ النجوم المدفوعة: "
                 f"{payment.total_amount}\n"
                 f"💰 الرصيد المضاف: "
-                f"<b>{amount_usd}$</b>\n\n"
+                f"<b>{amount_usd}$</b>"
+                f"{bonus_line}\n\n"
                 "يمكنك الآن استخدام رصيدك."
             ),
         )

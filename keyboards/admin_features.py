@@ -66,6 +66,22 @@ def feature_detail_kb(spec: FeatureSpec, enabled: bool) -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton(text="📦 إعداد خصومات الجملة", callback_data="feat_bulk_discounts")]
         )
+    if spec.key == "daily_spin":
+        rows.append(
+            [InlineKeyboardButton(text="🎰 إدارة جوائز العجلة", callback_data="admin_engage:prizes")]
+        )
+    if spec.key == "deposit_bonuses":
+        rows.append(
+            [InlineKeyboardButton(text="🎁 إدارة قواعد المكافآت", callback_data="admin_engage:deposit_rules", style="primary")]
+        )
+    if spec.key == "weekly_challenges":
+        rows.append(
+            [InlineKeyboardButton(text="🏅 إنشاء تحدٍّ أسبوعي", callback_data="admin_engage:new_challenge")]
+        )
+    if spec.key == "number_resale_market":
+        rows.append(
+            [InlineKeyboardButton(text="🔄 إعدادات السوق", callback_data="admin_engage:resale_settings")]
+        )
     rows.append(
         [InlineKeyboardButton(text="♻️ إعادة للقيم الافتراضية", callback_data=f"feat_reset:{spec.key}", style="danger")]
     )

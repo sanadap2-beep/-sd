@@ -60,7 +60,7 @@ async def tasks_home(callback: CallbackQuery, session, db_user):
         [
             InlineKeyboardButton(
                 text="⭐ نقاطي",
-                callback_data="points:home",
+                callback_data="points:home", style="primary",
             )
         ]
     )

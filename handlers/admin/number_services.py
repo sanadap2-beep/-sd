@@ -262,6 +262,24 @@ async def nsvc_delete(callback: CallbackQuery, session):
 # ══════════════ سيرفرات/مزودي خدمة الأرقام (ديناميكي) ══════════════
 
 
+async def _configured_provider_values(session) -> set[str]:
+    """قيم ``ProviderName`` التي لها مفتاح API فعلياً (مهيأة في ProviderManager)."""
+    return {provider.value for provider in await NumberServerService.active_providers(session)}
+
+
+def _missing_key_line(providers, configured: set[str]) -> str:
+    """تحذير للأدمن: سيرفر مربوط بمزود بلا مفتاح API = سيرفر بلا أرقام إطلاقاً."""
+    missing = sorted({value for value in providers if value and value not in configured})
+    if not missing:
+        return ""
+    names = "، ".join(f"<code>{value}</code>" for value in missing)
+    return (
+        f"⚠️ <b>مزود بلا مفتاح API:</b> {names}\n"
+        "سيرفراته ستظهر للمستخدم بلا أي رقم حتى يُضاف المفتاح في <code>.env</code> "
+        "ثم يُعاد تشغيل البوت.\n\n"
+    )
+
+
 @router.callback_query(F.data.startswith("admin:nsvc_servers:"))
 async def nsvc_servers_list(callback: CallbackQuery, session):
     svc_id = int(callback.data.split(":")[2])
@@ -280,12 +298,16 @@ async def nsvc_servers_list(callback: CallbackQuery, session):
         if working
         else "🟢 لا يوجد سيرفر معلَّم كشغّال بعد — افتح أي سيرفر وعلّمه."
     )
+    key_warning = _missing_key_line(
+        [row.provider for row in servers], await _configured_provider_values(session)
+    )
     await callback.answer()
     await callback.message.edit_text(
         f"⚙️ <b>سيرفرات «{svc.name_ar}»</b>\n\n"
         "المستخدم يرى الأسماء مرقّمة فقط (سيرفر 1، سيرفر 2...) "
         "<b>ولا يرى اسم المزود إطلاقاً</b>.\n"
         "اسم المزود الظاهر هنا لك وحدك.\n\n"
+        f"{key_warning}"
         f"{working_line}\n\n"
         "🟢 = مفعّل | ⚪ = معطّل",
         reply_markup=admin_nsvc_servers_kb(svc.id, servers, public_names),
@@ -316,10 +338,23 @@ async def nsvc_server_add_start(callback: CallbackQuery, state: FSMContext, sess
     await state.update_data(nsvc_server_service_id=svc_id)
     existing = await NumberServerService.list_servers(session, svc_id, active_only=False)
     next_name = public_server_name(len(existing) + 1)
+    configured = await _configured_provider_values(session)
+    from database.models import ProviderName as _ProviderName
+
+    ready = [p.value for p in _ProviderName if p.value in configured]
+    missing = [p.value for p in _ProviderName if p.value not in configured]
+    ready_line = "، ".join(f"<code>{value}</code>" for value in ready) or "لا شيء بعد"
+    missing_line = (
+        "\n⚠️ بلا مفتاح API (لن تُسحب منه أرقام): "
+        + "، ".join(f"<code>{value}</code>" for value in missing)
+        if missing
+        else ""
+    )
     await callback.answer()
     await callback.message.edit_text(
         "➕ <b>إضافة سيرفر</b>\n\n"
         f"سيُسمّى تلقائياً: <b>{next_name}</b> (هذا ما يراه المستخدم).\n\n"
+        f"🔑 <b>مزودون جاهزون بمفتاح API:</b> {ready_line}{missing_line}\n\n"
         "🔌 <b>اختر المزود المرتبط به:</b>",
         reply_markup=admin_nsvc_choose_provider_kb(svc_id, show_back=True),
     )
@@ -328,9 +363,14 @@ async def nsvc_server_add_start(callback: CallbackQuery, state: FSMContext, sess
 
 @router.callback_query(F.data.startswith("admin:nsvc_server_provider:"))
 async def nsvc_server_provider_received(callback: CallbackQuery, state: FSMContext, session):
+    # صيغة الزر: ``admin:nsvc_server_provider:{server_id}:{provider}``
+    # (keyboards/admin.py → admin_nsvc_choose_provider_kb).
+    # كانت تُقرأ parts[1]/parts[2] فتنهار الدالة بـ ValueError عند
+    # int("nsvc_server_provider")، فلا يُضاف أي سيرفر ولا يُربط أي مزود.
     parts = callback.data.split(":")
-    server_id = int(parts[1])
-    provider_value = parts[2]
+    raw_server_id = parts[2] if len(parts) > 2 else ""
+    provider_value = parts[3] if len(parts) > 3 else ""
+    server_id = int(raw_server_id) if raw_server_id.isdigit() else 0
     data = await state.get_data()
     svc_id = data.get("nsvc_server_service_id") or data.get("edit_server_service_id")
     await callback.answer()
@@ -389,12 +429,18 @@ async def nsvc_server_view(callback: CallbackQuery, session):
         if getattr(server, "is_working", False)
         else "⚫ لا — بلا نقطة خضراء"
     )
+    key_display = (
+        "✅ مضبوط"
+        if server.provider in await _configured_provider_values(session)
+        else "⚠️ غير مضبوط — أضفه في <code>.env</code> وأعد تشغيل البوت"
+    )
     await callback.message.edit_text(
         f"🖥 <b>{public_name}</b>\n\n"
         f"👤 يراه المستخدم باسم: <b>{public_name}</b> (بلا اسم المزود)\n"
         f"الحالة: {status}\n"
         f"⚡️ يعمل الآن: <b>{working_display}</b>\n"
         f"🔌 المزود (لك وحدك): <code>{server.provider}</code>\n"
+        f"🔑 مفتاح API للمزود: {key_display}\n"
         f"💰 نسبة الربح: <b>{margin_display}</b>\n"
         f"🔢 الترتيب: {server.sort_order}\n\n"
         "المستخدم يرى هذا السيرفر قبل اختيار الدولة.",

@@ -123,7 +123,7 @@ async def extras_home(callback: CallbackQuery, db_user: User | None = None):
             [
                 InlineKeyboardButton(
                     text=f"{title} ({count})",
-                    callback_data=f"extras:section:{section_key}",
+                    callback_data=f"extras:section:{section_key}", style="success",
                 )
             ]
         )
@@ -170,7 +170,7 @@ async def extras_section(callback: CallbackQuery, db_user: User | None = None):
     rows = [_button_row(label, action) for label, action in entries]
     if not rows:
         rows.append([InlineKeyboardButton(text=("لا توجد عناصر مفعلة" if language == "ar" else "No enabled items"), callback_data="noop")])
-    rows.append([InlineKeyboardButton(text=("⬅️ رجوع للأقسام" if language == "ar" else "⬅️ Back to sections"), callback_data="extras:home")])
+    rows.append([InlineKeyboardButton(text=("⬅️ رجوع للأقسام" if language == "ar" else "⬅️ Back to sections"), callback_data="extras:home", style="success")])
     rows.append([InlineKeyboardButton(text=t("back_to_main"), callback_data="menu:main")])
 
     title = EXTRAS_SECTIONS[section_key][0] if language == "ar" else EXTRAS_SECTIONS[section_key][1]
@@ -204,7 +204,7 @@ async def exchange_home(callback: CallbackQuery, session, db_user: User):
     )
     text += "\n\nضع أمراً: «اشترِ N رقم تلقائياً حين ينزل السعر تحت X»."
     rows = [
-        [InlineKeyboardButton(text="➕ أمر حدّ جديد", callback_data="extras:exnew")],
+        [InlineKeyboardButton(text="➕ أمر حدّ جديد", callback_data="extras:exnew", style="success")],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="extras:home")],
     ]
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -295,7 +295,7 @@ async def vip_home(callback: CallbackQuery, session, db_user: User):
         "الشهادة تُثبت ملكية رقم نادر ويمكن تحويلها لمستخدم آخر.",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="➕ إصدار شهادة", callback_data="extras:vipnew")],
+                [InlineKeyboardButton(text="➕ إصدار شهادة", callback_data="extras:vipnew", style="success")],
                 [InlineKeyboardButton(text="⬅️ رجوع", callback_data="extras:home")],
             ]
         ),
@@ -355,7 +355,7 @@ async def rooms_home(callback: CallbackQuery, session, db_user: User):
             for r in rooms
         ]
         text = "👥 <b>الغرف المفتوحة</b>\n\n" + "\n".join(lines)
-    rows = [[InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="extras:roomnew")]]
+    rows = [[InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="extras:roomnew", style="success")]]
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="extras:home")])
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
@@ -428,7 +428,7 @@ async def revshare_home(callback: CallbackQuery, session, db_user: User):
         f"أقصى نسبة قابلة للبيع: <b>{max_share}%</b>",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="➕ إصدار سهم", callback_data="extras:rsnew")],
+                [InlineKeyboardButton(text="➕ إصدار سهم", callback_data="extras:rsnew", style="success")],
                 [InlineKeyboardButton(text="⬅️ رجوع", callback_data="extras:home")],
             ]
         ),
@@ -483,7 +483,7 @@ async def task2credit_home(callback: CallbackQuery, session, db_user: User):
         actual = await TaskToCreditService.reward_for(task_type)
         rows.append(
             [InlineKeyboardButton(
-                text=f"🧾 {label} — {actual}$", callback_data=f"extras:t2c:{task_type}"
+                text=f"🧾 {label} — {actual}$", callback_data=f"extras:t2c:{task_type}", style="success"
             )]
         )
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="extras:home")])
@@ -570,7 +570,7 @@ async def ai_answer(message: Message, state: FSMContext, session, db_user: User)
         rows.append(
             [InlineKeyboardButton(
                 text=f"{product.name_ar} — {product.price_usd}$",
-                callback_data=f"prod:{product.id}",
+                callback_data=f"prod:{product.id}", style="success",
             )]
         )
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="extras:home")])
@@ -580,6 +580,16 @@ async def ai_answer(message: Message, state: FSMContext, session, db_user: User)
 
 
 # ══════════════ الطلب الصوتي ══════════════
+
+
+def _voice_route_button(label: str, callback_data: str) -> InlineKeyboardButton:
+    """زر التوجيه الصوتي بلون المخطط (إن وُجد) — الـ callback ديناميكي."""
+    from keyboards.style_utils import style_for_callback
+
+    style = style_for_callback(callback_data, label)
+    if style:
+        return InlineKeyboardButton(text=label, callback_data=callback_data, style=style)
+    return InlineKeyboardButton(text=label, callback_data=callback_data)
 
 
 @router.message(F.voice)
@@ -640,7 +650,7 @@ async def voice_message(message: Message, session, db_user: User, bot):
         f"🎙 سمعت: «{text}»\n➡️ {label}",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=label, callback_data=routes[intent["intent"]])]
+                [_voice_route_button(label, routes[intent["intent"]])]
             ]
         ),
     )

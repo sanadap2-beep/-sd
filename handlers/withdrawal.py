@@ -149,6 +149,6 @@ async def withdraw_address(message: Message, state: FSMContext, session, db_user
         f"العنوان:\n<code>{request.payout_address}</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ تم الدفع", callback_data=f"admin:withdraw_paid:{request.id}")],
-            [InlineKeyboardButton(text="❌ رفض وإرجاع الرصيد", callback_data=f"admin:withdraw_reject:{request.id}")],
+            [InlineKeyboardButton(text="❌ رفض وإرجاع الرصيد", callback_data=f"admin:withdraw_reject:{request.id}", style="danger")],
         ]),
     )

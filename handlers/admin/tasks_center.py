@@ -118,7 +118,7 @@ async def task_detail(callback: CallbackQuery, session):
 
 def _task_kb(task: Task) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="⭐ النقاط", callback_data=f"task_points:{task.id}")],
+        [InlineKeyboardButton(text="⭐ النقاط", callback_data=f"task_points:{task.id}", style="primary")],
         [InlineKeyboardButton(text="🔁 التحقق", callback_data=f"task_verif:{task.id}")],
         [InlineKeyboardButton(text="📊 الحدود", callback_data=f"task_limits:{task.id}")],
         [
@@ -405,7 +405,7 @@ async def submission_view(callback: CallbackQuery, session):
     rows = [
         [
             InlineKeyboardButton(text="✅ قبول وصرف المكافأة", callback_data=f"task_approve:{sub.id}"),
-            InlineKeyboardButton(text="❌ رفض", callback_data=f"task_reject:{sub.id}"),
+            InlineKeyboardButton(text="❌ رفض", callback_data=f"task_reject:{sub.id}", style="danger"),
         ],
         [InlineKeyboardButton(text="⬅️ رجوع", callback_data="task_submissions")],
     ]

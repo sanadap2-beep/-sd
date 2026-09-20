@@ -121,7 +121,7 @@ async def ai_home(callback: CallbackQuery, session, db_user: User | None = None)
     await _show_home(callback, session)
 
 
-@router.callback_query(_OPEN_RE)
+@router.callback_query(F.data.regexp(_OPEN_RE))
 async def ai_open(callback: CallbackQuery, session, db_user: User | None = None):
     if not await _feature_on():
         await callback.answer(I18nService.t("ai_disabled", _lang(db_user)), show_alert=True)
@@ -134,7 +134,7 @@ async def ai_open(callback: CallbackQuery, session, db_user: User | None = None)
     await _show_section(callback, session, db_user, section)
 
 
-@router.callback_query(_ACTION_RE)
+@router.callback_query(F.data.regexp(_ACTION_RE))
 async def ai_new_or_stay(
     callback: CallbackQuery, session, state: FSMContext, db_user: User | None = None
 ):
@@ -172,7 +172,7 @@ async def ai_new_or_stay(
     await callback.answer()
 
 
-@router.callback_query(_CONTINUE_RE)
+@router.callback_query(F.data.regexp(_CONTINUE_RE))
 async def ai_continue(
     callback: CallbackQuery, session, state: FSMContext, db_user: User | None = None
 ):
@@ -217,7 +217,7 @@ async def ai_cancel(callback: CallbackQuery, session, state: FSMContext, db_user
     await _show_home(callback, session)
 
 
-@router.callback_query(_HISTORY_RE)
+@router.callback_query(F.data.regexp(_HISTORY_RE))
 async def ai_history(callback: CallbackQuery, session, db_user: User | None = None):
     if not await _feature_on():
         await callback.answer(I18nService.t("ai_disabled", _lang(db_user)), show_alert=True)
@@ -244,7 +244,7 @@ async def ai_history(callback: CallbackQuery, session, db_user: User | None = No
     await callback.answer()
 
 
-@router.callback_query(_HIST_VIEW_RE)
+@router.callback_query(F.data.regexp(_HIST_VIEW_RE))
 async def ai_hist_view(callback: CallbackQuery, session, db_user: User | None = None):
     if not await _feature_on():
         await callback.answer(I18nService.t("ai_disabled", _lang(db_user)), show_alert=True)

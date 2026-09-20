@@ -37,6 +37,7 @@ def admin_product_requests_kb(requests) -> InlineKeyboardMarkup:
         builder.button(
             text=f"👍 {request.votes_count} · #{request.id} {request.title[:25]}",
             callback_data=f"admin:market_request:view:{request.id}",
+            style="success",
         )
     builder.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     builder.adjust(1)
@@ -49,10 +50,12 @@ def admin_product_request_detail_kb(request_id: int, status: str) -> InlineKeybo
         builder.button(
             text="🔎 قيد الدراسة",
             callback_data=f"admin:market_request:review:{request_id}",
+            style="success",
         )
         builder.button(
             text="✅ تم توفير الخدمة",
             callback_data=f"admin:market_request:fulfill:{request_id}",
+            style="success",
         )
         builder.button(
             text="❌ رفض الطلب",

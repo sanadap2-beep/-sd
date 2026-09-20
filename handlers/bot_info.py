@@ -10,16 +10,16 @@ router = Router(name="bot_info")
 
 def _info_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🟢 🛡 طلبات أنجزناها", callback_data="info:stats")],
-        [InlineKeyboardButton(text="🔴 🔺 شروط الاستخدام", callback_data="info:terms")],
+        [InlineKeyboardButton(text="🟢 🛡 طلبات أنجزناها", callback_data="info:stats", style="primary")],
+        [InlineKeyboardButton(text="🔴 🔺 شروط الاستخدام", callback_data="info:terms", style="danger")],
         [InlineKeyboardButton(text="📖 شرح الأزرار والخدمات", callback_data="info:guide")],
-        [InlineKeyboardButton(text="💳 كيف تشحن حسابك", callback_data="info:deposit")],
+        [InlineKeyboardButton(text="💳 كيف تشحن حسابك", callback_data="info:deposit", style="primary")],
         [InlineKeyboardButton(text="💸 كيف تسحب رصيدك", callback_data="info:withdraw")],
         [InlineKeyboardButton(text="🏪 شرح سوق المستخدمين", callback_data="info:market")],
-        [InlineKeyboardButton(text="🛒 كيف تشتري من السوق", callback_data="info:market_buy")],
+        [InlineKeyboardButton(text="🛒 كيف تشتري من السوق", callback_data="info:market_buy", style="primary")],
         [InlineKeyboardButton(text="💰 كيف تبيع في السوق", callback_data="info:market_sell")],
         [InlineKeyboardButton(text="📱 شرح الأرقام", callback_data="info:numbers")],
-        [InlineKeyboardButton(text="🔥 العروض الخاصة", callback_data="info:special")],
+        [InlineKeyboardButton(text="🔥 العروض الخاصة", callback_data="info:special", style="success")],
         [InlineKeyboardButton(text="📢 الإعلانات المدفوعة", callback_data="info:ads")],
         [InlineKeyboardButton(text="🔔 الإشعارات", callback_data="info:notifications")],
         [InlineKeyboardButton(text="⬅️ رجوع للقائمة الرئيسية", callback_data="back_to_main")],

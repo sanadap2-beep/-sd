@@ -7,6 +7,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from services.i18n_service import I18nService
 
+from keyboards.style_utils import style_for_callback
+
 
 # Kept as a public mapping for existing callers that validate section names.
 SECTION_LABELS = {
@@ -65,7 +67,11 @@ def store_home_kb(
             elif entry.is_url:
                 b.button(text=entry.label, url=entry.action)
             else:
-                b.button(text=entry.label, callback_data=entry.action)
+                _style = style_for_callback(entry.action, entry.label or "")
+                if _style:
+                    b.button(text=entry.label, callback_data=entry.action, style=_style)
+                else:
+                    b.button(text=entry.label, callback_data=entry.action)
         b.button(text="📦 التطبيقات والأكواد الجاهزة", callback_data="readycode:list", style="success")
         b.button(text=_main_menu_label(language), callback_data="back_to_main")
         b.adjust(2)
@@ -99,7 +105,7 @@ def store_home_kb(
     b.button(text=I18nService.t("store_cart", language), callback_data="menu:cart", style="primary")
     b.button(
         text=I18nService.t("store_product_request", language),
-        callback_data="menu:product_request",
+        callback_data="menu:product_request", style="success",
     )
     if webapp_url:
         b.button(

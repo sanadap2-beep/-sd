@@ -32,6 +32,23 @@ def _mask_username(username: str | None, full_name: str | None) -> str:
     return f"{visible_start}***{visible_end}"
 
 
+def _mask_link(link: str | None) -> str:
+    """إخفاء الرابط للقناة العامة: 7 نقاط + آخر 10 أحرف."""
+    s = (link or "").strip()
+    if not s:
+        return "—"
+    tail = s[-10:] if len(s) >= 10 else s
+    return f"{'•' * 7}{tail}"
+
+
+def _mask_customer(telegram_id) -> str:
+    """إخفاء آيدي العميل: أول 4 أرقام + •••• + آخر رقمين."""
+    digits = "".join(ch for ch in str(telegram_id or "") if ch.isdigit())
+    if len(digits) >= 6:
+        return f"{digits[:4]}••••{digits[-2:]}"
+    return "••••••"
+
+
 class NotificationService:
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -154,6 +171,78 @@ class NotificationService:
             logger.warning(f"تعذر إرسال إشعار للمستخدم {telegram_id}: {e}")
             return False
 
+    async def notify_code_card(
+        self,
+        telegram_id: int,
+        service_name: str,
+        country_name: str,
+        phone_number: str,
+        code: str,
+        extra: str | None = None,
+        caption: str | None = None,
+        reply_markup=None,
+    ) -> bool:
+        """
+        يسلم الكود كبطاقة صورة منسقة إذا فُعّلت ميزة تسليم الكود كصورة،
+        وإلا يعود للنص العادي. يرجع True إذا صدرت الصورة.
+        """
+        from services.code_screenshot_service import CodeScreenshotService
+
+        if await CodeScreenshotService.enabled():
+            png = await CodeScreenshotService.build_image(
+                service_name=service_name,
+                country_name=country_name,
+                phone_number=phone_number,
+                code=code,
+                extra_lines=[extra] if extra else None,
+            )
+            if png:
+                try:
+                    from aiogram.types import BufferedInputFile
+
+                    await self.bot.send_photo(
+                        chat_id=telegram_id,
+                        photo=BufferedInputFile(png, filename="code.png"),
+                        caption=caption or f"📱 <b>{service_name}</b>",
+                        reply_markup=reply_markup,
+                        parse_mode="HTML",
+                    )
+                    return True
+                except Exception as e:
+                    logger.warning(f"تعذر إرسال بطاقة الكود للمستخدم {telegram_id}: {e}")
+        await self.notify_user(
+            telegram_id,
+            CodeScreenshotService.fallback_text(service_name, phone_number, code, extra),
+            reply_markup=reply_markup,
+        )
+        return False
+
+    async def notify_order_review_prompt(
+        self,
+        telegram_id: int,
+        order_id: int,
+        provider: str,
+    ) -> bool:
+        """
+        دعوة تقييم المزود بعد اكتمال الطلب — مرة واحدة لكل طلب.
+        """
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        return await self.notify_user(
+            telegram_id,
+            (
+                "⭐ <b>كيف كانت تجربتك مع المزود؟</b>\n\n"
+                f"اطلب #{order_id} · المزود: <b>{provider}</b>\n"
+                "قيّم ب 1-5 نجوم ليساعدنا على تحسين جودة الخدمات."
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⭐ قيّم المزود", callback_data=f"engage:review_order:{order_id}", style="primary")]
+                ]
+            ),
+            notification_type="order",
+        )
+
     async def notify_public_channel(self, text: str, reply_markup=None, parse_mode: str = "HTML") -> bool:
         """
         يرسل إشعار عملية ناجحة للقناة العامة مع دعم الأزرار التفاعلية.
@@ -184,13 +273,17 @@ class NotificationService:
         document_bytes: bytes,
         filename: str,
         caption: str,
+        chat_id_override: int | str | None = None,
     ) -> bool:
         """
         يرسل ملف البكاب لقناة النسخ الاحتياطي.
+        chat_id_override: إن حُدد يتجاوز backup_channel_id (ميزة db_backup_telegram).
         """
-        channel_id_str = await SettingsService.get("backup_channel_id", "0")
+        from config import settings
+
+        raw_id = chat_id_override if chat_id_override else await SettingsService.get("backup_channel_id", "0")
         try:
-            channel_id = int(channel_id_str)
+            channel_id = int(raw_id)
         except (ValueError, TypeError):
             channel_id = 0
 
@@ -301,10 +394,46 @@ class NotificationService:
         full_name: str | None,
         product_name: str,
         price_usd: str,
+        *,
+        order_id: int | None = None,
+        quantity: int | None = None,
+        target: str | None = None,
+        app_name: str | None = None,
+        section_name: str | None = None,
+        service_name: str | None = None,
+        user_telegram_id=None,
+        is_smm: bool = False,
     ) -> None:
         """
         يرسل إشعار شراء منتج (لعبة/تطبيق/SMM) ناجح للقناة العامة.
+
+        طلبات الرشق (is_smm=True) تُنشر بالقالب الموحد:
+        التطبيق/القسم/الخدمة/رقم الطلب/العدد/السعر بالنقاط/الرابط والعميل
+        (مخفيان جزئياً).
         """
+        if is_smm and order_id is not None:
+            from decimal import Decimal, InvalidOperation
+
+            try:
+                price_label = f"{Decimal(str(price_usd)).normalize():f}"
+            except (InvalidOperation, ValueError, AttributeError):
+                price_label = str(price_usd)
+            sep = "▬" * 16
+            text = (
+                "🔔 <b>عملية رشق جديدة</b>\n"
+                f"{sep}\n"
+                f"🎬 التطبيق : {esc(app_name or '—')}\n"
+                f"🧩 القسم : {esc(section_name or '—')}\n"
+                f"🛒 الخدمة : {esc(service_name or product_name)}\n"
+                f"🆔 رقم الطلب : {order_id}\n"
+                f"🗣️ العدد المطلوب : {quantity if quantity is not None else '—'}\n"
+                f"💵 سعر الطلب : {price_label}$\n"
+                f"🔗 الرابط : {esc(_mask_link(target))}\n"
+                f"🆔 العميل : {esc(_mask_customer(user_telegram_id))}\n"
+                f"{sep}"
+            )
+            await self.notify_public_channel(text)
+            return
         masked = _mask_username(username, full_name)
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         text = (
@@ -390,14 +519,15 @@ class NotificationService:
         self,
         user_telegram_id: int,
         amount_usd: str,
+        bonus_usd: str | None = None,
     ) -> None:
+        text = "✅ <b>تم قبول طلب شحن رصيدك!</b>\n\n" f"💰 تمت إضافة <b>{amount_usd}$</b> إلى رصيدك.\n"
+        if bonus_usd:
+            text += f"🎁 <b>+{bonus_usd}$</b> مكافأة شحن!\n"
+        text += "يمكنك الآن استخدام رصيدك لشراء الخدمات."
         await self.notify_user(
             telegram_id=user_telegram_id,
-            text=(
-                "✅ <b>تم قبول طلب شحن رصيدك!</b>\n\n"
-                f"💰 تمت إضافة <b>{amount_usd}$</b> إلى رصيدك.\n"
-                "يمكنك الآن استخدام رصيدك لشراء الخدمات."
-            ),
+            text=text,
         )
 
     async def notify_deposit_rejected(

@@ -38,7 +38,7 @@ async def users_search_start(callback: CallbackQuery, state: FSMContext, session
         "أو اختر من القائمة:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📋 قائمة المستخدمين", callback_data="admin:users_list:0")],
-            [InlineKeyboardButton(text="🚫 المحظورين فقط", callback_data="admin:users_filter:banned:0")],
+            [InlineKeyboardButton(text="🚫 المحظورين فقط", callback_data="admin:users_filter:banned:0", style="danger")],
             [InlineKeyboardButton(text="👑 الأدمنز فقط", callback_data="admin:users_filter:admin:0")],
             [InlineKeyboardButton(text="📥 تصدير المستخدمين", callback_data="admin:users_export")],
             [InlineKeyboardButton(text="🔙 رجوع", callback_data="admin:main")],
