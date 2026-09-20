@@ -981,6 +981,23 @@ def admin_ssvc_number_provider_kb() -> InlineKeyboardMarkup:
 
 ADMIN_COUNTRIES_PER_PAGE = 20
 
+# وسم قصير لكل مزود — يظهر بقائمة الدول لتمييز صفوف المزودين عن بعضها
+# (كل مزود له صفوفه الخاصة وقد تتكرر الدولة الواحدة).
+COUNTRY_PROVIDER_TAGS: tuple[tuple[str, str], ...] = (
+    ("fivesim_code", "5S"),
+    ("herosms_code", "H"),
+    ("sms_activate_code", "SA"),
+    ("smshub_code", "SH"),
+    ("smspool_code", "SP"),
+    ("grizzly_code", "G"),
+)
+
+
+def country_provider_tags(country) -> str:
+    """``[5S·H·G]`` حسب أكواد المزودين المضبوطة على الصف."""
+    tags = [tag for field, tag in COUNTRY_PROVIDER_TAGS if getattr(country, field, None)]
+    return f"[{ '·'.join(tags) }]" if tags else "[—]"
+
 
 def admin_countries_kb(countries, page: int = 0) -> InlineKeyboardMarkup:
     """قائمة الدول مع ترقيم صفحات وأزرار الإدارة ظاهرة دائماً."""
@@ -997,7 +1014,7 @@ def admin_countries_kb(countries, page: int = 0) -> InlineKeyboardMarkup:
     for c in page_countries:
         status_icon = "🟢" if c.is_active else "⚪"
         b.button(
-            text=f"{status_icon} {c.flag} {c.name_ar}",
+            text=f"{status_icon} {c.flag} {c.name_ar} {country_provider_tags(c)}",
             callback_data=f"admin:country_view:{c.id}",
         )
 

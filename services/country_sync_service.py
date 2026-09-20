@@ -214,31 +214,35 @@ async def _fetch_grizzly_catalog(provider) -> tuple[list[dict], str]:
     )
 
 
-async def _find_merge_candidate(
+async def _find_same_provider_row(
     session,
     code_field: str,
     cid: str,
-    name_ar: str,
-    slug: str,
 ) -> Country | None:
-    """يبحث عن دولة قائمة لدمج كود المزود الجديد فيها بدل التكرار."""
-    # 1) نفس كود المزود مسجل مسبقاً
+    """يبحث فقط عن صف يملك كود هذا المزود حصراً.
+
+    ممنوع الدمج العابر للمزودين: كل مزود له صفوفه الخاصة حتى لو
+    تكررت الدولة — هذا يضمن أن حذف الكل وإعادة السحب لا يخلط الأكواد،
+    وأن سيرفر كل مزود يعرض دوله فقط.
+    """
     res = await session.execute(
         select(Country).where(getattr(Country, code_field) == cid)
     )
-    country = res.scalar_one_or_none()
-    if country is not None:
-        return country
-    # 2) نفس الاسم العربي (صف جاء من مزود آخر) وما فيه كود لهذا المزود
+    return res.scalar_one_or_none()
+
+
+async def _adopt_numeric_fivesim_row(session, name_ar: str, cid: str) -> Country | None:
+    """إصلاح لمرة واحدة: صفوف أخذت كود 5sim رقمياً من سحب سابق خاطئ.
+
+    الكود الرسمي هو الاسم (slug) — نتبنى الصف ونصحح كوده بدل التكرار.
+    يعمل فقط على صفوف كودها رقمي، ولا يمس أي مزود آخر.
+    """
     res = await session.execute(select(Country).where(Country.name_ar == name_ar))
     for row in res.scalars().all():
-        if not getattr(row, code_field, None):
+        current = getattr(row, "fivesim_code", None)
+        if current and str(current).isdigit() and str(current) != str(cid):
+            row.fivesim_code = cid
             return row
-    # 3) نفس المعرف الداخلي وما فيه كود لهذا المزود
-    res = await session.execute(select(Country).where(Country.code == slug))
-    row = res.scalar_one_or_none()
-    if row is not None and not getattr(row, code_field, None):
-        return row
     return None
 
 
@@ -257,7 +261,15 @@ async def _store_countries(
             name_ar, flag = _label_for(eng)
             slug = _slugify(eng)
 
-            existing = await _find_merge_candidate(session, code_field, cid, name_ar, slug)
+            existing = await _find_same_provider_row(session, code_field, cid)
+            if existing is None and code_field == "fivesim_code":
+                existing = await _adopt_numeric_fivesim_row(session, name_ar, cid)
+                if existing is not None:
+                    report.merged.append(f"{existing.flag} {existing.name_ar}")
+                    if activate and has_stock and not existing.is_active:
+                        existing.is_active = True
+                        report.activated += 1
+                    continue
             if existing is not None:
                 changed = False
                 just_merged = False
@@ -267,10 +279,6 @@ async def _store_countries(
                     changed = True
                     just_merged = True
                     report.merged.append(f"{existing.flag} {existing.name_ar}")
-                elif code_field == "fivesim_code" and current != cid:
-                    # إصلاح كود رقمي من سحب سابق — الرسمي هو الاسم (slug)
-                    setattr(existing, code_field, cid)
-                    changed = True
                 if (
                     not existing.name_ar
                     or existing.name_ar.startswith("HeroSMS")
