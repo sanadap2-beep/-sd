@@ -1011,6 +1011,8 @@ def admin_countries_kb(countries, page: int = 0) -> InlineKeyboardMarkup:
 
     b.button(text="➕ إضافة دولة جديدة", callback_data="admin:country_add", style="success")
     b.button(text="🔄 سحب دول من HeroSMS", callback_data="admin:country_sync_herosms")
+    b.button(text="🟢 سحب دول من 5sim", callback_data="admin:country_sync_fivesim_menu")
+    b.button(text="🐻 سحب دول من Grizzly", callback_data="admin:country_sync_grizzly_menu")
     b.button(text="🗑 حذف جميع الدول", callback_data="admin:country_delete_all_confirm", style="danger")
     b.button(text="📋 أكواد 5sim المرجعية", callback_data="admin:country_reference_list")
     b.button(text="🔙 رجوع", callback_data="admin:main")
@@ -1018,8 +1020,44 @@ def admin_countries_kb(countries, page: int = 0) -> InlineKeyboardMarkup:
     rows = [2] * ((len(page_countries) + 1) // 2)
     if nav_buttons:
         rows.append(len(nav_buttons))
-    rows.extend([2, 2, 1])
+    rows.extend([2, 2, 2, 1])
     b.adjust(*rows)
+    return b.as_markup()
+
+
+def fivesim_sync_menu_kb() -> InlineKeyboardMarkup:
+    """قائمة اختيار خدمات السحب من 5sim."""
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="💬✈️ واتساب + تيليجرام (موصى به)",
+        callback_data="admin:country_sync_fivesim:whatsapp,telegram",
+    )
+    b.button(text="💬 واتساب فقط", callback_data="admin:country_sync_fivesim:whatsapp")
+    b.button(text="✈️ تيليجرام فقط", callback_data="admin:country_sync_fivesim:telegram")
+    b.button(
+        text="⚪ سحب بدون تفعيل (كلاهما)",
+        callback_data="admin:country_sync_fivesim_idle:whatsapp,telegram",
+    )
+    b.button(text="🔙 رجوع", callback_data="admin:countries")
+    b.adjust(1, 2, 1, 1)
+    return b.as_markup()
+
+
+def grizzly_sync_menu_kb() -> InlineKeyboardMarkup:
+    """قائمة اختيار خدمات السحب من GrizzlySMS."""
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="💬✈️ واتساب + تيليجرام (موصى به)",
+        callback_data="admin:country_sync_grizzly:whatsapp,telegram",
+    )
+    b.button(text="💬 واتساب فقط", callback_data="admin:country_sync_grizzly:whatsapp")
+    b.button(text="✈️ تيليجرام فقط", callback_data="admin:country_sync_grizzly:telegram")
+    b.button(
+        text="⚪ سحب بدون تفعيل (كلاهما)",
+        callback_data="admin:country_sync_grizzly_idle:whatsapp,telegram",
+    )
+    b.button(text="🔙 رجوع", callback_data="admin:countries")
+    b.adjust(1, 2, 1, 1)
     return b.as_markup()
 
 

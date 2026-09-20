@@ -14,6 +14,7 @@ from database.models import Country, ServicePricing
 from providers.countries import get_all_countries
 from providers.fivesim import FiveSimProvider
 from services.herosms_sync_service import sync_herosms_countries
+from services.country_sync_service import sync_fivesim_countries, sync_grizzly_countries
 from services.price_cache_service import PriceCacheService
 from states.states import AdminCountryStates
 from keyboards.admin import (
@@ -22,6 +23,8 @@ from keyboards.admin import (
     admin_country_detail_kb,
     admin_back_kb,
     country_reset_confirm_kb,
+    fivesim_sync_menu_kb,
+    grizzly_sync_menu_kb,
     herosms_sync_menu_kb,
 )
 from filters.admin_filter import IsAdmin
@@ -351,6 +354,165 @@ async def country_sync_herosms_go(callback: CallbackQuery, session):
     """سحب الدول مع تفعيل المتاح منها تلقائياً."""
     services_raw = callback.data.split(":", 2)[2]
     await _run_herosms_sync(callback, session, services_raw, activate=True)
+
+
+# ══════════════════════════════════════════════
+# ══════════════ سحب الدول من 5sim ══════════════
+# ══════════════════════════════════════════════
+
+_FIVESIM_SERVICE_LABELS = {
+    "whatsapp": "💬 واتساب",
+    "telegram": "✈️ تيليجرام",
+}
+
+
+@router.callback_query(F.data == "admin:country_sync_fivesim_menu")
+async def country_sync_fivesim_menu(callback: CallbackQuery):
+    """قائمة خيارات السحب من 5sim."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "🟢 <b>سحب الدول من 5sim</b>\n\n"
+        "سيقوم البوت بسحب كتالوج الدول وفحص توفر الأرقام والمخزون،\n"
+        "ثم تعريب الأسماء وتفعيل الدول المتوفرة تلقائياً.\n"
+        "الدول الموجودة مسبقاً (من HeroSMS مثلاً) تُدمج ولا تتكرر.\n\n"
+        "اختر الخدمة المطلوبة للسحب:",
+        reply_markup=fivesim_sync_menu_kb(),
+    )
+
+
+async def _run_fivesim_sync(
+    callback: CallbackQuery,
+    session,
+    services_raw: str,
+    activate: bool,
+):
+    wanted = [part.strip() for part in services_raw.split(",") if part.strip()]
+    labels = " + ".join(_FIVESIM_SERVICE_LABELS.get(code, code) for code in wanted)
+    await callback.answer("⏳ بدأ السحب... يرجى الانتظار.")
+
+    status_text = (
+        "⏳ <b>جاري سحب وفحص الدول من 5sim...</b>\n\n"
+        f"الخدمات: {labels}\n"
+        f"التفعيل التلقائي: {'🟢 نعم' if activate else '⚪ لا'}\n\n"
+        "قد تستغرق العملية بضع دقائق (فحص كل دولة لواتساب وتيليجرام)..."
+    )
+    try:
+        await callback.message.edit_text(status_text)
+    except Exception:
+        await callback.message.answer(status_text)
+
+    try:
+        report = await sync_fivesim_countries(
+            session,
+            wanted_services=wanted,
+            activate=activate,
+        )
+        text = report.summary()
+    except Exception as e:
+        text = f"❌ <b>فشل السحب من 5sim:</b>\n\n<code>{type(e).__name__}: {e}</code>"
+
+    countries = await get_all_countries(session)
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_countries_kb(countries))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_countries_kb(countries))
+
+
+@router.callback_query(F.data.startswith("admin:country_sync_fivesim_idle:"))
+async def country_sync_fivesim_idle(callback: CallbackQuery, session):
+    """سحب الدول مع إبقائها معطلة."""
+    services_raw = callback.data.split(":", 2)[2]
+    await _run_fivesim_sync(callback, session, services_raw, activate=False)
+
+
+@router.callback_query(F.data.startswith("admin:country_sync_fivesim:"))
+async def country_sync_fivesim_go(callback: CallbackQuery, session):
+    """سحب الدول مع تفعيل المتاح منها تلقائياً."""
+    services_raw = callback.data.split(":", 2)[2]
+    await _run_fivesim_sync(callback, session, services_raw, activate=True)
+
+
+# ══════════════════════════════════════════════
+# ══════════════ سحب الدول من GrizzlySMS ══════════════
+# ══════════════════════════════════════════════
+
+_GRIZZLY_SERVICE_LABELS = {
+    "whatsapp": "💬 واتساب",
+    "telegram": "✈️ تيليجرام",
+}
+
+
+@router.callback_query(F.data == "admin:country_sync_grizzly_menu")
+async def country_sync_grizzly_menu(callback: CallbackQuery):
+    """قائمة خيارات السحب من GrizzlySMS."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "🐻 <b>سحب الدول من GrizzlySMS</b>\n\n"
+        "سيقوم البوت بسحب كتالوج الدول وفحص توفر الأرقام والمخزون،\n"
+        "ثم تعريب الأسماء وتفعيل الدول المتوفرة تلقائياً.\n"
+        "الدول الموجودة مسبقاً (من HeroSMS أو 5sim) تُدمج ولا تتكرر.\n\n"
+        "اختر الخدمة المطلوبة للسحب:",
+        reply_markup=grizzly_sync_menu_kb(),
+    )
+
+
+async def _run_grizzly_sync(
+    callback: CallbackQuery,
+    session,
+    services_raw: str,
+    activate: bool,
+):
+    if not settings.GRIZZLY_API_KEY:
+        await callback.answer(
+            "⚠️ لا يوجد GRIZZLY_API_KEY مضبوط في الإعدادات.",
+            show_alert=True,
+        )
+        return
+
+    wanted = [part.strip() for part in services_raw.split(",") if part.strip()]
+    labels = " + ".join(_GRIZZLY_SERVICE_LABELS.get(code, code) for code in wanted)
+    await callback.answer("⏳ بدأ السحب... يرجى الانتظار.")
+
+    status_text = (
+        "⏳ <b>جاري سحب وفحص الدول من GrizzlySMS...</b>\n\n"
+        f"الخدمات: {labels}\n"
+        f"التفعيل التلقائي: {'🟢 نعم' if activate else '⚪ لا'}\n\n"
+        "قد تستغرق العملية بضع دقائق (فحص كل دولة لواتساب وتيليجرام)..."
+    )
+    try:
+        await callback.message.edit_text(status_text)
+    except Exception:
+        await callback.message.answer(status_text)
+
+    try:
+        report = await sync_grizzly_countries(
+            session,
+            wanted_services=wanted,
+            activate=activate,
+        )
+        text = report.summary()
+    except Exception as e:
+        text = f"❌ <b>فشل السحب من GrizzlySMS:</b>\n\n<code>{type(e).__name__}: {e}</code>"
+
+    countries = await get_all_countries(session)
+    try:
+        await callback.message.edit_text(text, reply_markup=admin_countries_kb(countries))
+    except Exception:
+        await callback.message.answer(text, reply_markup=admin_countries_kb(countries))
+
+
+@router.callback_query(F.data.startswith("admin:country_sync_grizzly_idle:"))
+async def country_sync_grizzly_idle(callback: CallbackQuery, session):
+    """سحب الدول مع إبقائها معطلة."""
+    services_raw = callback.data.split(":", 2)[2]
+    await _run_grizzly_sync(callback, session, services_raw, activate=False)
+
+
+@router.callback_query(F.data.startswith("admin:country_sync_grizzly:"))
+async def country_sync_grizzly_go(callback: CallbackQuery, session):
+    """سحب الدول مع تفعيل المتاح منها تلقائياً."""
+    services_raw = callback.data.split(":", 2)[2]
+    await _run_grizzly_sync(callback, session, services_raw, activate=True)
 
 
 # ══════════════════════════════════════════════
