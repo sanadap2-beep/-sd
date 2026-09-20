@@ -459,7 +459,7 @@ class AvailabilityBoardService:
         rows: list[tuple[str, str]] = []
         hot_count = 0
         for entry in selected:
-            url = number_buy_start_link(bot_username, service.code, entry.code)
+            url = number_buy_start_link(bot_username, service.code, entry.cid or entry.code)
             if not url:
                 continue
             badge = cls._badge_for(entry, watched, state, now)

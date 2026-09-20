@@ -364,12 +364,12 @@ class NotificationService:
             f"➖➖➖➖➖➖"
         )
 
-        from services.bot_identity import resolve_bot_username
+        from services.bot_identity import number_buy_start_link, resolve_bot_username
 
         bot_username = await resolve_bot_username(self.bot)
         deep_link = (
-            f"https://t.me/{bot_username}?start=buy_{order.service}__{order.country_code}"
-            if bot_username
+            number_buy_start_link(bot_username, order.service, country.id)
+            if bot_username and country is not None
             else ""
         )
 

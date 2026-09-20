@@ -24,6 +24,7 @@ def _entries(count: int) -> list[BoardEntry]:
             flag="🌍",
             cost_usd=Decimal(str(0.1 * (i + 1))),
             sell_usd=Decimal(str(0.2 * (i + 1))),
+            cid=101 + i,
         )
         for i in range(count)
     ]
@@ -37,17 +38,18 @@ def test_countries_per_page_is_25():
 
 
 def test_price_kb_layout_two_per_row():
-    # 26 دولة → الصفحة الأولى فيها 25 (c0..c24) و25 = 12 صف بمربعين + صف بزر
+    # 26 دولة → الصفحة الأولى فيها 25 و25 = 12 صف بمربعين + صف بزر
+    # المرجع بالزر هو الرقم الداخلي (cid) لا الكود — callback_data ≤ 64B
     kb = countries_price_kb("wa", _entries(26), page=0)
     rows = kb.inline_keyboard
-    assert rows[0][0].callback_data == "num_country:wa:c0"
-    assert rows[0][1].callback_data == "num_country:wa:c1"
-    assert rows[1][0].callback_data == "num_country:wa:c2"
-    assert rows[11][0].callback_data == "num_country:wa:c22"
-    assert rows[11][1].callback_data == "num_country:wa:c23"
+    assert rows[0][0].callback_data == "num_country:wa:101"
+    assert rows[0][1].callback_data == "num_country:wa:102"
+    assert rows[1][0].callback_data == "num_country:wa:103"
+    assert rows[11][0].callback_data == "num_country:wa:122"
+    assert rows[11][1].callback_data == "num_country:wa:123"
     # الصف 12: 25 فردي → زر واحد فقط
     assert len(rows[12]) == 1
-    assert rows[12][0].callback_data == "num_country:wa:c24"
+    assert rows[12][0].callback_data == "num_country:wa:125"
     # صف التنقل (صفحة 1 من 2): [الصفحة، التالي] ثم صف الرجوع
     nav = rows[13]
     assert any("التالي" in (btn.text or "") for btn in nav)
@@ -58,9 +60,9 @@ def test_price_kb_second_page_and_paging():
     kb = countries_price_kb("wa", _entries(60), page=1)
     rows = kb.inline_keyboard
     # الصفحة الثانية: c25..c49 → مربعان + مربعان... + زر
-    assert rows[0][0].callback_data == "num_country:wa:c25"
-    assert rows[0][1].callback_data == "num_country:wa:c26"
-    assert rows[12][0].callback_data == "num_country:wa:c49"
+    assert rows[0][0].callback_data == "num_country:wa:126"
+    assert rows[0][1].callback_data == "num_country:wa:127"
+    assert rows[12][0].callback_data == "num_country:wa:150"
     # صف التنقل يحتوي السابق والتالي
     nav = rows[13]
     assert any("السابق" in (btn.text or "") for btn in nav)
@@ -81,8 +83,8 @@ def test_price_kb_last_page_no_next():
     kb = countries_price_kb("wa", _entries(30), page=1)
     # 30 دولة = صفحتان؛ الصفحة الثانية: 5 أزرار → صفان بمربعين + صف بزر
     rows = kb.inline_keyboard
-    assert rows[0][0].callback_data == "num_country:wa:c25"
-    assert rows[2][0].callback_data == "num_country:wa:c29"
+    assert rows[0][0].callback_data == "num_country:wa:126"
+    assert rows[2][0].callback_data == "num_country:wa:130"
     nav = rows[3]
     assert any("السابق" in (btn.text or "") for btn in nav)
     assert not any("التالي" in (btn.text or "") for btn in nav)

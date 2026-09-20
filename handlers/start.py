@@ -14,7 +14,7 @@ from keyboards.main_menu import build_main_menu
 from keyboards.common import check_subscription_kb
 from services.referral_guard_service import ReferralGuardService
 from keyboards.numbers import confirm_purchase_kb
-from providers.countries import get_country_by_code, get_number_service_by_code
+from providers.countries import get_number_service_by_code
 from providers.manager import provider_manager
 from services.currency_service import CurrencyService
 from services.subscription_service import SubscriptionService
@@ -115,7 +115,7 @@ async def _alternatives_kb(session, service, missing_code: str):
             [
                 InlineKeyboardButton(
                     text=f"🟢 {entry.flag} {entry.name_ar} — {format_price(entry.sell_usd)}$",
-                    callback_data=f"num_country:{service.code}:{entry.code}", style="success",
+                    callback_data=f"num_country:{service.code}:{entry.cid}", style="success",
                 )
             ]
         )
@@ -192,11 +192,14 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
     if args and args.startswith("buy_"):
         raw_payload = args.replace("buy_", "", 1)
         if "__" in raw_payload:
-            service_code, country_code = raw_payload.split("__", 1)
+            from providers.countries import resolve_country
+
+            service_code, country_ref = raw_payload.split("__", 1)
             service = await get_number_service_by_code(session, service_code)
-            country = await get_country_by_code(session, country_code)
+            country = await resolve_country(session, country_ref)
 
             if service and country and country.is_active:
+                country_code = country.code
                 prices = await provider_manager.get_cheapest_price(service, country, session)
                 from services.country_localization_service import display_flag, display_name
 
@@ -230,7 +233,7 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
                     f"💰 <b>السعر:</b> <b>{price_display}</b>\n\n"
                     "🛡 <b>الضمان:</b> استرجاع تلقائي في حال لم يصل الكود.\n\n"
                     "اضغط على الزر أدناه لإتمام الشراء فوراً:",
-                    reply_markup=confirm_purchase_kb(service_code, country_code, quote.token),
+                    reply_markup=confirm_purchase_kb(service_code, country.id, quote.token),
                 )
                 return
 

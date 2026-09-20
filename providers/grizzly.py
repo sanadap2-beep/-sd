@@ -122,22 +122,21 @@ class GrizzlyProvider(BaseProvider):
                 if isinstance(country_dict, dict)
                 else None
             )
-            if not isinstance(service_dict, dict):
+            if service_dict is None:
                 return None
-            cheapest: Decimal | None = None
-            for val in service_dict.values():
-                if not isinstance(val, dict):
-                    continue
-                try:
-                    cost = Decimal(str(val["cost"]))
-                    count = int(val.get("count", 1) or 1)
-                except Exception:
-                    continue
-                if count > 0 and (cheapest is None or cost < cheapest):
-                    cheapest = cost
-            if cheapest is None:
+            # نفس مستخرج HeroSMS: يدعم عقدة {cost,count} المفردة
+            # (كانت تُتجاهل خطأً فتظهر الدولة بلا سعر) والمتعددة والقوائم.
+            from providers.herosms import _extract_cost_and_count
+
+            cost_usd, count = _extract_cost_and_count(service_dict)
+            if cost_usd is None or cost_usd <= 0 or count <= 0:
+                if service_dict:
+                    logger.warning(
+                        "Grizzly سعر غير مقروء (country=%s, service=%s): %s",
+                        country, service, str(service_dict)[:300],
+                    )
                 return None
-            return cheapest.quantize(Decimal("0.0001"))
+            return cost_usd.quantize(Decimal("0.0001"))
         except Exception as e:
             logger.debug(f"Grizzly get_price error (country={country}, service={service}): {e}")
             return None
