@@ -85,6 +85,8 @@ class FiveSimProvider(BaseProvider):
 
     async def get_balance(self) -> Decimal:
         data = await self._request("GET", "user/profile")
+        if isinstance(data, str):
+            raise ProviderAPIError(f"5sim: رد غير متوقع للرصيد: {data[:200]}")
         balance = self._to_usd(data.get("balance", 0))
         return balance if balance is not None else Decimal("0")
 
@@ -179,6 +181,16 @@ class FiveSimProvider(BaseProvider):
         max_price: Decimal | None = None,  # 5sim لا يدعم سقف السعر — يُتجاهل
     ) -> PurchasedNumber:
         data = await self._request("GET", f"user/buy/activation/{country}/{operator}/{service}")
+        # الـ API قد يرجع نص خطأ بدل JSON (نفاد مخزون/طلب خاطئ/حظر) —
+        # _request يعيد النص خاماً في هذه الحالة.
+        if isinstance(data, str):
+            text = data.strip()
+            lowered = text.lower()
+            if "no " in lowered and ("number" in lowered or "phone" in lowered) or "no_number" in lowered or "out of stock" in lowered:
+                raise ProviderAPIError("لا توجد أرقام متوفرة حالياً لهذه الدولة (5sim)")
+            raise ProviderAPIError(f"فشل شراء رقم من 5sim: {text[:200]}")
+        if not isinstance(data, dict) or not data.get("phone") or not data.get("id"):
+            raise ProviderAPIError(f"فشل شراء رقم من 5sim: رد غير متوقع {str(data)[:200]}")
         cost_usd = self._to_usd(data.get("price", 0)) or Decimal("0")
         return PurchasedNumber(
             provider_order_id=str(data["id"]),
@@ -189,6 +201,13 @@ class FiveSimProvider(BaseProvider):
 
     async def check_status(self, order_id: str) -> OrderStatusResult:
         data = await self._request("GET", f"user/check/{order_id}")
+        if isinstance(data, str):
+            return OrderStatusResult(
+                status="pending",
+                sms_code=None,
+                full_text=data[:500],
+                raw={"raw": data},
+            )
         status = data.get("status")
         sms_list = data.get("sms") or []
         code = None
