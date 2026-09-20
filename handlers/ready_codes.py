@@ -16,6 +16,7 @@ from keyboards.ready_codes import (
     admin_ready_codes_kb,
     admin_ready_code_edit_kb,
 )
+from keyboards.main_menu import back_to_main_kb
 from services.balance_service import BalanceService, InsufficientBalanceError
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,7 @@ async def ready_code_buy(callback: CallbackQuery, session, db_user, bot):
         text += f"\n📋 <b>طريقة الاستخدام:</b>\n{item.instructions}"
     if item.file_url:
         text += f"\n\n🔗 <a href='{item.file_url}'>رابط التحميل</a>"
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(text, reply_markup=back_to_main_kb())
     await callback.answer("✅ تم الشراء بنجاح!", show_alert=True)
 
 

@@ -223,6 +223,10 @@ async def migrate(rate: Decimal, from_rub: bool) -> None:
             ("deposit_requests", "reject_reason", "VARCHAR(255)"),
             ("countries", "sms_activate_code", "VARCHAR(16)"),
             ("countries", "smshub_code", "VARCHAR(16)"),
+            ("countries", "smspool_code", "VARCHAR(32)"),
+            ("countries", "grizzly_code", "VARCHAR(32)"),
+            ("number_services", "smspool_code", "VARCHAR(32)"),
+            ("number_services", "grizzly_code", "VARCHAR(32)"),
             ("countries", "sort_order", "INTEGER DEFAULT 0"),
         ):
             if table in tables:

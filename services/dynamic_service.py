@@ -620,6 +620,8 @@ class DynamicService:
         herosms_code: str | None = None,
         sms_activate_code: str | None = None,
         smshub_code: str | None = None,
+        smspool_code: str | None = None,
+        grizzly_code: str | None = None,
         sort_order: int = 0,
     ) -> NumberService:
         svc = NumberService(
@@ -630,6 +632,8 @@ class DynamicService:
             herosms_code=herosms_code,
             sms_activate_code=sms_activate_code,
             smshub_code=smshub_code,
+            smspool_code=smspool_code,
+            grizzly_code=grizzly_code,
             sort_order=sort_order,
             is_active=True,
         )

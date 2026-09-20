@@ -83,6 +83,8 @@ class ProviderName(str, enum.Enum):
     HEROSMS = "herosms"
     SMS_ACTIVATE = "sms_activate"
     SMSHUB = "smshub"
+    SMSPOOL = "smspool"
+    GRIZZLY = "grizzly"
 
 
 class CategoryType(str, enum.Enum):
@@ -469,6 +471,8 @@ class Country(Base):
     herosms_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     sms_activate_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     smshub_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    smspool_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    grizzly_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -493,6 +497,8 @@ class NumberService(Base):
     herosms_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     sms_activate_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     smshub_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    smspool_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    grizzly_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

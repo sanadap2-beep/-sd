@@ -31,7 +31,7 @@ from services.loyalty_service import LoyaltyService
 from services.notification_service import NotificationService
 from services.settings_service import SettingsService
 from services.sms_receiver_service import SMSReceiverService
-from keyboards.numbers import code_received_kb
+from keyboards.numbers import code_received_kb, after_number_order_kb
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +184,7 @@ async def _handle_code_received(session, order, status_result, notifier, bot):
         await notifier.notify_code_card(
             user.telegram_id, svc_name, country_name, order.phone_number,
             status_result.sms_code, extra=status_result.full_text,
+            reply_markup=code_received_kb(order.id),
         )
 
     # كاشباك وولاء
@@ -290,11 +291,14 @@ async def _expire_and_refund(session, order, notifier, bot):
                 chat_id=order.status_chat_id,
                 message_id=order.status_message_id,
                 text=text,
+                reply_markup=after_number_order_kb(),
             )
             return
         except TelegramBadRequest:
             pass
-    await notifier.notify_user(user.telegram_id, text)
+    await notifier.notify_user(
+        user.telegram_id, text, reply_markup=after_number_order_kb()
+    )
 
 
 # ══════════════════════════════════════════════════════════════

@@ -1003,7 +1003,8 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     f"🆔 رقم الطلب: #{order.id}\n"
                     f"💰 المبلغ: {final_price}$\n\n"
                     "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
-                    "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله."
+                    "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله.",
+                    reply_markup=back_to_main_kb(),
                 )
                 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
                 await notifier.notify_admin(
@@ -1073,7 +1074,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                 'خارج البوت وستصلك رسالة فور اكتمال التنفيذ أو الاسترجاع.'
             )
         result_text += '\nستصلك إشعارات بتحديث حالة طلبك.'
-    await callback.message.answer(result_text)
+    await callback.message.answer(result_text, reply_markup=back_to_main_kb())
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 

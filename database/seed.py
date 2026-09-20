@@ -253,6 +253,8 @@ DEFAULT_NUMBER_SERVICES = [
         "herosms_code": "wa",
         "sms_activate_code": "wa",
         "smshub_code": "whatsapp",
+        "smspool_code": "whatsapp",
+        "grizzly_code": "wa",
         "sort_order": 1,
     },
     {
@@ -263,6 +265,8 @@ DEFAULT_NUMBER_SERVICES = [
         "herosms_code": "tg",
         "sms_activate_code": "tg",
         "smshub_code": "telegram",
+        "smspool_code": "telegram",
+        "grizzly_code": "tg",
         "sort_order": 2,
     },
 ]
@@ -535,10 +539,18 @@ async def init_db() -> None:
                         herosms_code=svc["herosms_code"],
                         sms_activate_code=svc["sms_activate_code"],
                         smshub_code=svc["smshub_code"],
+                        smspool_code=svc.get("smspool_code"),
+                        grizzly_code=svc.get("grizzly_code"),
                         sort_order=svc["sort_order"],
                         is_active=True,
                     )
                 )
+            elif getattr(existing_svc, "smspool_code", None) is None and svc.get("smspool_code"):
+                # تعبئة رجعية: خدمات قديمة (واتساب/تيليجرام) بلا كود SMSPool
+                existing_svc.smspool_code = svc["smspool_code"]
+            if getattr(existing_svc, "grizzly_code", None) is None and svc.get("grizzly_code"):
+                # تعبئة رجعية: خدمات قديمة بلا كود GrizzlySMS
+                existing_svc.grizzly_code = svc["grizzly_code"]
 
         # ── زرع جوائز عجلة الحظ وقاعدة مكافأة الشحن الافتراضية ──
         # (آمنة: تعمل مرة واحدة فقط ولا تكرر شيئاً على الترقية.)
