@@ -1,6 +1,16 @@
 """
 مزود أرقام 5sim.
-يحول الأسعار من الروبل إلى الدولار تلقائياً.
+
+تحديث 2026: غيّرت 5sim الـ API:
+- ``guest/prices`` صار يطلب **رقم الدولة** (``country=16``) بدل الاسم
+  (``country=russia`` يرجع ``400 country is incorrect``) — نفس ترقيم
+  sms-activate ‏(12=أمريكا، 16=بريطانيا، 21=مصر...).
+- الأسعار صارت **بالدولار مباشرة** (0.92$ مثلاً) بدل الروبل —
+  انتهى التحويل القديم (‎/100).
+- الرد قد يكون ``null`` عند غياب المخزون/الدولة.
+
+لذلك ``fivesim_code`` للدول صار رقماً (``"16"``) وليس اسماً (``"england"``).
+الأكواد الاسمية القديمة تُكتشف وتُستبدل تلقائياً عند إعادة السحب.
 """
 
 import logging
@@ -14,7 +24,6 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 FIVESIM_BASE = "https://5sim.net/v1/"
-FIVESIM_RUB_TO_USD_RATE = Decimal("100")
 
 
 class ProviderAPIError(Exception):
@@ -41,20 +50,24 @@ class FiveSimProvider(BaseProvider):
             ) as resp:
                 text = await resp.text()
                 if resp.status != 200:
-                    raise ProviderAPIError(f"5sim error {resp.status}: {text}")
+                    raise ProviderAPIError(f"5sim error {resp.status}: {text[:200]}")
                 try:
                     return await resp.json(content_type=None)
                 except Exception:
                     return text
 
-    def _rub_to_usd(self, amount_rub: Decimal) -> Decimal:
-        """يحول الروبل للدولار بسعر صرف 5sim الداخلي."""
-        return (amount_rub / FIVESIM_RUB_TO_USD_RATE).quantize(Decimal("0.0001"))
+    @staticmethod
+    def _to_usd(value) -> Decimal | None:
+        """الأسعار بالدولار مباشرة (تحديث API ‏2026)."""
+        try:
+            return Decimal(str(value)).quantize(Decimal("0.0001"))
+        except Exception:
+            return None
 
     async def get_balance(self) -> Decimal:
         data = await self._request("GET", "user/profile")
-        balance_rub = Decimal(str(data.get("balance", 0)))
-        return self._rub_to_usd(balance_rub)
+        balance = self._to_usd(data.get("balance", 0))
+        return balance if balance is not None else Decimal("0")
 
     async def get_countries_services(self) -> list[dict]:
         raise NotImplementedError("يُستخدم get_price مباشرة")
@@ -71,19 +84,50 @@ class FiveSimProvider(BaseProvider):
             result.append(f"<code>{code}</code> — {name}")
         return sorted(result)
 
+    async def get_country_prices(self, country: str) -> dict:
+        """كل أسعار المنتجات لدولة رقمية واحدة (مفتاح الرد اسم الدولة)."""
+        data = await self._request("GET", f"guest/prices?country={country}")
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _extract_service_node(data, country: str, service: str):
+        """يستخرج عقدة الخدمة — الرد مفتاحه اسم الدولة لا رقمها."""
+        if not isinstance(data, dict) or not data:
+            return None
+        node = data.get(str(country))
+        if node is None:
+            # الـ API الجديد يفتح باسم الدولة (england) لا برقمها (16)
+            dict_vals = [v for v in data.values() if isinstance(v, dict)]
+            if len(dict_vals) == 1:
+                node = dict_vals[0]
+            else:
+                return None
+        if not isinstance(node, dict):
+            return None
+        return node.get(str(service))
+
     async def get_price(self, country: str, service: str) -> Decimal | None:
-        data = await self._request("GET", f"guest/prices?country={country}&product={service}")
         try:
-            country_data = data[country][service]
+            data = await self._request("GET", f"guest/prices?country={country}&product={service}")
+        except Exception as e:
+            logger.debug(f"5sim get_price error (country={country}, service={service}): {e}")
+            return None
+        try:
+            service_node = self._extract_service_node(data, country, service)
+            if not isinstance(service_node, dict):
+                return None
             cheapest = None
-            for operator, info in country_data.items():
-                if info.get("count", 0) > 0:
-                    cost_rub = Decimal(str(info["cost"]))
-                    cost_usd = self._rub_to_usd(cost_rub)
-                    if cheapest is None or cost_usd < cheapest:
+            for operator, info in service_node.items():
+                if not isinstance(info, dict):
+                    continue
+                if int(info.get("count", 0) or 0) > 0:
+                    cost_usd = self._to_usd(info.get("cost"))
+                    if cost_usd is not None and cost_usd > 0 and (
+                        cheapest is None or cost_usd < cheapest
+                    ):
                         cheapest = cost_usd
             return cheapest
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, ValueError):
             return None
 
     async def buy_number(
@@ -94,8 +138,7 @@ class FiveSimProvider(BaseProvider):
         max_price: Decimal | None = None,  # 5sim لا يدعم سقف السعر — يُتجاهل
     ) -> PurchasedNumber:
         data = await self._request("GET", f"user/buy/activation/{country}/{operator}/{service}")
-        cost_rub = Decimal(str(data["price"]))
-        cost_usd = self._rub_to_usd(cost_rub)
+        cost_usd = self._to_usd(data.get("price", 0)) or Decimal("0")
         return PurchasedNumber(
             provider_order_id=str(data["id"]),
             phone_number=data["phone"],

@@ -941,6 +941,22 @@ async def confirm_buy(
                 preferred_provider=preferred_provider,
                 strict_provider=strict_provider,
             )
+    except ProviderUnavailableError as e:
+        await BalanceService.add_balance(
+            session,
+            db_user.id,
+            sell_price,
+            TransactionType.REFUND,
+            description="استرجاع - فشل شراء الرقم",
+        )
+        reason = (str(e) or "").strip()
+        if len(reason) > 300:
+            reason = reason[:300] + "…"
+        text = "❌ تعذر سحب الرقم من المزود، تم استرجاع رصيدك بالكامل فوراً."
+        if reason:
+            text += f"\n\n📋 السبب: {reason}"
+        await callback.message.answer(text)
+        return
     except Exception:
         await BalanceService.add_balance(
             session,

@@ -45,6 +45,9 @@ FIVESIM_SERVICE_CODES: dict[str, str] = {
     "telegram": "telegram",
 }
 
+# أعلى رقم دولة مفحوص في 5sim (الترقيم متوافق مع sms-activate ويتمدد دورياً)
+FIVESIM_MAX_COUNTRY_ID = 260
+
 GRIZZLY_SERVICE_CODES: dict[str, str] = {
     "whatsapp": "wa",
     "telegram": "tg",
@@ -65,6 +68,7 @@ class CountrySyncReport:
     activated: int = 0
     skipped_no_stock: int = 0
     failed: int = 0
+    repaired: int = 0
 
     def summary(self) -> str:
         lines = [
@@ -78,6 +82,8 @@ class CountrySyncReport:
             f"🟢 دول تم تفعيلها لوجود مخزون: <b>{self.activated}</b>",
             f"⚪ دول بدون مخزون (معطلة): <b>{self.skipped_no_stock}</b>",
         ]
+        if self.repaired:
+            lines.append(f"🔧 دول أُصلحت أكوادها القديمة: <b>{self.repaired}</b>")
         if self.added:
             lines.append("")
             lines.append("<b>أبرز الدول المضافة:</b>")
@@ -124,26 +130,66 @@ async def _ensure_number_services(
     return resolved
 
 
-async def _fetch_fivesim_catalog(provider) -> tuple[list[dict], str]:
-    """كتالوج 5sim عبر guest/countries (لا يحتاج مفتاحاً)."""
+async def _fetch_fivesim_catalog(provider) -> tuple[list[dict], str, dict[str, str]]:
+    """كتالوج 5sim: أسماء من guest/countries + فحص رقمي 0..MAX.
+
+    الـ API الجديد يطلب رقم الدولة في الأسعار، والرد مفتاحه اسم الدولة،
+    لذلك نفحص الأرقام مباشرة ونبني خريطة {رقم: slug} من الرد نفسه.
+    يرجع (entries, source, slug_to_eng) حيث كل entry:
+    ``{"id": "16", "slug": "england", "node": {...}}``.
+    """
+    slug_to_eng: dict[str, str] = {}
     try:
         data = await provider._request("GET", "guest/countries")
-        if isinstance(data, dict) and data:
-            out = []
-            for code, info in data.items():
+        if isinstance(data, dict):
+            for slug, info in data.items():
                 info = info or {}
-                eng = (
-                    info.get("text_en")
-                    or info.get("title")
-                    or info.get("text_ru")
-                    or str(code)
-                )
-                out.append({"id": str(code), "eng": str(eng)})
-            if out:
-                return out, "5sim guest/countries API"
+                slug_to_eng[str(slug)] = str(info.get("text_en") or slug)
     except Exception as exc:
-        logger.warning(f"فشل كتالوج 5sim ({exc})")
-    return [], "5sim guest/countries API"
+        logger.warning(f"فشل كتالوج أسماء 5sim ({exc}) — المتابعة بالـ slugs من الأسعار")
+
+    entries: list[dict] = []
+    semaphore = asyncio.Semaphore(10)
+
+    async def _probe(num: int):
+        try:
+            async with semaphore:
+                data = await provider.get_country_prices(str(num))
+        except Exception:
+            return
+        if not isinstance(data, dict) or not data:
+            return
+        slugs = [k for k, v in data.items() if isinstance(v, dict)]
+        if len(slugs) != 1:
+            return
+        entries.append({"id": str(num), "slug": slugs[0], "node": data[slugs[0]]})
+
+    await asyncio.gather(*(_probe(i) for i in range(FIVESIM_MAX_COUNTRY_ID + 1)))
+    entries.sort(key=lambda e: int(e["id"]))
+    source = (
+        "5sim guest/prices API (ترقيم رقمي)"
+        if entries
+        else "5sim guest/countries API"
+    )
+    return entries, source, slug_to_eng
+
+
+def _fivesim_node_has_stock(node: dict, product: str) -> bool:
+    """هل يوجد مخزون بسعر حقيقي لمنتج 5sim داخل عقدة دولة؟"""
+    service_node = node.get(str(product))
+    if not isinstance(service_node, dict):
+        return False
+    for info in service_node.values():
+        if not isinstance(info, dict):
+            continue
+        try:
+            count = int(info.get("count", 0) or 0)
+            cost = Decimal(str(info.get("cost", 0)))
+        except Exception:
+            continue
+        if count > 0 and cost > 0:
+            return True
+    return False
 
 
 async def _fetch_grizzly_catalog(provider) -> tuple[list[dict], str]:
@@ -275,7 +321,7 @@ async def sync_fivesim_countries(
     provider=None,
     concurrency: int = 10,
 ) -> CountrySyncReport:
-    """سحب دول 5sim: الكتالوج + فحص مخزون واتساب/تيليجرام + حفظ."""
+    """سحب دول 5sim: فحص رقمي + مخزون واتساب/تيليجرام + حفظ + إصلاح الأكواد القديمة."""
     from providers.fivesim import FiveSimProvider
 
     wanted_services = wanted_services or list(FIVESIM_SERVICE_CODES)
@@ -284,40 +330,49 @@ async def sync_fivesim_countries(
     report = CountrySyncReport(provider_label="5sim", service_codes=wanted_services)
     provider = provider or FiveSimProvider()
 
-    catalog, source = await _fetch_fivesim_catalog(provider)
+    catalog, source, slug_to_eng = await _fetch_fivesim_catalog(provider)
     report.catalog_source = source
     if not catalog:
         return report
     report.fetched_countries = len(catalog)
 
-    semaphore = asyncio.Semaphore(concurrency)
     availability: dict[str, bool] = {}
     english_names: dict[str, str] = {}
+    for entry in catalog:
+        cid = entry["id"]
+        slug = entry["slug"]
+        english_names[cid] = slug_to_eng.get(slug, slug.replace("_", " ").title())
+        node = entry["node"]
+        has_any = False
+        for s_code in wanted_services:
+            product = service_codes.get(s_code)
+            if product and _fivesim_node_has_stock(node, product):
+                has_any = True
+                break
+        availability[cid] = has_any
 
-    async def _probe(entry: dict):
-        cid = str(entry.get("id", "")).strip()
-        eng = str(entry.get("eng") or cid).strip()
-        if not cid:
-            return
-        english_names[cid] = eng
-        async with semaphore:
-            try:
-                has_any = False
-                for s_code in wanted_services:
-                    product = service_codes.get(s_code)
-                    if not product:
-                        continue
-                    price: Decimal | None = await provider.get_price(cid, product)
-                    if price is not None and price > 0:
-                        has_any = True
-                        break
-                availability[cid] = has_any
-            except Exception:
-                availability[cid] = False
-
-    await asyncio.gather(*(_probe(c) for c in catalog))
     await _store_countries(session, report, "fivesim_code", english_names, availability, activate)
+    report.repaired += await _repair_stale_codes(session, "fivesim_code")
     return report
+
+
+async def _repair_stale_codes(session, code_field: str) -> int:
+    """يمسح أكواد المزود القديمة غير الرقمية (مثل slugs ‏5sim المنتهية).
+
+    هذه الأكواد تفشل حتماً عند المزود (400) وتُظهر سيرفرات فارغة،
+    لذلك تُصفَّر لتُملأ من جديد بالسحب الصحيح بدل كسر العرض.
+    """
+    result = await session.execute(select(Country))
+    fixed = 0
+    for country in result.scalars().all():
+        val = getattr(country, code_field, None)
+        if val and not str(val).isdigit():
+            setattr(country, code_field, None)
+            fixed += 1
+    if fixed:
+        await session.commit()
+        logger.info(f"أُصلحت {fixed} دولة بكود {code_field} قديم غير رقمي")
+    return fixed
 
 
 async def sync_grizzly_countries(
