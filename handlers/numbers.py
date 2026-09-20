@@ -280,7 +280,9 @@ async def number_server_picked(callback: CallbackQuery, session, db_user=None):
             "جرّب سيرفراً آخر أو عد لاحقاً.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="🖥 تغيير السيرفر", callback_data=f"num_server:{service_code}", style="success")]
+                    [InlineKeyboardButton(text="🖥 تغيير السيرفر", callback_data=f"num_server:{service_code}", style="success")],
+                    [InlineKeyboardButton(text="📱 كل خدمات الأرقام", callback_data="num_hub")],
+                    [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="back_to_main")],
                 ]
             ),
         )
@@ -337,7 +339,15 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
     if not entries:
         await callback.message.edit_text(
             "❌ لا توجد أرقام متوفرة حالياً.",
-            reply_markup=back_to_main_kb(),
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="🔙 رجوع للسيرفرات" if server is not None else "🔙 رجوع للخدمات",
+                        callback_data=f"num_server:{service_code}" if server is not None else "num_hub",
+                    )],
+                    [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="back_to_main")],
+                ]
+            ),
         )
         return
 
@@ -401,13 +411,21 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
         prices = await provider_manager.get_cheapest_price(service, country, session, only_provider=only_provider)
     except Exception as e:
         logger.error(f"خطأ جلب الأسعار: {e}")
-        await callback.message.answer("⚠️ تعذّر الاتصال بالمزود، حاول بعد لحظات.")
+        from keyboards.nav import number_failure_kb as _show_nfkb
+
+        await callback.message.answer(
+            "⚠️ تعذّر الاتصال بالمزود، حاول بعد لحظات.",
+            reply_markup=_show_nfkb(service_code, country.id, server_id),
+        )
         return
 
     if not prices:
+        from keyboards.nav import number_failure_kb
+
         await callback.message.answer(
             f"❌ نفذت أرقام {country.flag} {country.name_ar} لخدمة {service.name_ar} حالياً.\n"
-            "يرجى اختيار دولة أخرى."
+            "يرجى اختيار دولة أخرى.",
+            reply_markup=number_failure_kb(service_code, country.id, server_id),
         )
         return
 
@@ -771,11 +789,21 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
             margin_percent=server.margin_percent if server is not None else None,
         )
     except BulkError as exc:
-        await callback.message.answer(f"⚠️ {exc}")
+        from keyboards.nav import number_failure_kb as _bulk_nfkb
+
+        await callback.message.answer(
+            f"⚠️ {exc}",
+            reply_markup=_bulk_nfkb(service_code, country.id, server_id),
+        )
         return
     except Exception as exc:
         logger.exception("فشل تنفيذ دفعة الأرقام: %s", exc)
-        await callback.message.answer("❌ حدث خطأ غير متوقع أثناء تنفيذ الدفعة.")
+        from keyboards.nav import number_failure_kb as _bulk_nfkb2
+
+        await callback.message.answer(
+            "❌ حدث خطأ غير متوقع أثناء تنفيذ الدفعة.",
+            reply_markup=_bulk_nfkb2(service_code, country.id, server_id),
+        )
         return
 
     text = (
@@ -876,7 +904,12 @@ async def confirm_buy(
         return
 
     if not prices:
-        await callback.message.answer("❌ نفذت الأرقام لدى المزود.")
+        from keyboards.nav import number_failure_kb
+
+        await callback.message.answer(
+            "❌ نفذت الأرقام لدى المزود.",
+            reply_markup=number_failure_kb(service_code, country.id, server_id),
+        )
         return
 
     cheapest_provider = min(prices, key=prices.get)
@@ -960,7 +993,12 @@ async def confirm_buy(
         text = "❌ تعذر سحب الرقم من المزود، تم استرجاع رصيدك بالكامل فوراً."
         if reason:
             text += f"\n\n📋 السبب: {reason}"
-        await callback.message.answer(text)
+        from keyboards.nav import number_failure_kb
+
+        await callback.message.answer(
+            text,
+            reply_markup=number_failure_kb(service_code, country.id, server_id),
+        )
         return
     except Exception:
         await BalanceService.add_balance(
@@ -970,7 +1008,12 @@ async def confirm_buy(
             TransactionType.REFUND,
             description="استرجاع - فشل شراء الرقم",
         )
-        await callback.message.answer("❌ تعذر سحب الرقم من المزود، تم استرجاع رصيدك بالكامل فوراً.")
+        from keyboards.nav import number_failure_kb as _nfkb
+
+        await callback.message.answer(
+            "❌ تعذر سحب الرقم من المزود، تم استرجاع رصيدك بالكامل فوراً.",
+            reply_markup=_nfkb(service_code, country.id, server_id),
+        )
         return
 
     await PriceLockService.consume(quote_token)

@@ -598,9 +598,20 @@ async def sync_herosms_countries(
                 country_data = prices_raw.get(cid, prices_raw) if isinstance(prices_raw, dict) else {}
                 for s_code in wanted_services:
                     h_code = services[s_code].herosms_code
-                    if _service_has_stock(country_data, h_code):
-                        has_any_stock = True
-                        break
+                    if not _service_has_stock(country_data, h_code):
+                        continue
+                    # تحقق ثانٍ بالمخزون الحي: getPrices قد يكذب
+                    # (مخزون وهمي) بينما getNumbersStatus يكشف النفاد.
+                    stock_fn = getattr(provider, "get_stock_count", None)
+                    if callable(stock_fn):
+                        try:
+                            live = await stock_fn(cid, h_code)
+                        except Exception:
+                            live = None
+                        if live is not None and live <= 0:
+                            continue
+                    has_any_stock = True
+                    break
                 availability[cid] = has_any_stock
             except Exception:
                 availability[cid] = False

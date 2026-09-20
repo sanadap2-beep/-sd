@@ -188,6 +188,19 @@ class ProviderManager:
             if price is not None
         }
 
+        # ── 3) فلترة المخزون الوهمي ──
+        # مزود أرجع NO_NUMBERS عند شراء فعلي رغم عرضه سعراً (grizzly تحديداً)
+        # يُحظر مؤقتاً فتختفي دوله من اللوحة، ويعود تلقائياً بعد انتهاء الحظر.
+        if result:
+            try:
+                from services.number_stock_guard import filter_prices
+
+                service_code = getattr(service, "code", "")
+                country_code = getattr(country, "code", "")
+                result = await filter_prices(result, service_code, country_code)
+            except Exception as exc:  # noqa: BLE001 - الفلترة لا تكسر عرض الأسعار
+                logger.debug("تعذّرت فلترة المخزون الوهمي: %s", exc)
+
         if use_cache:
             ttl = await PriceCacheService.ttl_seconds()
             await PriceCacheService.set(cache_key, result, ttl=ttl)
@@ -314,6 +327,12 @@ class ProviderManager:
                 purchased = await instance.buy_number(
                     country_code, service_code, max_price=max_price
                 )
+                try:
+                    from services.number_stock_guard import record_success
+
+                    await record_success(provider_name, service.code, country.code)
+                except Exception:  # noqa: BLE001
+                    pass
                 await PriceCacheService.invalidate(f"number-price:{service.code}:{country.code}")
                 logger.info(
                     f"شراء ناجح من {provider_name.value}: "
@@ -329,6 +348,20 @@ class ProviderManager:
             except Exception as e:
                 errors.append(f"{provider_name.value}: {e}")
                 logger.warning(f"فشل الشراء من {provider_name.value}: {e}")
+                # مخزون وهمي؟ احظر الدولة/المزود مؤقتاً حتى تختفي من اللوحة
+                # وتعود تلقائياً بعد انتهاء الحظر إذا رجع المخزون.
+                try:
+                    from services.number_stock_guard import (
+                        _is_empty_stock_error,
+                        report_empty_stock,
+                    )
+
+                    if _is_empty_stock_error(str(e)):
+                        await report_empty_stock(
+                            provider_name, service.code, country.code, str(e)
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
                 continue
 
         raise ProviderUnavailableError(f"فشل الشراء من كل المزودين المتاحين. {' | '.join(errors)}")

@@ -146,6 +146,49 @@ class GrizzlyProvider(BaseProvider):
             logger.debug(f"Grizzly get_price error (country={country}, service={service}): {e}")
             return None
 
+    async def get_stock_count(self, country: str, service: str) -> int | None:
+        """المخزون الحي عبر getNumbersStatus (أدق من count داخل getPrices).
+
+        يرجع العدد، أو 0 عند النفاد، أو None عند تعذر الفحص (نترك
+        القرار لفحص السعر المعتاد بدل حجب الدولة خطأً).
+        """
+        try:
+            result = await self._request(
+                {
+                    "action": "getNumbersStatus",
+                    "country": str(country),
+                    "service": str(service),
+                }
+            )
+            data = json.loads(result)
+            if isinstance(data, dict):
+                for key in (
+                    f"{country}_{service}",
+                    f"{country}_{service}".lower(),
+                ):
+                    if key in data:
+                        try:
+                            return max(0, int(str(data[key])))
+                        except (TypeError, ValueError):
+                            pass
+                # الرد قد يكون {country: {service: count}} في بعض النسخ
+                node = data.get(str(country))
+                if isinstance(node, dict) and str(service) in node:
+                    try:
+                        return max(0, int(str(node[str(service)])))
+                    except (TypeError, ValueError):
+                        pass
+                # مفتاح وحيد فقط (استعلام محدد) — خذ قيمته
+                if len(data) == 1:
+                    try:
+                        return max(0, int(str(next(iter(data.values())))))
+                    except (TypeError, ValueError):
+                        pass
+            return None
+        except Exception as e:
+            logger.debug(f"Grizzly getNumbersStatus error: {e}")
+            return None
+
     async def buy_number(
         self,
         country: str,
