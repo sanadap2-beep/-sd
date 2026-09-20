@@ -31,6 +31,8 @@ PROVIDER_LABELS: dict[str, tuple[str, str]] = {
     ProviderName.HEROSMS.value: ("🟠", "HeroSMS"),
     ProviderName.SMS_ACTIVATE.value: ("🔵", "SMS-Activate"),
     ProviderName.SMSHUB.value: ("🟣", "SMSHub"),
+    ProviderName.SMSPOOL.value: ("🔷", "SMSPool"),
+    ProviderName.GRIZZLY.value: ("🐻", "GrizzlySMS"),
 }
 
 # الاسم المحايد الذي يراه المستخدم بدل اسم المزود.
@@ -220,6 +222,8 @@ class NumberServerService:
             (ProviderName.HEROSMS.value, service.herosms_code),
             (ProviderName.SMS_ACTIVATE.value, service.sms_activate_code),
             (ProviderName.SMSHUB.value, service.smshub_code),
+            (ProviderName.SMSPOOL.value, getattr(service, "smspool_code", None)),
+            (ProviderName.GRIZZLY.value, getattr(service, "grizzly_code", None)),
         )
         created: list[NumberServer] = []
         index = 1

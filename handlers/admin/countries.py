@@ -142,7 +142,23 @@ async def country_sms_activate_received(message: Message, state: FSMContext):
 
 
 @router.message(AdminCountryStates.waiting_smshub_code)
-async def country_smshub_received(
+async def country_smshub_received(message: Message, state: FSMContext):
+    val = message.text.strip()
+    await state.update_data(smshub_code=None if val == "-" else val)
+    await message.answer("🔢 أرسل كود الدولة لدى <b>SMSPool</b> (مثال: <code>US</code>):\n(أو أرسل - للتخطي)")
+    await state.set_state(AdminCountryStates.waiting_smspool_code)
+
+
+@router.message(AdminCountryStates.waiting_smspool_code)
+async def country_smspool_received(message: Message, state: FSMContext):
+    val = message.text.strip()
+    await state.update_data(smspool_code=None if val == "-" else val)
+    await message.answer("🔢 أرسل كود الدولة الرقمي لدى <b>GrizzlySMS</b>:\n(أو أرسل - للتخطي)")
+    await state.set_state(AdminCountryStates.waiting_grizzly_code)
+
+
+@router.message(AdminCountryStates.waiting_grizzly_code)
+async def country_grizzly_received(
     message: Message,
     state: FSMContext,
     session,
@@ -154,9 +170,11 @@ async def country_smshub_received(
     fivesim_code = data.get("fivesim_code")
     herosms_code = data.get("herosms_code")
     sms_activate_code = data.get("sms_activate_code")
-    smshub_code = None if val == "-" else val
+    smshub_code = data.get("smshub_code")
+    smspool_code = data.get("smspool_code")
+    grizzly_code = None if val == "-" else val
 
-    if not any([fivesim_code, herosms_code, sms_activate_code, smshub_code]):
+    if not any([fivesim_code, herosms_code, sms_activate_code, smshub_code, smspool_code, grizzly_code]):
         await message.answer("⚠️ يجب تحديد كود لمزود واحد على الأقل.")
         await state.clear()
         return
@@ -169,6 +187,8 @@ async def country_smshub_received(
         herosms_code=herosms_code,
         sms_activate_code=sms_activate_code,
         smshub_code=smshub_code,
+        smspool_code=smspool_code,
+        grizzly_code=grizzly_code,
         is_active=False,
         added_by_admin_id=db_user.id,
     )
@@ -203,6 +223,8 @@ async def country_view(callback: CallbackQuery, session):
         f"كود 5sim: <code>{country.fivesim_code or '—'}</code>\n"
         f"كود SMS-Activate: <code>{country.sms_activate_code or '—'}</code>\n"
         f"كود SMSHub: <code>{country.smshub_code or '—'}</code>\n"
+        f"كود SMSPool: <code>{getattr(country, 'smspool_code', None) or '—'}</code>\n"
+        f"كود GrizzlySMS: <code>{getattr(country, 'grizzly_code', None) or '—'}</code>\n"
         f"الحالة: {status}\n"
         f"الترتيب: {country.sort_order}",
         reply_markup=admin_country_detail_kb(country),

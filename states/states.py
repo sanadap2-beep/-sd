@@ -217,6 +217,8 @@ class AdminCountryStates(StatesGroup):
     waiting_herosms_code = State()
     waiting_sms_activate_code = State()
     waiting_smshub_code = State()
+    waiting_smspool_code = State()
+    waiting_grizzly_code = State()
 
 
 # ══════════════ الأدمن - الأقسام الرئيسية ══════════════
@@ -365,6 +367,8 @@ class AdminNumberServiceStates(StatesGroup):
     waiting_herosms_code = State()
     waiting_sms_activate_code = State()
     waiting_smshub_code = State()
+    waiting_smspool_code = State()
+    waiting_grizzly_code = State()
     waiting_edit_field = State()
     waiting_edit_value = State()
     waiting_availability_channel = State()

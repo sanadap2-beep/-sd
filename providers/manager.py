@@ -19,6 +19,8 @@ from providers.fivesim import FiveSimProvider
 from providers.herosms import HeroSMSProvider
 from providers.sms_activate import SMSActivateProvider
 from providers.smshub import SMSHubProvider
+from providers.smspool import SMSPoolProvider
+from providers.grizzly import GrizzlyProvider
 from services.price_cache_service import PriceCacheService
 from config import settings
 
@@ -56,6 +58,12 @@ class ProviderManager:
         if settings.SMSHUB_API_KEY:
             self._providers[ProviderName.SMSHUB] = SMSHubProvider()
 
+        if settings.SMSPOOL_API_KEY:
+            self._providers[ProviderName.SMSPOOL] = SMSPoolProvider()
+
+        if settings.GRIZZLY_API_KEY:
+            self._providers[ProviderName.GRIZZLY] = GrizzlyProvider()
+
         logger.info(
             f"تم تهيئة {len(self._providers)} مزود أرقام: "
             f"{', '.join(p.value for p in self._providers.keys())}"
@@ -78,6 +86,8 @@ class ProviderManager:
             ProviderName.HEROSMS: country.herosms_code,
             ProviderName.SMS_ACTIVATE: country.sms_activate_code,
             ProviderName.SMSHUB: country.smshub_code,
+            ProviderName.SMSPOOL: country.smspool_code,
+            ProviderName.GRIZZLY: country.grizzly_code,
         }
         return code_map.get(provider)
 
@@ -92,6 +102,8 @@ class ProviderManager:
             ProviderName.HEROSMS: service.herosms_code,
             ProviderName.SMS_ACTIVATE: service.sms_activate_code,
             ProviderName.SMSHUB: service.smshub_code,
+            ProviderName.SMSPOOL: service.smspool_code,
+            ProviderName.GRIZZLY: service.grizzly_code,
         }
         return code_map.get(provider)
 

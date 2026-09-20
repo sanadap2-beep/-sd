@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     HEROSMS_API_KEY: str = ""
     SMS_ACTIVATE_API_KEY: str = ""
     SMSHUB_API_KEY: str = ""
+    SMSPOOL_API_KEY: str = ""
+    GRIZZLY_API_KEY: str = ""
 
     # ── NanoGPT (مزود أقسام الذكاء الاصطناعي — OpenAI-compatible) ──
     NANOGPT_API_KEY: str = ""

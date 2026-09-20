@@ -119,16 +119,34 @@ async def nsvc_sms_activate_received(message: Message, state: FSMContext):
 
 
 @router.message(AdminNumberServiceStates.waiting_smshub_code)
-async def nsvc_smshub_received(message: Message, state: FSMContext, session):
+async def nsvc_smshub_received(message: Message, state: FSMContext):
+    val = message.text.strip()
+    await state.update_data(nsvc_smshub=None if val == "-" else val)
+    await message.answer("🔢 أرسل كود الخدمة لدى <b>SMSPool</b> (مثال: <code>whatsapp</code>):\n(أو أرسل - للتخطي)")
+    await state.set_state(AdminNumberServiceStates.waiting_smspool_code)
+
+
+@router.message(AdminNumberServiceStates.waiting_smspool_code)
+async def nsvc_smspool_received(message: Message, state: FSMContext):
+    val = message.text.strip()
+    await state.update_data(nsvc_smspool=None if val == "-" else val)
+    await message.answer("🔢 أرسل كود الخدمة لدى <b>GrizzlySMS</b> (مثال: <code>wa</code> للواتساب):\n(أو أرسل - للتخطي)")
+    await state.set_state(AdminNumberServiceStates.waiting_grizzly_code)
+
+
+@router.message(AdminNumberServiceStates.waiting_grizzly_code)
+async def nsvc_grizzly_received(message: Message, state: FSMContext, session):
     val = message.text.strip()
     data = await state.get_data()
 
     fivesim = data.get("nsvc_fivesim")
     herosms = data.get("nsvc_herosms")
     sms_activate = data.get("nsvc_sms_activate")
-    smshub = None if val == "-" else val
+    smshub = data.get("nsvc_smshub")
+    smspool = data.get("nsvc_smspool")
+    grizzly = None if val == "-" else val
 
-    if not any([fivesim, herosms, sms_activate, smshub]):
+    if not any([fivesim, herosms, sms_activate, smshub, smspool, grizzly]):
         await message.answer("⚠️ يجب تحديد كود لدى مزود واحد على الأقل.")
         await state.clear()
         return
@@ -142,6 +160,8 @@ async def nsvc_smshub_received(message: Message, state: FSMContext, session):
         herosms_code=herosms,
         sms_activate_code=sms_activate,
         smshub_code=smshub,
+        smspool_code=smspool,
+        grizzly_code=grizzly,
     )
 
     await message.answer(
@@ -175,6 +195,8 @@ async def nsvc_view(callback: CallbackQuery, session):
         f"HeroSMS: <code>{svc.herosms_code or '—'}</code>\n"
         f"SMS-Activate: <code>{svc.sms_activate_code or '—'}</code>\n"
         f"SMSHub: <code>{svc.smshub_code or '—'}</code>\n"
+        f"SMSPool: <code>{getattr(svc, 'smspool_code', None) or '—'}</code>\n"
+        f"GrizzlySMS: <code>{getattr(svc, 'grizzly_code', None) or '—'}</code>\n"
         f"الترتيب: {svc.sort_order}",
         reply_markup=admin_nsvc_detail_kb(svc),
     )
