@@ -195,10 +195,17 @@ def countries_price_kb(
         )
         nav_buttons_count += 1
 
-    b.button(
-        text="🔙 رجوع للأقسام",
-        callback_data="store:home",
-    )
+    if server_id:
+        # داخل دول سيرفر محدد: الرجوع لقائمة السيرفرات (الصفحة السابقة فعلاً)
+        b.button(
+            text="🔙 رجوع للسيرفرات",
+            callback_data=f"num_server:{service_code}",
+        )
+    else:
+        b.button(
+            text="🔙 رجوع للخدمات",
+            callback_data="num_hub",
+        )
 
     # صف بمربعين للدول، ثم صف التنقل، ثم الرجوع
     rows = [2] * (len(page_entries) // 2)
@@ -229,11 +236,19 @@ def confirm_purchase_kb(
         text="📦 شراء بالجملة",
         callback_data=f"num_bulk_start:{service_code}:{country_id}:{quote_token or ''}{suffix}", style="success",
     )
-    b.button(
-        text="🔙 تراجع",
-        callback_data=f"num_server:{service_code}" if server_id else f"num_svc:{service_code}",
-        style="success",
-    )
+    if server_id:
+        # الرجوع لدول نفس السيرفر (وليس لقائمة السيرفرات)
+        b.button(
+            text="🔙 رجوع لدول السيرفر",
+            callback_data=f"num_server_pick:{service_code}:{server_id}",
+            style="success",
+        )
+    else:
+        b.button(
+            text="🔙 تراجع",
+            callback_data=f"num_svc:{service_code}",
+            style="success",
+        )
     b.adjust(1)
     return b.as_markup()
 
@@ -282,8 +297,8 @@ def bulk_confirm_kb(
         callback_data=f"num_bulk_start:{service_code}:{country_id}:{suffix}", style="success",
     )
     b.button(
-        text="❌ إلغاء",
-        callback_data="back_to_main",
+        text="🔙 رجوع لسعر الدولة",
+        callback_data=f"num_country:{service_code}:{country_id}{suffix}",
     )
     b.adjust(1)
     return b.as_markup()

@@ -400,9 +400,22 @@ async def sync_grizzly_countries(
                     if not g_service:
                         continue
                     price: Decimal | None = await provider.get_price(cid, g_service)
-                    if price is not None and price > 0:
-                        has_any = True
-                        break
+                    if price is None or price <= 0:
+                        continue
+                    # تحقق ثانٍ بالمخزون الحي: getPrices قد يعرض مخزوناً
+                    # وهمياً (سعر + count>0) بينما getNumbersStatus يكشف
+                    # النفاد الحقيقي. عند تعذر الفحص (None) نقبل السعر
+                    # حتى لا نحجب دولاً سليمة خطأً.
+                    stock_fn = getattr(provider, "get_stock_count", None)
+                    if callable(stock_fn):
+                        try:
+                            live = await stock_fn(cid, g_service)
+                        except Exception:
+                            live = None
+                        if live is not None and live <= 0:
+                            continue
+                    has_any = True
+                    break
                 availability[cid] = has_any
             except Exception:
                 availability[cid] = False

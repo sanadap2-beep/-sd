@@ -175,6 +175,40 @@ class HeroSMSProvider(BaseProvider):
             logger.debug(f"HeroSMS get_price error (country={country}, service={service}): {e}")
             return None
 
+    async def get_stock_count(self, country: str, service: str) -> int | None:
+        """المخزون الحي عبر getNumbersStatus — نفس عقد Grizzly (متوافق sms-activate)."""
+        try:
+            result = await self._request(
+                {
+                    "action": "getNumbersStatus",
+                    "country": str(country),
+                    "service": str(service),
+                }
+            )
+            data = json.loads(result)
+            if isinstance(data, dict):
+                for key in (f"{country}_{service}", f"{country}_{service}".lower()):
+                    if key in data:
+                        try:
+                            return max(0, int(str(data[key])))
+                        except (TypeError, ValueError):
+                            pass
+                node = data.get(str(country))
+                if isinstance(node, dict) and str(service) in node:
+                    try:
+                        return max(0, int(str(node[str(service)])))
+                    except (TypeError, ValueError):
+                        pass
+                if len(data) == 1:
+                    try:
+                        return max(0, int(str(next(iter(data.values())))))
+                    except (TypeError, ValueError):
+                        pass
+            return None
+        except Exception as e:
+            logger.debug(f"HeroSMS getNumbersStatus error: {e}")
+            return None
+
     async def buy_number(
         self,
         country: str,
