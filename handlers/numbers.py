@@ -38,8 +38,8 @@ from providers.manager import provider_manager, ProviderUnavailableError
 from providers.countries import (
     get_active_countries,
     get_active_number_services,
-    get_country_by_code,
     get_number_service_by_code,
+    resolve_country,
 )
 from services.number_server_service import (
     NumberServerService,
@@ -373,15 +373,18 @@ async def countries_page(callback: CallbackQuery, session, db_user=None):
 async def show_price(callback: CallbackQuery, session, db_user=None):
     parts = callback.data.split(":")
     service_code = parts[1]
-    country_code = parts[2]
+    country_ref = parts[2]
     server_id = int(parts[3]) if len(parts) > 3 and parts[3] else None
 
     service = await get_number_service_by_code(session, service_code)
-    country = await get_country_by_code(session, country_code)
+    country = await resolve_country(session, country_ref)
 
     if not service or not country or not country.is_active:
         await callback.answer("⚠️ الدولة أو الخدمة غير متوفرة.", show_alert=True)
         return
+
+    # الكود الداخلي للأسعار والطلبات (المرجع بالزر قد يكون رقماً)
+    country_code = country.code
 
     server = None
     only_provider = None
@@ -446,7 +449,7 @@ async def show_price(callback: CallbackQuery, session, db_user=None):
         "هل تريد تأكيد شراء الرقم الآن؟",
         reply_markup=confirm_purchase_kb(
             service_code,
-            country_code,
+            country.id,
             quote.token,
             server_id=server_id,
         ),
@@ -510,6 +513,7 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
                     "label": f"📦 {quantity} رقم {service.name_ar} · {country.flag} {country.name_ar}",
                     "service_code": service.code,
                     "country_code": country.code,
+                    "country_id": country.id,
                     "quantity": quantity,
                 }
             )
@@ -528,9 +532,9 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
 # ══════════════ شراء الأرقام بالجملة ══════════════
 
 
-async def _load_service_country(session, service_code: str, country_code: str):
+async def _load_service_country(session, service_code: str, country_ref: str):
     service = await get_number_service_by_code(session, service_code)
-    country = await get_country_by_code(session, country_code)
+    country = await resolve_country(session, country_ref)
     if not service or not country or not country.is_active:
         return None, None
     return service, country
@@ -602,7 +606,7 @@ async def _show_bulk_quote(callback_or_message, session, db_user: User, service_
         f"💰 الإجمالي المطلوب: <b>{total_display}</b>\n\n"
         "🛡 إذا فشل أي رقم يتم استرجاع قيمته تلقائياً."
     )
-    markup = bulk_confirm_kb(service_code, country_code, quantity, server_id=server_id)
+    markup = bulk_confirm_kb(service_code, country.id, quantity, server_id=server_id)
     if isinstance(callback_or_message, CallbackQuery):
         await callback_or_message.message.edit_text(text, reply_markup=markup)
     else:
@@ -644,7 +648,7 @@ async def bulk_start(callback: CallbackQuery, session, db_user: User):
         f"{server_line}"
         f"🌍 الدولة: {display_flag(country)} <b>{display_name(country)}</b>\n"
         f"🔢 اختر الكمية أو اكتب كمية مخصصة (الحد الأقصى: <b>{max_qty}</b>):",
-        reply_markup=bulk_quantity_kb(service_code, country_code, quote_token, server_id=server_id),
+        reply_markup=bulk_quantity_kb(service_code, country.id, quote_token, server_id=server_id),
     )
 
 
@@ -819,16 +823,17 @@ async def confirm_buy(
 ):
     parts = callback.data.split(":")
     service_code = parts[1]
-    country_code = parts[2]
+    country_ref = parts[2]
     quote_token = parts[3] if len(parts) > 3 and parts[3] else None
     server_id = int(parts[4]) if len(parts) > 4 and parts[4] else None
 
     service = await get_number_service_by_code(session, service_code)
-    country = await get_country_by_code(session, country_code)
+    country = await resolve_country(session, country_ref)
 
     if not service or not country or not country.is_active:
         await callback.answer("⚠️ الخدمة أو الدولة غير متاحة.", show_alert=True)
         return
+    country_code = country.code
 
     server = None
     strict_provider = None

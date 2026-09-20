@@ -87,19 +87,21 @@ def referral_start_link(username: str, telegram_id: int) -> str:
     return f"https://t.me/{clean}?start=ref_{int(telegram_id)}"
 
 
-def number_buy_start_link(username: str, service_code: str, country_code: str) -> str:
+def number_buy_start_link(username: str, service_code: str, country_id: int) -> str:
     """Build a buy deep link for the live availability channel.
 
-    Telegram's ``start`` payload may safely contain letters, digits and
-    underscores.  We still strip accidental ``@``/URL prefixes from the bot
-    username through :func:`normalize_bot_username` so channel buttons never
-    produce «username not found» because of a malformed environment value.
+    Telegram's ``start`` payload is limited to 64 bytes, so the country
+    travels as its integer id (codes can exceed the limit). Old links
+    carrying codes still resolve via fallback.
     """
     clean = normalize_bot_username(username)
     if not clean:
         return ""
     service = re.sub(r"[^A-Za-z0-9_\-]", "_", str(service_code or "")).strip("_")
-    country = re.sub(r"[^A-Za-z0-9_\-]", "_", str(country_code or "")).strip("_")
+    try:
+        country = str(int(country_id))
+    except (TypeError, ValueError):
+        return ""
     if not service or not country:
         return ""
     return f"https://t.me/{clean}?start=buy_{service}__{country}"

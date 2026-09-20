@@ -81,7 +81,7 @@ def countries_kb(
     for c in page_countries:
         b.button(
             text=f"{c.flag} {c.name_ar}",
-            callback_data=f"num_country:{service_code}:{c.code}", style="success",
+            callback_data=f"num_country:{service_code}:{c.id}", style="success",
         )
 
     nav_buttons_count = 0
@@ -148,16 +148,19 @@ def countries_price_kb(
 
     suffix = f":{server_id}" if server_id else ""
 
-    # عرض أزرار الدول بشكل مربعات (زراين في كل صف) مع العلم والسعر
+    # عرض أزرار الدول بشكل مربعات (زراين في كل صف) مع العلم والسعر.
+    # المرجع هو الرقم الداخلي (cid) لأن callback_data محدود بـ 64 بايت
+    # ولا تتسع له أكواد الدول الطويلة.
     for entry in page_entries:
         price_str = format_price_display(entry.sell_usd)
         name = entry.name_ar
         # نختصر الاسم الطويل حتى لا يُقص السعر مع العرض بصفين
         if len(name) > 18:
             name = name[:17] + "…"
+        ref = entry.cid if entry.cid else entry.code
         b.button(
             text=f"{entry.flag} {name} — {price_str}$",
-            callback_data=f"num_country:{service_code}:{entry.code}{suffix}", style="success",
+            callback_data=f"num_country:{service_code}:{ref}{suffix}", style="success",
         )
 
     # أزرار التنقل
@@ -211,7 +214,7 @@ def countries_price_kb(
 
 def confirm_purchase_kb(
     service_code: str,
-    country_code: str,
+    country_id: int,
     quote_token: str | None = None,
     server_id: int | None = None,
 ) -> InlineKeyboardMarkup:
@@ -220,11 +223,11 @@ def confirm_purchase_kb(
     b = InlineKeyboardBuilder()
     b.button(
         text="✅ تأكيد الشراء الآن",
-        callback_data=f"num_confirm:{service_code}:{country_code}:{quote_token or ''}{suffix}", style="primary",
+        callback_data=f"num_confirm:{service_code}:{country_id}:{quote_token or ''}{suffix}", style="primary",
     )
     b.button(
         text="📦 شراء بالجملة",
-        callback_data=f"num_bulk_start:{service_code}:{country_code}:{quote_token or ''}{suffix}", style="success",
+        callback_data=f"num_bulk_start:{service_code}:{country_id}:{quote_token or ''}{suffix}", style="success",
     )
     b.button(
         text="🔙 تراجع",
@@ -237,7 +240,7 @@ def confirm_purchase_kb(
 
 def bulk_quantity_kb(
     service_code: str,
-    country_code: str,
+    country_id: int,
     quote_token: str | None = None,
     server_id: int | None = None,
 ) -> InlineKeyboardMarkup:
@@ -247,15 +250,15 @@ def bulk_quantity_kb(
     for quantity in (5, 10, 25, 50, 100):
         b.button(
             text=f"{quantity} رقم",
-            callback_data=f"num_bulk_qty:{service_code}:{country_code}:{quantity}{suffix}", style="success",
+            callback_data=f"num_bulk_qty:{service_code}:{country_id}:{quantity}{suffix}", style="success",
         )
     b.button(
         text="✍️ كمية مخصصة",
-        callback_data=f"num_bulk_custom:{service_code}:{country_code}:{quote_token or ''}{suffix}", style="success",
+        callback_data=f"num_bulk_custom:{service_code}:{country_id}:{quote_token or ''}{suffix}", style="success",
     )
     b.button(
         text="🔙 رجوع للسعر",
-        callback_data=f"num_country:{service_code}:{country_code}{suffix}",
+        callback_data=f"num_country:{service_code}:{country_id}{suffix}",
     )
     b.adjust(2, 2, 1, 1, 1)
     return b.as_markup()
@@ -263,7 +266,7 @@ def bulk_quantity_kb(
 
 def bulk_confirm_kb(
     service_code: str,
-    country_code: str,
+    country_id: int,
     quantity: int,
     server_id: int | None = None,
 ) -> InlineKeyboardMarkup:
@@ -272,11 +275,11 @@ def bulk_confirm_kb(
     b = InlineKeyboardBuilder()
     b.button(
         text="✅ تنفيذ الدفعة الآن",
-        callback_data=f"num_bulk_confirm:{service_code}:{country_code}:{quantity}{suffix}", style="primary",
+        callback_data=f"num_bulk_confirm:{service_code}:{country_id}:{quantity}{suffix}", style="primary",
     )
     b.button(
         text="🔢 تغيير الكمية",
-        callback_data=f"num_bulk_start:{service_code}:{country_code}:{suffix}", style="success",
+        callback_data=f"num_bulk_start:{service_code}:{country_id}:{suffix}", style="success",
     )
     b.button(
         text="❌ إلغاء",
@@ -290,11 +293,12 @@ def ready_number_packages_kb(packages: list[dict]) -> InlineKeyboardMarkup:
     """باقات أرقام جاهزة للمستخدمين."""
     b = InlineKeyboardBuilder()
     for package in packages:
+        ref = package.get("country_id") or package["country_code"]
         b.button(
             text=package["label"],
             callback_data=(
                 f"num_bulk_qty:{package['service_code']}:"
-                f"{package['country_code']}:{package['quantity']}"
+                f"{ref}:{package['quantity']}"
             ), style="success",
         )
     b.button(text="🔙 رجوع للقائمة", callback_data="back_to_main")

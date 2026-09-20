@@ -86,6 +86,8 @@ class BoardEntry:
     cost_usd: Decimal
     sell_usd: Decimal
     is_intermittent: bool = False
+    # الرقم الداخلي — هو ما يُرسل بأزرار تيليجرام (callback_data ≤ 64B)
+    cid: int = 0
 
 
 _BOARD_CACHE: dict[str, tuple[float, list[BoardEntry]]] = {}
@@ -237,6 +239,7 @@ async def build_board(session, service, manager=None, use_cache: bool = True, se
                 cost_usd=cost,
                 sell_usd=sell,
                 is_intermittent=is_intermittent_country_code(country.code),
+                cid=country.id,
             )
         )
 

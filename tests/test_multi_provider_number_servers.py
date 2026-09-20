@@ -272,7 +272,9 @@ async def test_each_provider_becomes_its_own_server(two_providers):
 
 
 async def test_each_server_shows_only_its_provider_countries(two_providers):
-    user_id, service, _ = await _seed_catalog()
+    user_id, service, countries = await _seed_catalog()
+    indonesia_id = countries["id"].id
+    usa_id = countries["us"].id
 
     async with async_session_maker() as session:
         user = await session.get(User, user_id)
@@ -284,15 +286,16 @@ async def test_each_server_shows_only_its_provider_countries(two_providers):
             await number_server_picked(callback, session, user)
             boards[provider_value] = _country_callbacks(callback.message.edits[-1][1])
 
+    # المرجع بالزر هو الرقم الداخلي للدولة (callback_data ≤ 64B).
     # 5sim: إندونيسيا (0.10) أرخص من أمريكا (0.50)
     assert boards[ProviderName.FIVESIM.value] == [
-        f"num_country:wa:id:{by_provider[ProviderName.FIVESIM.value].id}",
-        f"num_country:wa:us:{by_provider[ProviderName.FIVESIM.value].id}",
+        f"num_country:wa:{indonesia_id}:{by_provider[ProviderName.FIVESIM.value].id}",
+        f"num_country:wa:{usa_id}:{by_provider[ProviderName.FIVESIM.value].id}",
     ]
     # HeroSMS: أمريكا (0.25) أرخص من إندونيسيا (0.40) — ترتيب معاكس تماماً
     assert boards[ProviderName.HEROSMS.value] == [
-        f"num_country:wa:us:{by_provider[ProviderName.HEROSMS.value].id}",
-        f"num_country:wa:id:{by_provider[ProviderName.HEROSMS.value].id}",
+        f"num_country:wa:{usa_id}:{by_provider[ProviderName.HEROSMS.value].id}",
+        f"num_country:wa:{indonesia_id}:{by_provider[ProviderName.HEROSMS.value].id}",
     ]
 
 

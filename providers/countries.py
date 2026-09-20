@@ -23,6 +23,25 @@ async def get_country_by_code(session, code: str) -> Country | None:
     return result.scalar_one_or_none()
 
 
+async def get_country_by_id(session, country_id: int) -> Country | None:
+    """جلب الدولة برقمها الداخلي — المعرف المستخدم بأزرار تيليجرام
+    (callback_data محدود بـ 64 بايت فلا تتسع الأكواد الطويلة)."""
+    try:
+        return await session.get(Country, int(country_id))
+    except (TypeError, ValueError):
+        return None
+
+
+async def resolve_country(session, ref: str) -> Country | None:
+    """يحل مرجع الدولة: رقم أولاً (الجديد)، ثم الكود (أزرار/روابط قديمة)."""
+    ref = (ref or "").strip()
+    if ref.isdigit():
+        row = await get_country_by_id(session, int(ref))
+        if row is not None:
+            return row
+    return await get_country_by_code(session, ref)
+
+
 async def get_all_countries(session) -> list[Country]:
     """لعرضها بلوحة الأدمن (نشطة وغير نشطة معاً)."""
     result = await session.execute(select(Country).order_by(Country.sort_order, Country.name_ar))
