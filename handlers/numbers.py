@@ -63,6 +63,7 @@ from keyboards.numbers import (
     numbers_hub_kb,
     order_actions_kb,
     code_received_kb,
+    after_number_order_kb,
     ready_number_packages_kb,
 )
 from keyboards.main_menu import insufficient_balance_kb, back_to_main_kb
@@ -782,7 +783,7 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
         f"↩️ المسترجع لرصيدك: <b>{result['refunded_usd']}$</b>\n\n"
         "سيتم إرسال الأكواد فور وصولها."
     )
-    await callback.message.answer(text)
+    await callback.message.answer(text, reply_markup=after_number_order_kb())
 
     if result["orders"]:
         csv_data = BulkNumberService.export_csv(result["orders"])
@@ -1079,7 +1080,8 @@ async def cancel_order_manual(callback: CallbackQuery, session, db_user: User):
 
     try:
         await callback.message.edit_text(
-            f"❌ تم إلغاء الطلب واسترجاع <b>{order.price_sell_usd}$</b> إلى رصيدك."
+            f"❌ تم إلغاء الطلب واسترجاع <b>{order.price_sell_usd}$</b> إلى رصيدك.",
+            reply_markup=after_number_order_kb(),
         )
     except TelegramBadRequest:
         pass
@@ -1129,3 +1131,7 @@ async def finish_order_manual(callback: CallbackQuery, session, db_user: User):
         await callback.message.edit_reply_markup(reply_markup=None)
     except TelegramBadRequest:
         pass
+    await callback.message.answer(
+        "يمكنك شراء رقم آخر أو العودة للقائمة الرئيسية:",
+        reply_markup=after_number_order_kb(),
+    )

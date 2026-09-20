@@ -302,6 +302,21 @@ def ready_number_packages_kb(packages: list[dict]) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def after_number_order_kb() -> InlineKeyboardMarkup:
+    """أزرار التنقل بعد انتهاء طلب الرقم (شراء آخر / رئيسية)."""
+    b = InlineKeyboardBuilder()
+    b.button(
+        text="🔄 شراء رقم آخر",
+        callback_data="num_hub", style="success",
+    )
+    b.button(
+        text="🏠 القائمة الرئيسية",
+        callback_data="back_to_main",
+    )
+    b.adjust(1)
+    return b.as_markup()
+
+
 def order_actions_kb(order_id: int) -> InlineKeyboardMarkup:
     """أزرار أثناء انتظار وصول الكود."""
     b = InlineKeyboardBuilder()
@@ -312,6 +327,14 @@ def order_actions_kb(order_id: int) -> InlineKeyboardMarkup:
     b.button(
         text="❌ إلغاء واسترجاع الرصيد",
         callback_data=f"num_cancel:{order_id}", style="danger",
+    )
+    b.button(
+        text="🔄 شراء رقم آخر",
+        callback_data="num_hub",
+    )
+    b.button(
+        text="🏠 القائمة الرئيسية",
+        callback_data="back_to_main",
     )
     b.adjust(1)
     return b.as_markup()
@@ -327,6 +350,14 @@ def code_received_kb(order_id: int) -> InlineKeyboardMarkup:
     b.button(
         text="✅ انتهيت",
         callback_data=f"num_finish:{order_id}", style="success",
+    )
+    b.button(
+        text="🔄 شراء رقم آخر",
+        callback_data="num_hub",
+    )
+    b.button(
+        text="🏠 القائمة الرئيسية",
+        callback_data="back_to_main",
     )
     b.adjust(1)
     return b.as_markup()

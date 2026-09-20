@@ -860,7 +860,8 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                             f"🆔 رقم الطلب: #{order.id}\n"
                             f"💰 المبلغ: {final_price}$\n\n"
                             "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
-                            "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله."
+                            "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله.",
+                            reply_markup=back_to_main_kb(),
                         )
                         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -917,7 +918,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                     await notifier.notify_admin(
                         '🚨 <b>فشل إرسال طلب للمزود</b>\n\n'
                         f'🔌 المزود: <b>{esc(provider_name)}</b>\n'
-                        f'📦 المنتج: {esc(product.name_ar)}\n'
+                        f'📦 المنتج: <b>{esc(product.name_ar)}</b>\n'
                         f'👤 المستخدم: <code>{db_user.telegram_id}</code>\n'
                         f'⚠️ الخطأ: <code>{e}</code>\n\n'
                         '🛠 <b>الحل:</b> تحقق من آيدي الخدمة عند المزود، وصحة الرابط/الكمية، وحالة المزود. تم استرجاع رصيد المستخدم.'
@@ -956,7 +957,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                 'خارج البوت وستصلك رسالة فور اكتمال التنفيذ أو الاسترجاع.'
             )
         result_text += '\nستصلك إشعارات بتحديث حالة طلبك.'
-    await callback.message.answer(result_text)
+    await callback.message.answer(result_text, reply_markup=back_to_main_kb())
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
