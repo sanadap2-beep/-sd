@@ -57,15 +57,20 @@ class GrizzlyProvider(BaseProvider):
         params = {"api_key": self.api_key, **params}
         async with _GRIZZLY_SEMAPHORE:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    GRIZZLY_BASE,
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        raise ProviderAPIError(f"Grizzly error {resp.status}: {text[:300]}")
-                    return text.strip()
+                for attempt in range(3):
+                    async with session.get(
+                        GRIZZLY_BASE,
+                        params=params,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                    ) as resp:
+                        text = await resp.text()
+                        if resp.status in (429, 503) and attempt < 2:
+                            await _asyncio.sleep(2 * (attempt + 1))
+                            continue
+                        if resp.status != 200:
+                            raise ProviderAPIError(f"Grizzly error {resp.status}: {text[:300]}")
+                        return text.strip()
+        raise ProviderAPIError("Grizzly: تعذر الاتصال بعد عدة محاولات")
 
     async def get_balance(self) -> Decimal:
         result = await self._request({"action": "getBalance"})

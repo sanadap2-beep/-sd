@@ -16,6 +16,7 @@
 
 import logging
 from decimal import Decimal
+from time import monotonic
 
 import aiohttp
 
@@ -27,10 +28,13 @@ logger = logging.getLogger(__name__)
 FIVESIM_BASE = "https://5sim.net/v1/"
 
 # حد 5sim: 100 طلب/ثانية لكل IP ثم حظر مؤقت — نمرر الطلبات عبر
-# بوابة واحدة حتى لا يحظر السحب/اللوحة أنفسهما بالطلبات المتوازية.
+# بوابة واحدة مع إعادة محاولة عند 429/503.
 import asyncio as _asyncio
 
 _FIVESIM_SEMAPHORE = _asyncio.Semaphore(5)
+# لقطة الأسعار الجماعية: طلب واحد لكل منتج يكفي اللوحة كلها (122 دولة
+# = طلب واحد بدل 122) — صالحة دقيقتين.
+_BULK_TTL_SECONDS = 120
 
 
 class ProviderAPIError(Exception):
@@ -45,24 +49,31 @@ class FiveSimProvider(BaseProvider):
             "Authorization": f"Bearer {settings.FIVESIM_API_KEY}",
             "Accept": "application/json",
         }
+        # {product: (timestamp, {slug: operators})}
+        self._bulk: dict[str, tuple[float, dict]] = {}
 
     async def _request(self, method: str, path: str, **kwargs):
         url = FIVESIM_BASE + path
         async with _FIVESIM_SEMAPHORE:
             async with aiohttp.ClientSession(headers=self.headers) as session:
-                async with session.request(
-                    method,
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=20),
-                    **kwargs,
-                ) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        raise ProviderAPIError(f"5sim error {resp.status}: {text[:200]}")
-                    try:
-                        return await resp.json(content_type=None)
-                    except Exception:
-                        return text
+                for attempt in range(3):
+                    async with session.request(
+                        method,
+                        url,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                        **kwargs,
+                    ) as resp:
+                        text = await resp.text()
+                        if resp.status in (429, 503) and attempt < 2:
+                            await _asyncio.sleep(2 * (attempt + 1))
+                            continue
+                        if resp.status != 200:
+                            raise ProviderAPIError(f"5sim error {resp.status}: {text[:200]}")
+                        try:
+                            return await resp.json(content_type=None)
+                        except Exception:
+                            return text
+        raise ProviderAPIError("5sim: تعذر الاتصال بعد عدة محاولات")
 
     @staticmethod
     def _to_usd(value) -> Decimal | None:
@@ -114,28 +125,50 @@ class FiveSimProvider(BaseProvider):
             return None
         return node.get(str(service))
 
+    async def _bulk_snapshot(self, product: str) -> dict:
+        """لقطة أسعار كل الدول لمنتج واحد (طلب واحد، صالحة دقيقتين).
+
+        اللوحة كانت تجلب 122 طلباً حياً دفعة واحدة فيتعرض معظمها للحظر
+        الجزئي فتظهر دول قليلة — الآن طلب واحد يكفي الجميع.
+        """
+        now = monotonic()
+        cached = self._bulk.get(str(product))
+        if cached and now - cached[0] < _BULK_TTL_SECONDS:
+            return cached[1]
+        data = await self._request("GET", f"guest/prices?product={product}")
+        node = data.get(str(product)) if isinstance(data, dict) else None
+        node = node if isinstance(node, dict) else {}
+        self._bulk[str(product)] = (now, node)
+        return node
+
+    @staticmethod
+    def _cheapest(ops) -> Decimal | None:
+        if not isinstance(ops, dict):
+            return None
+        cheapest = None
+        for info in ops.values():
+            if not isinstance(info, dict):
+                continue
+            try:
+                count = int(info.get("count", 0) or 0)
+                cost = Decimal(str(info.get("cost", 0)))
+            except Exception:
+                continue
+            if count > 0 and cost > 0 and (cheapest is None or cost < cheapest):
+                cheapest = cost
+        return cheapest.quantize(Decimal("0.0001")) if cheapest is not None else None
+
     async def get_price(self, country: str, service: str) -> Decimal | None:
         try:
+            node = await self._bulk_snapshot(service)
+            price = self._cheapest(node.get(str(country)))
+            if price is not None:
+                return price
+            # اللقطة لا تحوي الدولة (اسم بديل؟) — طلب مباشر احتياطي
             data = await self._request("GET", f"guest/prices?country={country}&product={service}")
+            return self._cheapest(self._extract_service_node(data, country, service))
         except Exception as e:
             logger.debug(f"5sim get_price error (country={country}, service={service}): {e}")
-            return None
-        try:
-            service_node = self._extract_service_node(data, country, service)
-            if not isinstance(service_node, dict):
-                return None
-            cheapest = None
-            for operator, info in service_node.items():
-                if not isinstance(info, dict):
-                    continue
-                if int(info.get("count", 0) or 0) > 0:
-                    cost_usd = self._to_usd(info.get("cost"))
-                    if cost_usd is not None and cost_usd > 0 and (
-                        cheapest is None or cost_usd < cheapest
-                    ):
-                        cheapest = cost_usd
-            return cheapest
-        except (KeyError, TypeError, ValueError):
             return None
 
     async def buy_number(
