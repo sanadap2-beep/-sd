@@ -25,6 +25,8 @@ import json
 import logging
 from decimal import Decimal
 
+import asyncio as _asyncio
+
 import aiohttp
 
 from providers.base import BaseProvider, PurchasedNumber, OrderStatusResult
@@ -33,6 +35,10 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 GRIZZLY_BASE = "https://api.grizzlysms.com/stubs/handler_api.php"
+
+# بوابة طلبات واحدة: فحص 150 دولة × خدمتين بالتوازي الكامل قد
+# يُقابل بحد مزود — نحد التوازي بدل الحظر.
+_GRIZZLY_SEMAPHORE = _asyncio.Semaphore(5)
 
 
 class ProviderAPIError(Exception):
@@ -49,16 +55,17 @@ class GrizzlyProvider(BaseProvider):
         if not self.api_key:
             raise ProviderAPIError("GRIZZLY_API_KEY غير مضبوط في الإعدادات")
         params = {"api_key": self.api_key, **params}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                GRIZZLY_BASE,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as resp:
-                text = await resp.text()
-                if resp.status != 200:
-                    raise ProviderAPIError(f"Grizzly error {resp.status}: {text[:300]}")
-                return text.strip()
+        async with _GRIZZLY_SEMAPHORE:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    GRIZZLY_BASE,
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        raise ProviderAPIError(f"Grizzly error {resp.status}: {text[:300]}")
+                    return text.strip()
 
     async def get_balance(self) -> Decimal:
         result = await self._request({"action": "getBalance"})
