@@ -117,26 +117,63 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
     remaining = [c for c in await TgReadyService.stock_overview(session) if c["key"] == key]
     left = remaining[0]["stock"] if remaining else 0
 
+    import json as _json
+
+    from services.tg_ready_service import build_account_zip, extract_login_link
+
+    login_link = extract_login_link(payload)
+    login_link_line = f"\n🔑 <b>رابط كود الدخول:</b> {login_link}" if login_link else ""
+    try:
+        rel_paths = _json.loads(item.files_json) if item.files_json else []
+    except (ValueError, TypeError):
+        rel_paths = []
+
+    if rel_paths:
+        how_to = (
+            "📁 <b>طريقة الدخول (بدون كود):</b>\n"
+            "1) حمّل ملف الـ ZIP تحت وفك ضغطه\n"
+            "2) حط مجلد الجلسة (tdata) جنب برنامج تيليجرام ديسكتوب وافتحه — بيدخل مباشرة\n"
+            "3) إذا طلب كلمة 2FA بتلاقيها بسطر البيانات فوق"
+        )
+    else:
+        how_to = (
+            "🔢 <b>طريقة الدخول بالرقم:</b>\n"
+            "1) افتح تيليجرام وحط الرقم فوق\n"
+            f"2) جيب كود الدخول من الرابط تحت{'' if login_link else ' (من صفحة طلبك عند البائع)'}\n"
+            "3) حطه بتيليجرام ثم كلمة 2FA إن طُلبت"
+        )
+
     await callback.message.answer(
         f"✅ <b>تم الشراء بنجاح!</b>\n\n"
         f"{item.flag} <b>{item.country_name_ar}</b>\n"
         f"📱 الرقم: <code>{item.phone_number}</code>\n"
         f"💰 السعر: <b>{price}$</b>\n"
         f"📦 المتبقي من هذه الدولة: <b>{left}</b>\n\n"
-        f"📎 <b>بيانات الجلسة:</b>\n<code>{payload}</code>\n\n"
+        f"📎 <b>بيانات الجلسة:</b>\n<code>{payload}</code>"
+        f"{login_link_line}\n\n"
+        f"{how_to}\n\n"
         "⚠️ سجّل الدخول فوراً واحفظ البيانات. الدعم خلال 24 ساعة للاستبدال.",
         reply_markup=tg_ready_after_kb(),
     )
-    # نسخة ملف للتحميل السريع
+    # تسليم الملفات: أرشيف ZIP بملفات الجلسة الفعلية إن وُجدت، وإلا ملف نصي.
     try:
-        await bot.send_document(
-            chat_id=db_user.telegram_id,
-            document=BufferedInputFile(
-                f"رقم: {item.phone_number}\nالدولة: {item.country_name_ar}\n\n{payload}\n".encode("utf-8-sig"),
-                filename=f"telegram_session_{item.phone_number.replace('+', '')}.txt",
-            ),
-            caption="📎 ملف بيانات الجلسة — احتفظ به بمكان آمن",
-        )
+        built = build_account_zip(item.phone_number, rel_paths) if rel_paths else None
+        if built is not None:
+            fname, blob = built
+            await bot.send_document(
+                chat_id=db_user.telegram_id,
+                document=BufferedInputFile(blob, filename=fname),
+                caption="📁 ملفات الجلسة — فك الضغط وسجّل الدخول مباشرة بلا كود",
+            )
+        else:
+            await bot.send_document(
+                chat_id=db_user.telegram_id,
+                document=BufferedInputFile(
+                    f"رقم: {item.phone_number}\nالدولة: {item.country_name_ar}\n\n{payload}\n".encode("utf-8-sig"),
+                    filename=f"telegram_session_{item.phone_number.replace('+', '')}.txt",
+                ),
+                caption="📎 ملف بيانات الجلسة — احتفظ به بمكان آمن",
+            )
     except Exception:
         pass
 

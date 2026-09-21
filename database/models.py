@@ -2344,6 +2344,9 @@ class TgReadyItem(Base):
     price_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
     # بيانات الجلسة مشفرة (سطر الملف الأصلي: رقم|سيشن|2FA...) — لا تظهر للأدمن
     payload_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ملفات الجلسة الفعلية (tdata/session) مخزنة على القرص:
+    # JSON لقائمة مسارات نسبية تحت data/tg_ready/<batch>/<phone>/ — تُسلَّم ZIP للزبون.
+    files_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     batch_id: Mapped[int | None] = mapped_column(
         ForeignKey("tg_ready_batches.id", ondelete="SET NULL"), nullable=True
     )

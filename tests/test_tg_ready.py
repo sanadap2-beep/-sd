@@ -7,10 +7,14 @@ from decimal import Decimal
 
 from database.engine import async_session_maker
 from services.tg_ready_service import (
+    build_account_zip,
     calc_sell_price,
     detect_country,
+    extract_login_link,
+    extract_zip_files,
     parse_text_entries,
     parse_uploaded_file,
+    save_account_files,
     TgReadyService,
 )
 
@@ -51,6 +55,41 @@ def test_parse_zip_by_filename():
     entries = parse_uploaded_file("batch.zip", buf.getvalue())
     phones = sorted(e.phone for e in entries)
     assert phones == ["+14155550123", "+963944000002"]
+
+
+def test_extract_zip_files_groups_blobs_per_phone(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    import services.tg_ready_service as mod
+
+    monkeypatch.setattr(mod, "READY_FILES_ROOT", tmp_path)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("+14155550123/tdata/D15", "tdata-bytes")
+        zf.writestr("+14155550123/session.json", '{"phone": "+14155550123"}')
+    files_map = extract_zip_files(buf.getvalue())
+    assert set(files_map) == {"+14155550123"}
+    assert len(files_map["+14155550123"]) == 2
+
+    saved = save_account_files(99, "+14155550123", files_map["+14155550123"])
+    assert len(saved) == 2
+    built = build_account_zip("+14155550123", saved)
+    assert built is not None
+    fname, blob = built
+    assert fname == "telegram_session_14155550123.zip"
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        names = zf.namelist()
+    assert len(names) == 2
+    assert all(n.startswith("14155550123/") for n in names)
+
+
+def test_extract_login_link():
+    assert (
+        extract_login_link("+1415|https://datamoll.com/order/abc login")
+        == "https://datamoll.com/order/abc"
+    )
+    assert extract_login_link("+14155550123|just text") is None
 
 
 async def test_import_groups_countries_and_buy_decrements_stock():

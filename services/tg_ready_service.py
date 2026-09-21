@@ -366,6 +366,97 @@ def parse_uploaded_file(filename: str, raw: bytes) -> list[ParsedEntry]:
         return parse_text_entries(raw.decode("utf-8", errors="ignore"))
 
 
+# ── ملفات الجلسة الفعلية (tdata/session) لكل رقم ──
+
+#: جذر تخزين ملفات الجلسات (مجلد data/ مُتجاهَل من git — لا يُرفع للمستودع).
+READY_FILES_ROOT = Path("data/tg_ready")
+
+#: حد أقصى لحجم ملف واحد داخل ZIP (25MB) حتى لا يمتلئ القرص بملف مفخخ.
+MAX_ONE_FILE_BYTES = 25 * 1024 * 1024
+
+
+def _safe_phone_dir(phone: str) -> str:
+    return re.sub(r"\D", "", phone or "unknown") or "unknown"
+
+
+def extract_zip_files(raw: bytes) -> dict[str, list[tuple[str, bytes]]]:
+    """يستخرج ملفات كل حساب من ZIP مرفوع: {phone: [(اسم الملف, المحتوى)]}.
+
+    التجميع برقم الهاتف المكتشف من مسار الملف (مجلد الحساب عادة اسمه الرقم).
+    الملفات النصية الصغيرة التي لا يُكتشف رقمها من اسمها تُنسب لأول رقم
+    يُكتشف داخل محتواها، وما عداها يُتجاهل.
+    """
+    out: dict[str, list[tuple[str, bytes]]] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            for info in zf.infolist():
+                if info.is_dir() or info.file_size > MAX_ONE_FILE_BYTES:
+                    continue
+                phone = _norm_phone(info.filename)
+                try:
+                    blob = zf.read(info.filename)
+                except Exception:
+                    continue
+                if not phone and info.file_size < 20000:
+                    phone = _norm_phone(blob[:4000].decode("utf-8", errors="ignore"))
+                if not phone:
+                    continue
+                out.setdefault(phone, []).append((Path(info.filename).name or "file", blob))
+    except zipfile.BadZipFile:
+        return {}
+    return out
+
+
+def save_account_files(batch_id: int, phone: str, files: list[tuple[str, bytes]]) -> list[str]:
+    """يحفظ ملفات حساب واحد على القرص ويرجع مساراتها النسبية."""
+    phone_dir = READY_FILES_ROOT / str(batch_id) / _safe_phone_dir(phone)
+    phone_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[str] = []
+    seen_names: set[str] = set()
+    for raw_name, blob in files:
+        name = re.sub(r"[^\w.\-() ]", "_", raw_name or "file")[:120] or "file"
+        if name in seen_names:
+            stem, dot, ext = name.partition(".")
+            name = f"{stem}_{len(seen_names)}{('.' + ext) if dot else ''}"
+        seen_names.add(name)
+        dest = phone_dir / name
+        # حماية traversal: البقاء داخل مجلد الحساب حصراً
+        if phone_dir not in dest.resolve().parents and dest.resolve() != phone_dir:
+            dest = phone_dir / "file"
+        dest.write_bytes(blob)
+        saved.append(str(dest.relative_to(READY_FILES_ROOT)))
+    return saved
+
+
+def build_account_zip(phone: str, rel_paths: list[str]) -> tuple[str, bytes] | None:
+    """يجمع ملفات الحساب المخزنة بأرشيف ZIP واحد جاهز للتسليم."""
+    if not rel_paths:
+        return None
+    buf = io.BytesIO()
+    added = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel in rel_paths:
+            src = READY_FILES_ROOT / rel
+            try:
+                if not src.is_file() or src.stat().st_size > MAX_ONE_FILE_BYTES:
+                    continue
+                # داخل الأرشيف: مجلد باسم الرقم حتى لا تختلط الملفات عند الفك
+                zf.writestr(f"{_safe_phone_dir(phone)}/{src.name}", src.read_bytes())
+                added += 1
+            except OSError:
+                continue
+    if not added:
+        return None
+    fname = f"telegram_session_{_safe_phone_dir(phone)}.zip"
+    return fname, buf.getvalue()
+
+
+def extract_login_link(payload: str) -> str | None:
+    """يستخرج رابط كود الدخول (login-code link) من سطر البيانات إن وُجد."""
+    m = re.search(r"https?://[^\s'\"<>]+", payload or "")
+    return m.group(0) if m else None
+
+
 class TgReadyService:
     MARGIN_KEY = "tg_ready_margin_percent"
 
@@ -458,8 +549,16 @@ class TgReadyService:
         margin_percent: Decimal,
         file_name: str = "",
         created_by: int | None = None,
+        files_map: dict[str, list[tuple[str, bytes]]] | None = None,
     ) -> dict:
-        """يفرز الملف تلقائياً: دولة + علم + سعر لكل مجموعة، ويسجّل المخزون."""
+        """يفرز الملف تلقائياً: دولة + علم + سعر لكل مجموعة، ويسجّل المخزون.
+
+        files_map (اختياري، من extract_zip_files): ملفات الجلسة الفعلية لكل
+        رقم — تُحفظ على القرص تحت data/tg_ready وتُسلَّم ZIP للمشتري، فيدخل
+        الزبون بالملف مباشرة بلا انتظار أي كود.
+        """
+        import json as _json
+
         from database.models import TgReadyBatch, TgReadyCountry, TgReadyItem, TgReadyItemStatus
         from services.encryption_service import EncryptionService
 
@@ -497,6 +596,14 @@ class TgReadyService:
                 enc = EncryptionService.encrypt(e.payload)
             except Exception:
                 enc = None
+            files_json = None
+            if files_map and e.phone in files_map:
+                try:
+                    saved = save_account_files(batch.id, e.phone, files_map[e.phone])
+                    if saved:
+                        files_json = _json.dumps(saved, ensure_ascii=False)
+                except OSError:
+                    files_json = None
             session.add(
                 TgReadyItem(
                     phone_number=e.phone,
@@ -506,6 +613,7 @@ class TgReadyService:
                     cost_usd=cost_usd,
                     price_usd=sell,
                     payload_encrypted=enc,
+                    files_json=files_json,
                     batch_id=batch.id,
                     status=TgReadyItemStatus.AVAILABLE,
                 )
@@ -540,7 +648,21 @@ class TgReadyService:
         batch.added_count = added
         batch.skipped_dupes = dupes
         await session.commit()
-        return {"added": added, "dupes": dupes, "countries": per_country, "sell": sell}
+        with_files = (
+            await session.execute(
+                select(func.count(TgReadyItem.id)).where(
+                    TgReadyItem.batch_id == batch.id,
+                    TgReadyItem.files_json.is_not(None),
+                )
+            )
+        ).scalar_one()
+        return {
+            "added": added,
+            "dupes": dupes,
+            "countries": per_country,
+            "sell": sell,
+            "with_files": int(with_files),
+        }
 
     @staticmethod
     async def buy_one(session, user_id: int, country_key: str):
