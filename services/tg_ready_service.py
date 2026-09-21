@@ -260,13 +260,19 @@ class ParsedEntry:
 def _norm_phone(raw: str) -> str | None:
     if not raw:
         return None
-    m = PHONE_RE.search(raw.replace(" ", ""))
-    if not m:
+    compact = (raw or "").replace(" ", "")
+    # الأفضل: رقم بصيغة دولية صريحة (+...) — كما في صيغة المورّد |+63...|
+    m = re.search(r"\+(\d{7,15})", compact)
+    if m:
+        return "+" + m.group(1)
+    # وإلا: كل المرشحات الرقمية، ونفضّل الأطول (رقم الهاتف أطول من بقايا hash)
+    # مع تجاهل الأرقام الطويلة جداً داخل base64 (أكثر من 15 رقماً متتالياً ليست هاتفاً).
+    cands = re.findall(r"(?<!\d)(\d{7,15})(?!\d)", compact)
+    if not cands:
         return None
-    digits = m.group(1)
-    if not (7 <= len(digits) <= 15):
-        return None
-    return "+" + digits
+    # رتّب بالأطول أولاً ثم الأقرب لبداية الرقم الدولي المعروف
+    cands = sorted(set(cands), key=len, reverse=True)
+    return "+" + cands[0]
 
 
 def parse_text_entries(text: str) -> list[ParsedEntry]:
@@ -537,7 +543,7 @@ def extract_twofa(payload: str) -> str | None:
 
 
 def parse_login_codes(text: str) -> list[str]:
-    """يستخرج أكواد الدخول (5-6 أرقام) من صفحة الكود."""
+    """يستخرج أكواد الدخول (5-6 أرقام) من صفحة الكود (للمورّدين العامّين)."""
     if not text:
         return []
     # أكواد تيليجرام عادة 5 أرقام
@@ -554,6 +560,85 @@ def parse_login_codes(text: str) -> list[str]:
         scored.append((score, c))
     scored.sort(key=lambda x: (-x[0], text.find(x[1])))
     return [c for _, c in scored]
+
+
+def dl_cloude_base(code_url: str) -> tuple[str, str] | None:
+    """يستخرج (base, code_id) من رابط كود dl-cloude بصيغة /c/{id}.
+
+    مثال: https://dl-cloude.org/c/ABC123 -> (https://dl-cloude.org/c/ABC123, ABC123)
+    يرجع None إن لم تكن الصيغة مطابقة.
+    """
+    if not code_url:
+        return None
+    m = re.search(r"(https?://[^/]+)/c/([A-Za-z0-9_\-]+)", (code_url or "").strip().rstrip("/"))
+    if not m:
+        return None
+    host = m.group(1).rstrip("/")
+    cid = m.group(2)
+    return f"{host}/c/{cid}", cid
+
+
+async def _fetch_json(url: str, timeout_s: int = 20, method: str = "GET") -> dict | None:
+    """GET/POST خفيف يرجع JSON كـ dict أو None عند الفشل."""
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+            headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
+        ) as sess:
+            if method.upper() == "POST":
+                ctx = sess.post(url, allow_redirects=True)
+            else:
+                ctx = sess.get(url, allow_redirects=True)
+            async with ctx as resp:
+                if resp.status != 200:
+                    return None
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    return None
+                return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+async def fetch_dl_cloude_code(code_url: str, timeout_s: int = 25) -> dict:
+    """يجلب الكود من مورّد dl-cloude عبر API الحقيقي (وليس HTML).
+
+    الصفحة تعمل بالJS: POST /c/{id}/code ثم GET /c/{id}/twofa.
+    يرجع: {"status": delivered|already_used|rate_limited|timeout|pending|fetch_failed,
+            "code": str|None, "twofa": str|None, "retry_after": int, "base": str}
+    """
+    info = dl_cloude_base(code_url or "")
+    if not info:
+        return {"status": "not_dl_cloude", "code": None, "twofa": None, "retry_after": 0, "base": None}
+    base, _cid = info
+    data = await _fetch_json(f"{base}/code", timeout_s=timeout_s, method="POST")
+    if not data:
+        return {"status": "fetch_failed", "code": None, "twofa": None, "retry_after": 0, "base": base}
+    status = str(data.get("status") or "").lower() or "unknown"
+    code = data.get("code")
+    code_s = str(code).strip() if code is not None else None
+    if code_s and not re.fullmatch(r"\d{4,8}", code_s):
+        # المورّد يرسل الكود رقمياً فقط — غير ذلك تجاهله
+        code_s = None
+    retry_after = 0
+    try:
+        retry_after = int(data.get("retry_after") or 0)
+    except (ValueError, TypeError):
+        retry_after = 0
+    twofa: str | None = None
+    # كلمة 2FA متوفرة عبر endpoint مستقل — نجلبها عند نجاح الكود أو دائماً
+    try:
+        t = await _fetch_json(f"{base}/twofa", timeout_s=timeout_s, method="GET")
+        if t and t.get("password"):
+            twofa = str(t["password"]).strip() or None
+    except Exception:
+        twofa = None
+    return {"status": status, "code": code_s, "twofa": twofa, "retry_after": retry_after, "base": base}
 
 
 async def fetch_url_text(url: str, timeout_s: int = 20, max_chars: int = 200_000) -> str | None:
@@ -587,22 +672,54 @@ async def fetch_url_text(url: str, timeout_s: int = 20, max_chars: int = 200_000
         return None
 
 
-async def fetch_code_for_payload(payload: str, timeout_s: int = 20) -> dict:
+async def fetch_code_for_payload(payload: str, timeout_s: int = 25) -> dict:
     """يجلب الكود الجاهز من رابط الكود داخل السطر.
 
-    يرجع: {"ok": bool, "codes": [...], "raw_excerpt": str, "code_url": str|None, "error": str}
+    يدعم مورّد dl-cloude عبر API الحقيقي (POST /c/{id}/code + GET /twofa)،
+    وأي مورّد آخر عبر قراءة HTML واستخراج 5-6 أرقام.
+
+    يرجع: {"ok": bool, "codes": [...], "raw_excerpt": str, "code_url": str|None,
+            "error": str, "twofa_remote": str|None, "retry_after": int}
+    أخطاء error: no_code_link|fetch_failed|no_code_yet|already_used|rate_limited
     """
     code_url = extract_code_link(payload or "")
     if not code_url:
-        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": None, "error": "no_code_link"}
+        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": None,
+                "error": "no_code_link", "twofa_remote": None, "retry_after": 0}
+    # 1) مورّد dl-cloude (/c/...) — API حقيقي عبر POST
+    if dl_cloude_base(code_url):
+        res = await fetch_dl_cloude_code(code_url, timeout_s=timeout_s)
+        st = res.get("status") or ""
+        if st == "delivered" and res.get("code"):
+            return {"ok": True, "codes": [str(res["code"])], "raw_excerpt": "",
+                    "code_url": code_url, "error": "",
+                    "twofa_remote": res.get("twofa"), "retry_after": 0}
+        if st == "already_used":
+            return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url,
+                    "error": "already_used", "twofa_remote": res.get("twofa"), "retry_after": 0}
+        if st == "rate_limited":
+            return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url,
+                    "error": "rate_limited", "twofa_remote": res.get("twofa"),
+                    "retry_after": int(res.get("retry_after") or 0)}
+        if st in ("timeout", "pending"):
+            return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url,
+                    "error": "no_code_yet", "twofa_remote": res.get("twofa"), "retry_after": 0}
+        if st == "fetch_failed":
+            return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url,
+                    "error": "fetch_failed", "twofa_remote": None, "retry_after": 0}
+        # حالة غير معروفة — نسقط للقراءة العامة كاحتياط
+    # 2) مورّدون عامّون — قراءة الصفحة واستخراج الكود
     page = await fetch_url_text(code_url, timeout_s=timeout_s)
     if not page:
-        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url, "error": "fetch_failed"}
+        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url,
+                "error": "fetch_failed", "twofa_remote": None, "retry_after": 0}
     codes = parse_login_codes(page)
     excerpt = re.sub(r"\s+", " ", page)[:500]
     if codes:
-        return {"ok": True, "codes": codes, "raw_excerpt": excerpt, "code_url": code_url, "error": ""}
-    return {"ok": False, "codes": [], "raw_excerpt": excerpt, "code_url": code_url, "error": "no_code_yet"}
+        return {"ok": True, "codes": codes, "raw_excerpt": excerpt, "code_url": code_url,
+                "error": "", "twofa_remote": None, "retry_after": 0}
+    return {"ok": False, "codes": [], "raw_excerpt": excerpt, "code_url": code_url,
+            "error": "no_code_yet", "twofa_remote": None, "retry_after": 0}
 
 
 async def download_file_bytes(url: str, timeout_s: int = 30, max_bytes: int = 25 * 1024 * 1024) -> bytes | None:

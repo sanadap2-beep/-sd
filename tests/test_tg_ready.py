@@ -10,6 +10,9 @@ from services.tg_ready_service import (
     build_account_zip,
     calc_sell_price,
     detect_country,
+    dl_cloude_base,
+    extract_code_link,
+    extract_file_link,
     extract_login_link,
     extract_zip_files,
     parse_text_entries,
@@ -90,6 +93,59 @@ def test_extract_login_link():
         == "https://datamoll.com/order/abc"
     )
     assert extract_login_link("+14155550123|just text") is None
+
+
+def test_supplier_line_file_phone_code():
+    line = (
+        "https://dl-cloude.org/files/C1YlaNBn10woHlYTIT2_gg97SkvRbil0NSM6b9EPjFU"
+        "|+639557095073"
+        "|https://dl-cloude.org/c/W_TvrreSHMs7LmAXXa82c1Nx7fykXfPY"
+    )
+    entries = parse_text_entries(line)
+    assert [e.phone for e in entries] == ["+639557095073"]
+    assert entries[0].payload == line[:2000]
+    assert extract_file_link(line) == (
+        "https://dl-cloude.org/files/C1YlaNBn10woHlYTIT2_gg97SkvRbil0NSM6b9EPjFU"
+    )
+    assert extract_code_link(line) == "https://dl-cloude.org/c/W_TvrreSHMs7LmAXXa82c1Nx7fykXfPY"
+    base, cid = dl_cloude_base(extract_code_link(line))
+    assert base == "https://dl-cloude.org/c/W_TvrreSHMs7LmAXXa82c1Nx7fykXfPY"
+    assert cid == "W_TvrreSHMs7LmAXXa82c1Nx7fykXfPY"
+
+
+async def test_fetch_dl_cloude_code_delivered(monkeypatch):
+    import services.tg_ready_service as mod
+
+    async def fake_fetch_json(url, timeout_s=20, method="GET"):
+        if url.endswith("/code") and method == "POST":
+            return {"status": "delivered", "code": "47291"}
+        if url.endswith("/twofa"):
+            return {"password": "secret123"}
+        return None
+
+    monkeypatch.setattr(mod, "_fetch_json", fake_fetch_json)
+    res = await mod.fetch_code_for_payload(
+        "https://dl-cloude.org/files/abc|+639557095073|https://dl-cloude.org/c/XYZ123"
+    )
+    assert res["ok"] is True
+    assert res["codes"] == ["47291"]
+    assert res["twofa_remote"] == "secret123"
+
+
+async def test_fetch_dl_cloude_code_pending(monkeypatch):
+    import services.tg_ready_service as mod
+
+    async def fake_fetch_json(url, timeout_s=20, method="GET"):
+        if url.endswith("/code") and method == "POST":
+            return {"status": "pending"}
+        return None
+
+    monkeypatch.setattr(mod, "_fetch_json", fake_fetch_json)
+    res = await mod.fetch_code_for_payload(
+        "https://dl-cloude.org/files/abc|+639557095073|https://dl-cloude.org/c/XYZ123"
+    )
+    assert res["ok"] is False
+    assert res["error"] == "no_code_yet"
 
 
 async def test_import_groups_countries_and_buy_decrements_stock():

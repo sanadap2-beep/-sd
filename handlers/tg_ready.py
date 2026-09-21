@@ -131,35 +131,30 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
     code_link = extract_code_link(payload)
     file_link = extract_file_link(payload)
     twofa = extract_twofa(payload)
-    code_line = f"\n🔑 <b>رابط الكود:</b> {code_link}" if code_link else ""
-    file_line = f"\n📁 <b>رابط ملف الجلسة ZIP:</b> {file_link}" if file_link else ""
-    twofa_line = f"\n🔐 <b>كلمة التحقق 2FA:</b> <code>{twofa}</code>" if twofa else ""
     try:
         rel_paths = _json.loads(item.files_json) if item.files_json else []
     except (ValueError, TypeError):
         rel_paths = []
 
-    if rel_paths:
+    # رسالة مبسطة: الرقم + خطوتان فقط (بدون إغراق المستخدم بالروابط الخام).
+    # ملف ZIP يُرسل تلقائياً بالأسفل، والكود يُجلب بزر «طلب الكود».
+    has_session_file = bool(rel_paths) or bool(file_link)
+    twofa_line = f"\n🔐 <b>كلمة 2FA:</b> <code>{twofa}</code>" if twofa else ""
+    if has_session_file:
         how_to = (
-            "📁 <b>طريقة الدخول (بدون كود):</b>\n"
-            "1) حمّل ملف الـ ZIP تحت وفك ضغطه\n"
-            "2) حط مجلد الجلسة (tdata) جنب برنامج تيليجرام ديسكتوب وافتحه — بيدخل مباشرة\n"
-            "3) إذا طلب كلمة 2FA بتلاقيها فوق بسطر البيانات"
-        )
-    elif file_link:
-        how_to = (
-            "📁 <b>طريقة الدخول بملف الجلسة:</b>\n"
-            "1) اضغط رابط ملف الجلسة فوق — بينزل عندك ملف ZIP\n"
-            "2) فك ضغطه وحط مجلد الجلسة (tdata) جنب تيليجرام ديسكتوب — بيدخل مباشرة بلا كود\n"
-            "3) إذا تيليجرام طلب كود دخول: اضغط زر «📩 طلب الكود» تحت والبوت بيجيب الكود جاهز من رابط الكود\n"
-            "4) إذا طلب كلمة تحقق 2FA بتلاقيها فوق"
+            "📁 <b>الدخول بدون كود (الأسهل):</b> حمّل ملف الـ ZIP بالأسفل وفك ضغطه — "
+            "ستجد ملف <code>.session</code> + مجلد <code>tdata</code> + كلمة 2FA بملف <code>2FA.txt</code>."
+            f"{twofa_line}\n\n"
+            "🔢 <b>أو الدخول بالرقم:</b>\n"
+            "1) افتح تيليجرام وأدخل الرقم فوق واطلب الكود حتى ترى شاشة إدخال الكود\n"
+            "2) اضغط زر «📩 طلب الكود» هنا — البوت يجيبه لك تلقائياً"
         )
     else:
         how_to = (
-            "🔢 <b>طريقة الدخول بالرقم:</b>\n"
-            "1) افتح تيليجرام وحط الرقم فوق\n"
-            f"2) اضغط زر «📩 طلب الكود» تحت — البوت بيجيب الكود جاهز وبيرسله لك{'' if code_link else ' (إن توفر)'}\n"
-            "3) حطه بتيليجرام ثم كلمة 2FA إن طُلبت"
+            "🔢 <b>طريقة الدخول:</b>\n"
+            "1) افتح تيليجرام وأدخل الرقم فوق واطلب الكود حتى ترى شاشة إدخال الكود\n"
+            "2) اضغط زر «📩 طلب الكود» هنا — البوت يجيبه لك تلقائياً"
+            f"{twofa_line}"
         )
 
     await callback.message.answer(
@@ -168,10 +163,8 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
         f"📱 الرقم: <code>{item.phone_number}</code>\n"
         f"💰 السعر: <b>{price}$</b>\n"
         f"📦 المتبقي من هذه الدولة: <b>{left}</b>\n\n"
-        f"📎 <b>بيانات الجلسة:</b>\n<code>{payload}</code>"
-        f"{file_line}{code_line}{twofa_line}\n\n"
         f"{how_to}\n\n"
-        "⚠️ سجّل الدخول فوراً واحفظ البيانات. الدعم خلال 24 ساعة للاستبدال.",
+        "⚠️ سجّل الدخول فوراً. الدعم خلال 24 ساعة للاستبدال.",
         reply_markup=tg_ready_owned_kb(item.id),
     )
     # تسليم الملفات: أرشيف ZIP بملفات الجلسة الفعلية إن وُجدت،
@@ -272,10 +265,13 @@ async def tg_ready_request_code(callback: CallbackQuery, session, db_user, bot):
     codes = result.get("codes") or []
     code_url = result.get("code_url")
     err = result.get("error") or ""
+    twofa_remote = result.get("twofa_remote")
+    retry_after = int(result.get("retry_after") or 0)
+    twofa_show = twofa_remote or twofa
 
     if codes:
         best = codes[0]
-        extra = f"\n🔐 <b>كلمة التحقق 2FA:</b> <code>{twofa}</code>" if twofa else ""
+        extra = f"\n🔐 <b>كلمة 2FA:</b> <code>{twofa_show}</code>" if twofa_show else ""
         if len(codes) > 1:
             extra += f"\n📋 كل الأكواد بالصفحة: <code>{'، '.join(codes[:5])}</code>"
         await callback.message.answer(
@@ -291,25 +287,43 @@ async def tg_ready_request_code(callback: CallbackQuery, session, db_user, bot):
     if err == "no_code_link":
         await callback.message.answer(
             f"⚠️ لا يوجد رابط كود مخزن لهذا الرقم <code>{item.phone_number}</code>.\n"
-            "تواصل مع الدعم ليرسل لك الكود يدوياً.",
+            "هذا يعني الدفعة المستوردة كانت أرقاماً فقط بلا روابط.\n"
+            "الحل: أعد رفع ملف <code>رابط_ZIP | الرقم | رابط_الكود</code>، أو تواصل مع الدعم.",
             reply_markup=tg_ready_owned_kb(item.id),
         )
         # اسمح بإعادة المحاولة فوراً عند غياب الرابط (لا فائدة من الانتظار)
         _CODE_COOLDOWN.pop((db_user.id, item_id), None)
         return
-    if err == "fetch_failed":
+    if err == "already_used":
+        extra = f"\n🔐 كلمة 2FA: <code>{twofa_show}</code>" if twofa_show else ""
         await callback.message.answer(
-            f"⚠️ تعذّر فتح رابط الكود الآن.\n🔑 رابط الكود: {code_url}\n"
-            "افتحه يدوياً أو اضغط طلب الكود مجدداً بعد قليل.",
+            f"⚠️ هذا الرابط أعطى كوده مسبقاً ولا يمكن طلبه مرة ثانية.\n"
+            f"📱 الرقم: <code>{item.phone_number}</code>\n"
+            "تفقد شاشة إدخال الكود بتيليجرام — الكود السابق ما زال صالحاً لدقائق."
+            f"{extra}\nتواصل مع الدعم إن لم يعمل.",
             reply_markup=tg_ready_owned_kb(item.id),
         )
         return
-    # no_code_yet: الصفحة انفتحت لكن لا كود بعد
+    if err == "rate_limited":
+        mins = max(1, -(-retry_after // 60)) if retry_after else 5
+        await callback.message.answer(
+            f"⏳ طلبات كثيرة على هذا الرابط. حاول بعد <b>{mins}</b> دقائق ثم اضغط «📩 طلب الكود» مجدداً.",
+            reply_markup=tg_ready_owned_kb(item.id),
+        )
+        return
+    if err == "fetch_failed":
+        await callback.message.answer(
+            "⚠️ تعذّر الاتصال بسيرفر الأكواد الآن.\n"
+            "اضغط «📩 طلب الكود» مجدداً بعد قليل.",
+            reply_markup=tg_ready_owned_kb(item.id),
+        )
+        return
+    # no_code_yet: المستخدم لم يطلب الكود من تيليجرام أولاً
     await callback.message.answer(
-        f"⏳ لم يصل الكود بعد للرقم <code>{item.phone_number}</code>.\n"
-        f"🔑 رابط الكود: {code_url}\n"
-        "انتظر قليلاً ثم اضغط «📩 طلب الكود» مجدداً — البوت بيجيبه فور توفره."
-        + (f"\n🔐 كلمة التحقق 2FA: <code>{twofa}</code>" if twofa else ""),
+        f"⏳ لم تطلب الكود من تيليجرام بعد للرقم <code>{item.phone_number}</code>.\n\n"
+        "1) افتح تيليجرام وأدخل الرقم واضغط التالي حتى ترى شاشة إدخال الكود\n"
+        "2) ارجع هنا واضغط «📩 طلب الكود» — البوت يجيبه لك تلقائياً."
+        + (f"\n🔐 كلمة 2FA: <code>{twofa_show}</code>" if twofa_show else ""),
         reply_markup=tg_ready_owned_kb(item.id),
     )
 
