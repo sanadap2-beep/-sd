@@ -453,8 +453,188 @@ def build_account_zip(phone: str, rel_paths: list[str]) -> tuple[str, bytes] | N
 
 def extract_login_link(payload: str) -> str | None:
     """يستخرج رابط كود الدخول (login-code link) من سطر البيانات إن وُجد."""
+    # صيغة المورّد الشائعة: رابط_ملف_ZIP | الرقم | رابط_الكود (/c/...)
+    # رابط الكود له أولوية على رابط الملف.
+    code = extract_code_link(payload or "")
+    if code:
+        return code
     m = re.search(r"https?://[^\s'\"<>]+", payload or "")
     return m.group(0) if m else None
+
+
+def extract_all_links(payload: str) -> list[str]:
+    """كل الروابط بالسطر مرتبة كما وردت (بدون تكرار + بدون ترقيم زائد)."""
+    if not payload:
+        return []
+    found: list[str] = []
+    for m in re.finditer(r"https?://[^\s'\"<>\|,;]+", payload):
+        url = m.group(0).rstrip(".,)")
+        if url and url not in found:
+            found.append(url)
+    return found
+
+
+def _is_code_link(url: str) -> bool:
+    u = (url or "").lower()
+    return any(k in u for k in ("/c/", "/code", "gethtml", "/login", "code", "otp", "/tvr", "/v-ke"))
+
+
+def _is_file_link(url: str) -> bool:
+    u = (url or "").lower()
+    return any(k in u for k in ("/files/", ".zip", "download", ".session", "tdata"))
+
+
+def extract_code_link(payload: str) -> str | None:
+    """رابط الكود (/c/...) من صيغة: ملف | رقم | كود."""
+    links = extract_all_links(payload or "")
+    if not links:
+        return None
+    for url in links:
+        if _is_code_link(url):
+            return url
+    # لا يوجد رابط كود واضح: إن كان هناك رابطان فالثاني غالباً هو الكود
+    if len(links) >= 2:
+        # الأول ملف غالباً، الثاني كود
+        if _is_file_link(links[0]):
+            return links[1]
+        return links[-1]
+    return None
+
+
+def extract_file_link(payload: str) -> str | None:
+    """رابط ملف الجلسة ZIP من صيغة: ملف | رقم | كود."""
+    links = extract_all_links(payload or "")
+    if not links:
+        return None
+    for url in links:
+        if _is_file_link(url):
+            return url
+    # لا يوجد رابط ملف واضح: إن كان هناك رابطان فالأول غالباً هو الملف
+    if len(links) >= 2 and not _is_code_link(links[0]):
+        return links[0]
+    if len(links) == 1 and not _is_code_link(links[0]):
+        return links[0]
+    return None
+
+
+def extract_twofa(payload: str) -> str | None:
+    """يستخرج كلمة التحقق بخطوتين (2FA) من السطر إن وُجدت."""
+    if not payload:
+        return None
+    # أنماط شائعة: 2fa:xxx | pass:xxx | password xxx | تحقق:xxx
+    patterns = [
+        r"(?:2\s*fa|twofa|password|pass|pwd|تحقق|كلمة\s*(?:المرور|السر))\s*[:=\s]+\s*([^\s|;,]+)",
+        r"\b2FA\s+([^\s|;,]+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, payload, re.IGNORECASE)
+        if m:
+            val = (m.group(1) or "").strip().strip("'\"")
+            # تجاهل القيم التي هي روابط أو أرقام هواتف
+            if val and not val.startswith("http") and not _norm_phone(val):
+                return val
+    return None
+
+
+def parse_login_codes(text: str) -> list[str]:
+    """يستخرج أكواد الدخول (5-6 أرقام) من صفحة الكود."""
+    if not text:
+        return []
+    # أكواد تيليجرام عادة 5 أرقام
+    codes = re.findall(r"\b(\d{5,6})\b", text)
+    # رتّب: الأكواد القريبة من كلمات (code/login/telegram/كود) أولاً
+    scored: list[tuple[int, str]] = []
+    low = text.lower()
+    for c in dict.fromkeys(codes):  # إزالة التكرار مع الحفاظ على الترتيب
+        idx = low.find(c)
+        window = low[max(0, idx - 120): idx + 120]
+        score = 0
+        if any(k in window for k in ("code", "login", "telegram", "otp", "verify", "كود", "تحقق")):
+            score = 1
+        scored.append((score, c))
+    scored.sort(key=lambda x: (-x[0], text.find(x[1])))
+    return [c for _, c in scored]
+
+
+async def fetch_url_text(url: str, timeout_s: int = 20, max_chars: int = 200_000) -> str | None:
+    """يجلب صفحة الكود كنص (لزر طلب الكود). يرجع None عند الفشل."""
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+            headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
+        ) as sess:
+            async with sess.get(url, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return None
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                if "html" not in ctype and "text" not in ctype and "json" not in ctype:
+                    # قد تكون صفحة كود بلا content-type واضح — تابع القراءة بحذر
+                    pass
+                data = await resp.content.read(max_chars + 1)
+                if len(data) > max_chars:
+                    data = data[:max_chars]
+                for enc in ("utf-8", "utf-8-sig", "latin-1"):
+                    try:
+                        return data.decode(enc)
+                    except UnicodeDecodeError:
+                        continue
+                return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+async def fetch_code_for_payload(payload: str, timeout_s: int = 20) -> dict:
+    """يجلب الكود الجاهز من رابط الكود داخل السطر.
+
+    يرجع: {"ok": bool, "codes": [...], "raw_excerpt": str, "code_url": str|None, "error": str}
+    """
+    code_url = extract_code_link(payload or "")
+    if not code_url:
+        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": None, "error": "no_code_link"}
+    page = await fetch_url_text(code_url, timeout_s=timeout_s)
+    if not page:
+        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url, "error": "fetch_failed"}
+    codes = parse_login_codes(page)
+    excerpt = re.sub(r"\s+", " ", page)[:500]
+    if codes:
+        return {"ok": True, "codes": codes, "raw_excerpt": excerpt, "code_url": code_url, "error": ""}
+    return {"ok": False, "codes": [], "raw_excerpt": excerpt, "code_url": code_url, "error": "no_code_yet"}
+
+
+async def download_file_bytes(url: str, timeout_s: int = 30, max_bytes: int = 25 * 1024 * 1024) -> bytes | None:
+    """يحمّل ملف ZIP الجلسة من رابط الملف. يرجع bytes أو None."""
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+            headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
+        ) as sess:
+            async with sess.get(url, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return None
+                length = resp.headers.get("Content-Length")
+                try:
+                    if length and int(length) > max_bytes:
+                        return None
+                except (ValueError, TypeError):
+                    pass
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        return None
+                if not buf:
+                    return None
+                return bytes(buf)
+    except Exception:
+        return None
 
 
 class TgReadyService:

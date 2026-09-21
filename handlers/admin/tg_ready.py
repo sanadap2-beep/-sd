@@ -35,10 +35,14 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
             "📦 <b>جلسات تلجرام الجاهزة</b>\n\n"
             "لا يوجد مخزون بعد.\n\n"
             "اضغط «📤 رفع ملف أرقام جديد» وأرسل ملف <code>.txt</code> أو "
-            "<code>.csv</code> أو <code>.zip</code> — كل سطر فيه رقم "
-            "(ومعه اختيارياً بيانات الجلسة بعد |).\n\n"
+            "<code>.csv</code> أو <code>.zip</code> — صيغة المورّد المدعومة:\n"
+            "<code>رابط_ملف_ZIP | الرقم | رابط_الكود</code>\n"
+            "مثال:\n"
+            "<code>https://dl-cloude.org/files/abc|+63955xxxx|https://dl-cloude.org/c/xyz</code>\n\n"
             "البوت سيتعرف على الدولة تلقائياً ويضع اسمها وعلمها وسعرها "
-            f"(التكلفة + ربح {margin}%)."
+            f"(التكلفة + ربح {margin}%).\n"
+            "بعد الشراء الزبون يرى الرقم + رابط الملف (بينزل ZIP) + زر «📩 طلب الكود» "
+            "يجيب الكود جاهزاً من رابط الكود + كلمة 2FA إن وُجدت."
         )
     else:
         lines = [
@@ -123,8 +127,9 @@ async def tg_ready_cost_received(message: Message, state: FSMContext):
     await message.answer(
         f"✅ التكلفة: <b>{cost}$</b> → سعر البيع: <b>{sell}$</b>\n\n"
         "📎 الآن أرسل <b>الملف</b> كمستند (txt / csv / zip):\n"
-        "• txt: كل سطر رقم (ومعه | بيانات الجلسة)\n"
-        "• csv: عمود phone\n"
+        "• txt/csv بصيغة المورّد: <code>رابط_ZIP | الرقم | رابط_الكود</code>\n"
+        "• txt بسيط: كل سطر رقم (ومعه | بيانات الجلسة)\n"
+        "• csv: عمود phone (أو 3 أعمدة ملف/رقم/كود)\n"
         "• zip: ملفات جلسات بأسماء فيها الأرقام"
     )
 
