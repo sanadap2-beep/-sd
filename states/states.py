@@ -626,3 +626,13 @@ class AdminTopupGiftStates(StatesGroup):
     """مراجعة طلبات «اشحن لأهلك»."""
 
     waiting_reject_reason = State()
+
+
+class AdminTgReadyStates(StatesGroup):
+    """رفع ملف الجلسات الجاهزة: نسبة الربح ثم التكلفة ثم الملف."""
+
+    waiting_margin = State()
+    waiting_cost = State()
+    waiting_file = State()
+    waiting_price = State()
+    waiting_price_country = State()

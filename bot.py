@@ -61,6 +61,7 @@ from handlers import (
     ai_sections as user_ai_sections,
     whatsapp as user_whatsapp,
     engagement as user_engagement,
+    tg_ready as user_tg_ready,
     fallback,
 )
 from handlers.deposit_methods import router as deposit_methods_router
@@ -124,6 +125,7 @@ from handlers.admin import (
     engagement as admin_engagement,
     campaign_codes as admin_campaign_codes,
     topup_gifts as admin_topup_gifts,
+    tg_ready as admin_tg_ready,
 )
 
 from tasks.order_monitor import (
@@ -209,6 +211,7 @@ def register_routers():
     dp.include_router(sponsored_ads.router)
     dp.include_router(special_offers.router)
     dp.include_router(numbers.router)
+    dp.include_router(user_tg_ready.router)
     dp.include_router(agent.router)
     dp.include_router(loyalty.router)
     dp.include_router(promotions.router)
@@ -290,6 +293,7 @@ def register_routers():
     dp.include_router(admin_product_routes.router)
     dp.include_router(admin_campaign_codes.router)
     dp.include_router(admin_topup_gifts.router)
+    dp.include_router(admin_tg_ready.router)
 
     # أزرار إشعارات الأخطاء (زر «تم تصليح الخطأ») — قبل fallback ليصل إليها الضغط أولاً.
     dp.include_router(error_reports_router)

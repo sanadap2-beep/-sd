@@ -2283,6 +2283,80 @@ class ReferralAbuseLog(Base):
     referrer: Mapped["User"] = relationship()
 
 
+class TgReadyCountry(Base):
+    """دولة مجمّعة تلقائياً من ملفات الجلسات الجاهزة.
+
+    تُنشأ/تُحدَّث تلقائياً عند رفع ملف: البوت يتعرف على الدولة من مقدمة
+    الرقم ويحفظ اسمها وعلمها وسعر البيع (التكلفة + نسبة الربح).
+    المخزون لا يُخزَّن كرقم — يُحسب live بعدّ العناصر المتاحة.
+    """
+
+    __tablename__ = "tg_ready_countries"
+
+    # مفتاح الدولة = مقدمة الاتصال بدون + (مثل 1، 963، 966)
+    country_key: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name_ar: Mapped[str] = mapped_column(String(64))
+    flag: Mapped[str] = mapped_column(String(8), default="🌍")
+    # سعر البيع الحالي لعناصر هذه الدولة (يُحسب عند الرفع، وقابل للتعديل يدوياً)
+    price_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    # آخر تكلفة مدخلة (للمرجع عند تغيير نسبة الربح)
+    last_cost_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    margin_percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("50"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TgReadyBatch(Base):
+    """دفعة رفع واحدة (ملف واحد رفعه الأدمن)."""
+
+    __tablename__ = "tg_ready_batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    added_count: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_dupes: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    margin_percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("50"))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class TgReadyItemStatus(str, enum.Enum):
+    AVAILABLE = "available"
+    SOLD = "sold"
+    VOID = "void"
+
+
+class TgReadyItem(Base):
+    """حساب/رقم جاهز واحد (جلسة تلجرام) من مخزون يدوي."""
+
+    __tablename__ = "tg_ready_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phone_number: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    country_key: Mapped[str] = mapped_column(String(16), index=True, default="unknown")
+    country_name_ar: Mapped[str] = mapped_column(String(64), default="غير معروف")
+    flag: Mapped[str] = mapped_column(String(8), default="🌍")
+    cost_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    price_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    # بيانات الجلسة مشفرة (سطر الملف الأصلي: رقم|سيشن|2FA...) — لا تظهر للأدمن
+    payload_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tg_ready_batches.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[TgReadyItemStatus] = mapped_column(
+        SAEnum(TgReadyItemStatus), default=TgReadyItemStatus.AVAILABLE, index=True
+    )
+    buyer_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class UnifiedRefund(Base):
     """
     سجل الاسترجاع الموحّد لكل البوت.
