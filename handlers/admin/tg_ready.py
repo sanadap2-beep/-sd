@@ -18,7 +18,7 @@ from keyboards.tg_ready import (
     admin_tg_ready_kb,
     admin_tg_ready_wipe_kb,
 )
-from services.tg_ready_service import TgReadyService, parse_uploaded_file
+from services.tg_ready_service import TgReadyService, extract_zip_files, parse_uploaded_file
 from states.states import AdminTgReadyStates
 
 router = Router(name="admin_tg_ready")
@@ -35,10 +35,14 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
             "📦 <b>جلسات تلجرام الجاهزة</b>\n\n"
             "لا يوجد مخزون بعد.\n\n"
             "اضغط «📤 رفع ملف أرقام جديد» وأرسل ملف <code>.txt</code> أو "
-            "<code>.csv</code> أو <code>.zip</code> — كل سطر فيه رقم "
-            "(ومعه اختيارياً بيانات الجلسة بعد |).\n\n"
+            "<code>.csv</code> أو <code>.zip</code> — صيغة المورّد المدعومة:\n"
+            "<code>رابط_ملف_ZIP | الرقم | رابط_الكود</code>\n"
+            "مثال:\n"
+            "<code>https://dl-cloude.org/files/abc|+63955xxxx|https://dl-cloude.org/c/xyz</code>\n\n"
             "البوت سيتعرف على الدولة تلقائياً ويضع اسمها وعلمها وسعرها "
-            f"(التكلفة + ربح {margin}%)."
+            f"(التكلفة + ربح {margin}%).\n"
+            "بعد الشراء الزبون يرى الرقم + رابط الملف (بينزل ZIP) + زر «📩 طلب الكود» "
+            "يجيب الكود جاهزاً من رابط الكود + كلمة 2FA إن وُجدت."
         )
     else:
         lines = [
@@ -123,8 +127,9 @@ async def tg_ready_cost_received(message: Message, state: FSMContext):
     await message.answer(
         f"✅ التكلفة: <b>{cost}$</b> → سعر البيع: <b>{sell}$</b>\n\n"
         "📎 الآن أرسل <b>الملف</b> كمستند (txt / csv / zip):\n"
-        "• txt: كل سطر رقم (ومعه | بيانات الجلسة)\n"
-        "• csv: عمود phone\n"
+        "• txt/csv بصيغة المورّد: <code>رابط_ZIP | الرقم | رابط_الكود</code>\n"
+        "• txt بسيط: كل سطر رقم (ومعه | بيانات الجلسة)\n"
+        "• csv: عمود phone (أو 3 أعمدة ملف/رقم/كود)\n"
         "• zip: ملفات جلسات بأسماء فيها الأرقام"
     )
 
@@ -163,10 +168,14 @@ async def tg_ready_file_received(message: Message, state: FSMContext, session, b
     data = await state.get_data()
     cost = Decimal(str(data.get("tg_ready_cost", "0")))
     margin = Decimal(str(data.get("tg_ready_margin", "50")))
-    await message.answer(f"⏳ تم العثور على <b>{len(entries)}</b> رقم، جاري الفرز...")
+    await message.answer(f"⏳ تم العثور على <b>{len(entries)}</b> رقم، جاري الفرز وحفظ الملفات...")
+    files_map = None
+    if (fname or "").lower().endswith(".zip"):
+        files_map = extract_zip_files(raw)
     try:
         result = await TgReadyService.import_entries(
-            session, entries, cost, margin, file_name=fname, created_by=None
+            session, entries, cost, margin, file_name=fname, created_by=None,
+            files_map=files_map,
         )
     except Exception as exc:
         await message.answer(f"❌ فشل الاستيراد: {exc}")
@@ -180,6 +189,16 @@ async def tg_ready_file_received(message: Message, state: FSMContext, session, b
     ]
     for key, info in result["countries"].items():
         lines.append(f"{info['flag']} {info['name']}: <b>{info['count']}</b>")
+    if result.get("with_files"):
+        lines.append(
+            f"\n📁 حسابات بملفات جلسة فعلية: <b>{result['with_files']}</b> — "
+            "الزبون بيستلم ملف ZIP وبيدخل مباشرة بلا كود."
+        )
+    else:
+        lines.append(
+            "\n⚠️ الملف نصي بلا ملفات جلسة مرفقة — الزبون بيستلم الرقم + رابط "
+            "الكود (إن وُجد بالسطر) + 2FA وبيدخل بالرقم والكود."
+        )
     lines.append("\nالزبون الآن يرى هذه الدول بقسم أرقام تلجرام ← 📦 حسابات جاهزة.")
     await message.answer("\n".join(lines))
     text, countries, total, margin_s = await _home_text(session)

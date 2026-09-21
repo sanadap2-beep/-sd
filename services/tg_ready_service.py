@@ -366,6 +366,277 @@ def parse_uploaded_file(filename: str, raw: bytes) -> list[ParsedEntry]:
         return parse_text_entries(raw.decode("utf-8", errors="ignore"))
 
 
+# ── ملفات الجلسة الفعلية (tdata/session) لكل رقم ──
+
+#: جذر تخزين ملفات الجلسات (مجلد data/ مُتجاهَل من git — لا يُرفع للمستودع).
+READY_FILES_ROOT = Path("data/tg_ready")
+
+#: حد أقصى لحجم ملف واحد داخل ZIP (25MB) حتى لا يمتلئ القرص بملف مفخخ.
+MAX_ONE_FILE_BYTES = 25 * 1024 * 1024
+
+
+def _safe_phone_dir(phone: str) -> str:
+    return re.sub(r"\D", "", phone or "unknown") or "unknown"
+
+
+def extract_zip_files(raw: bytes) -> dict[str, list[tuple[str, bytes]]]:
+    """يستخرج ملفات كل حساب من ZIP مرفوع: {phone: [(اسم الملف, المحتوى)]}.
+
+    التجميع برقم الهاتف المكتشف من مسار الملف (مجلد الحساب عادة اسمه الرقم).
+    الملفات النصية الصغيرة التي لا يُكتشف رقمها من اسمها تُنسب لأول رقم
+    يُكتشف داخل محتواها، وما عداها يُتجاهل.
+    """
+    out: dict[str, list[tuple[str, bytes]]] = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            for info in zf.infolist():
+                if info.is_dir() or info.file_size > MAX_ONE_FILE_BYTES:
+                    continue
+                phone = _norm_phone(info.filename)
+                try:
+                    blob = zf.read(info.filename)
+                except Exception:
+                    continue
+                if not phone and info.file_size < 20000:
+                    phone = _norm_phone(blob[:4000].decode("utf-8", errors="ignore"))
+                if not phone:
+                    continue
+                out.setdefault(phone, []).append((Path(info.filename).name or "file", blob))
+    except zipfile.BadZipFile:
+        return {}
+    return out
+
+
+def save_account_files(batch_id: int, phone: str, files: list[tuple[str, bytes]]) -> list[str]:
+    """يحفظ ملفات حساب واحد على القرص ويرجع مساراتها النسبية."""
+    phone_dir = READY_FILES_ROOT / str(batch_id) / _safe_phone_dir(phone)
+    phone_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[str] = []
+    seen_names: set[str] = set()
+    for raw_name, blob in files:
+        name = re.sub(r"[^\w.\-() ]", "_", raw_name or "file")[:120] or "file"
+        if name in seen_names:
+            stem, dot, ext = name.partition(".")
+            name = f"{stem}_{len(seen_names)}{('.' + ext) if dot else ''}"
+        seen_names.add(name)
+        dest = phone_dir / name
+        # حماية traversal: البقاء داخل مجلد الحساب حصراً
+        if phone_dir not in dest.resolve().parents and dest.resolve() != phone_dir:
+            dest = phone_dir / "file"
+        dest.write_bytes(blob)
+        saved.append(str(dest.relative_to(READY_FILES_ROOT)))
+    return saved
+
+
+def build_account_zip(phone: str, rel_paths: list[str]) -> tuple[str, bytes] | None:
+    """يجمع ملفات الحساب المخزنة بأرشيف ZIP واحد جاهز للتسليم."""
+    if not rel_paths:
+        return None
+    buf = io.BytesIO()
+    added = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel in rel_paths:
+            src = READY_FILES_ROOT / rel
+            try:
+                if not src.is_file() or src.stat().st_size > MAX_ONE_FILE_BYTES:
+                    continue
+                # داخل الأرشيف: مجلد باسم الرقم حتى لا تختلط الملفات عند الفك
+                zf.writestr(f"{_safe_phone_dir(phone)}/{src.name}", src.read_bytes())
+                added += 1
+            except OSError:
+                continue
+    if not added:
+        return None
+    fname = f"telegram_session_{_safe_phone_dir(phone)}.zip"
+    return fname, buf.getvalue()
+
+
+def extract_login_link(payload: str) -> str | None:
+    """يستخرج رابط كود الدخول (login-code link) من سطر البيانات إن وُجد."""
+    # صيغة المورّد الشائعة: رابط_ملف_ZIP | الرقم | رابط_الكود (/c/...)
+    # رابط الكود له أولوية على رابط الملف.
+    code = extract_code_link(payload or "")
+    if code:
+        return code
+    m = re.search(r"https?://[^\s'\"<>]+", payload or "")
+    return m.group(0) if m else None
+
+
+def extract_all_links(payload: str) -> list[str]:
+    """كل الروابط بالسطر مرتبة كما وردت (بدون تكرار + بدون ترقيم زائد)."""
+    if not payload:
+        return []
+    found: list[str] = []
+    for m in re.finditer(r"https?://[^\s'\"<>\|,;]+", payload):
+        url = m.group(0).rstrip(".,)")
+        if url and url not in found:
+            found.append(url)
+    return found
+
+
+def _is_code_link(url: str) -> bool:
+    u = (url or "").lower()
+    return any(k in u for k in ("/c/", "/code", "gethtml", "/login", "code", "otp", "/tvr", "/v-ke"))
+
+
+def _is_file_link(url: str) -> bool:
+    u = (url or "").lower()
+    return any(k in u for k in ("/files/", ".zip", "download", ".session", "tdata"))
+
+
+def extract_code_link(payload: str) -> str | None:
+    """رابط الكود (/c/...) من صيغة: ملف | رقم | كود."""
+    links = extract_all_links(payload or "")
+    if not links:
+        return None
+    for url in links:
+        if _is_code_link(url):
+            return url
+    # لا يوجد رابط كود واضح: إن كان هناك رابطان فالثاني غالباً هو الكود
+    if len(links) >= 2:
+        # الأول ملف غالباً، الثاني كود
+        if _is_file_link(links[0]):
+            return links[1]
+        return links[-1]
+    return None
+
+
+def extract_file_link(payload: str) -> str | None:
+    """رابط ملف الجلسة ZIP من صيغة: ملف | رقم | كود."""
+    links = extract_all_links(payload or "")
+    if not links:
+        return None
+    for url in links:
+        if _is_file_link(url):
+            return url
+    # لا يوجد رابط ملف واضح: إن كان هناك رابطان فالأول غالباً هو الملف
+    if len(links) >= 2 and not _is_code_link(links[0]):
+        return links[0]
+    if len(links) == 1 and not _is_code_link(links[0]):
+        return links[0]
+    return None
+
+
+def extract_twofa(payload: str) -> str | None:
+    """يستخرج كلمة التحقق بخطوتين (2FA) من السطر إن وُجدت."""
+    if not payload:
+        return None
+    # أنماط شائعة: 2fa:xxx | pass:xxx | password xxx | تحقق:xxx
+    patterns = [
+        r"(?:2\s*fa|twofa|password|pass|pwd|تحقق|كلمة\s*(?:المرور|السر))\s*[:=\s]+\s*([^\s|;,]+)",
+        r"\b2FA\s+([^\s|;,]+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, payload, re.IGNORECASE)
+        if m:
+            val = (m.group(1) or "").strip().strip("'\"")
+            # تجاهل القيم التي هي روابط أو أرقام هواتف
+            if val and not val.startswith("http") and not _norm_phone(val):
+                return val
+    return None
+
+
+def parse_login_codes(text: str) -> list[str]:
+    """يستخرج أكواد الدخول (5-6 أرقام) من صفحة الكود."""
+    if not text:
+        return []
+    # أكواد تيليجرام عادة 5 أرقام
+    codes = re.findall(r"\b(\d{5,6})\b", text)
+    # رتّب: الأكواد القريبة من كلمات (code/login/telegram/كود) أولاً
+    scored: list[tuple[int, str]] = []
+    low = text.lower()
+    for c in dict.fromkeys(codes):  # إزالة التكرار مع الحفاظ على الترتيب
+        idx = low.find(c)
+        window = low[max(0, idx - 120): idx + 120]
+        score = 0
+        if any(k in window for k in ("code", "login", "telegram", "otp", "verify", "كود", "تحقق")):
+            score = 1
+        scored.append((score, c))
+    scored.sort(key=lambda x: (-x[0], text.find(x[1])))
+    return [c for _, c in scored]
+
+
+async def fetch_url_text(url: str, timeout_s: int = 20, max_chars: int = 200_000) -> str | None:
+    """يجلب صفحة الكود كنص (لزر طلب الكود). يرجع None عند الفشل."""
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+            headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
+        ) as sess:
+            async with sess.get(url, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return None
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                if "html" not in ctype and "text" not in ctype and "json" not in ctype:
+                    # قد تكون صفحة كود بلا content-type واضح — تابع القراءة بحذر
+                    pass
+                data = await resp.content.read(max_chars + 1)
+                if len(data) > max_chars:
+                    data = data[:max_chars]
+                for enc in ("utf-8", "utf-8-sig", "latin-1"):
+                    try:
+                        return data.decode(enc)
+                    except UnicodeDecodeError:
+                        continue
+                return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+async def fetch_code_for_payload(payload: str, timeout_s: int = 20) -> dict:
+    """يجلب الكود الجاهز من رابط الكود داخل السطر.
+
+    يرجع: {"ok": bool, "codes": [...], "raw_excerpt": str, "code_url": str|None, "error": str}
+    """
+    code_url = extract_code_link(payload or "")
+    if not code_url:
+        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": None, "error": "no_code_link"}
+    page = await fetch_url_text(code_url, timeout_s=timeout_s)
+    if not page:
+        return {"ok": False, "codes": [], "raw_excerpt": "", "code_url": code_url, "error": "fetch_failed"}
+    codes = parse_login_codes(page)
+    excerpt = re.sub(r"\s+", " ", page)[:500]
+    if codes:
+        return {"ok": True, "codes": codes, "raw_excerpt": excerpt, "code_url": code_url, "error": ""}
+    return {"ok": False, "codes": [], "raw_excerpt": excerpt, "code_url": code_url, "error": "no_code_yet"}
+
+
+async def download_file_bytes(url: str, timeout_s: int = 30, max_bytes: int = 25 * 1024 * 1024) -> bytes | None:
+    """يحمّل ملف ZIP الجلسة من رابط الملف. يرجع bytes أو None."""
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return None
+    try:
+        import aiohttp
+
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+            headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
+        ) as sess:
+            async with sess.get(url, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return None
+                length = resp.headers.get("Content-Length")
+                try:
+                    if length and int(length) > max_bytes:
+                        return None
+                except (ValueError, TypeError):
+                    pass
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buf.extend(chunk)
+                    if len(buf) > max_bytes:
+                        return None
+                if not buf:
+                    return None
+                return bytes(buf)
+    except Exception:
+        return None
+
+
 class TgReadyService:
     MARGIN_KEY = "tg_ready_margin_percent"
 
@@ -458,8 +729,16 @@ class TgReadyService:
         margin_percent: Decimal,
         file_name: str = "",
         created_by: int | None = None,
+        files_map: dict[str, list[tuple[str, bytes]]] | None = None,
     ) -> dict:
-        """يفرز الملف تلقائياً: دولة + علم + سعر لكل مجموعة، ويسجّل المخزون."""
+        """يفرز الملف تلقائياً: دولة + علم + سعر لكل مجموعة، ويسجّل المخزون.
+
+        files_map (اختياري، من extract_zip_files): ملفات الجلسة الفعلية لكل
+        رقم — تُحفظ على القرص تحت data/tg_ready وتُسلَّم ZIP للمشتري، فيدخل
+        الزبون بالملف مباشرة بلا انتظار أي كود.
+        """
+        import json as _json
+
         from database.models import TgReadyBatch, TgReadyCountry, TgReadyItem, TgReadyItemStatus
         from services.encryption_service import EncryptionService
 
@@ -497,6 +776,14 @@ class TgReadyService:
                 enc = EncryptionService.encrypt(e.payload)
             except Exception:
                 enc = None
+            files_json = None
+            if files_map and e.phone in files_map:
+                try:
+                    saved = save_account_files(batch.id, e.phone, files_map[e.phone])
+                    if saved:
+                        files_json = _json.dumps(saved, ensure_ascii=False)
+                except OSError:
+                    files_json = None
             session.add(
                 TgReadyItem(
                     phone_number=e.phone,
@@ -506,6 +793,7 @@ class TgReadyService:
                     cost_usd=cost_usd,
                     price_usd=sell,
                     payload_encrypted=enc,
+                    files_json=files_json,
                     batch_id=batch.id,
                     status=TgReadyItemStatus.AVAILABLE,
                 )
@@ -540,7 +828,21 @@ class TgReadyService:
         batch.added_count = added
         batch.skipped_dupes = dupes
         await session.commit()
-        return {"added": added, "dupes": dupes, "countries": per_country, "sell": sell}
+        with_files = (
+            await session.execute(
+                select(func.count(TgReadyItem.id)).where(
+                    TgReadyItem.batch_id == batch.id,
+                    TgReadyItem.files_json.is_not(None),
+                )
+            )
+        ).scalar_one()
+        return {
+            "added": added,
+            "dupes": dupes,
+            "countries": per_country,
+            "sell": sell,
+            "with_files": int(with_files),
+        }
 
     @staticmethod
     async def buy_one(session, user_id: int, country_key: str):

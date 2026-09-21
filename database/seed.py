@@ -342,6 +342,20 @@ async def init_db() -> None:
                     text("ALTER TABLE unified_orders ADD COLUMN promotion_id INTEGER")
                 )
 
+            # ملفات الجلسات الجاهزة: ترقية قواعد جرّبت النسخة الأولى قبل دمجها.
+            tg_tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
+            )
+            if "tg_ready_items" in tg_tables:
+                tg_ready_columns = await conn.run_sync(
+                    lambda sync_conn: {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns("tg_ready_items")
+                    }
+                )
+                if "files_json" not in tg_ready_columns:
+                    await conn.execute(text("ALTER TABLE tg_ready_items ADD COLUMN files_json TEXT"))
+
     async with async_session_maker() as session:
         # ── زرع الإعدادات الافتراضية ──
         for key, value in DEFAULT_SETTINGS.items():

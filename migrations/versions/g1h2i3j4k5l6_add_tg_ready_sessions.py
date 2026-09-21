@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.Column("cost_usd", sa.Numeric(18, 4), nullable=False, server_default="0"),
         sa.Column("price_usd", sa.Numeric(18, 4), nullable=False, server_default="0"),
         sa.Column("payload_encrypted", sa.Text(), nullable=True),
+        sa.Column("files_json", sa.Text(), nullable=True),
         sa.Column("batch_id", sa.Integer(), sa.ForeignKey("tg_ready_batches.id", ondelete="SET NULL"), nullable=True),
         sa.Column("status", sa.Enum("available", "sold", "void", name="tgreadyitemstatus"), nullable=False, server_default="available"),
         sa.Column("buyer_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),

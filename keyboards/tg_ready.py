@@ -34,12 +34,20 @@ def tg_ready_confirm_kb(country_key: str) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def tg_ready_after_kb() -> InlineKeyboardMarkup:
+def tg_ready_after_kb(item_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    if item_id:
+        b.button(text="📩 طلب الكود", callback_data=f"tgready:code:{item_id}")
+        b.button(text="📁 إعادة إرسال ملف الجلسة", callback_data=f"tgready:file:{item_id}")
     b.button(text="🔄 شراء رقم آخر", callback_data="tgready:list")
     b.button(text="🏠 القائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)
     return b.as_markup()
+
+
+def tg_ready_owned_kb(item_id: int) -> InlineKeyboardMarkup:
+    """أزرار مالك الرقم: طلب الكود + الملف + شراء آخر."""
+    return tg_ready_after_kb(item_id)
 
 
 def tg_ready_entry_kb(total: int) -> InlineKeyboardMarkup:
