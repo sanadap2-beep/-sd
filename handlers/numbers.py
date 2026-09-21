@@ -69,6 +69,32 @@ from keyboards.numbers import (
 from keyboards.main_menu import insufficient_balance_kb, back_to_main_kb
 from states.states import NumberBulkStates
 
+
+def _attach_tg_ready_entry(markup: InlineKeyboardMarkup, total: int) -> InlineKeyboardMarkup:
+    """يحقن زر الجلسات الجاهزة بأعلى أي لوحة داخل قسم تلجرام (لا يكسر OTP)."""
+    if total <= 0:
+        return markup
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"📦 حسابات جاهزة — جلسات (متاح {total})",
+                callback_data="tgready:list",
+            )
+        ]
+    ] + [list(row) for row in markup.inline_keyboard]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _tg_ready_total(session, service_code: str) -> int:
+    if service_code != "telegram":
+        return 0
+    try:
+        from services.tg_ready_service import TgReadyService
+
+        return await TgReadyService.total_available(session)
+    except Exception:
+        return 0
+
 logger = logging.getLogger(__name__)
 
 router = Router(name="numbers")
@@ -192,9 +218,12 @@ async def numbers_server_list(callback: CallbackQuery, session):
         await callback.answer("⚠️ لا توجد سيرفرات مفعلة لهذه الخدمة.", show_alert=True)
         return
     await callback.answer()
+    markup = _servers_kb(service_code, servers)
+    if service_code == "telegram":
+        markup = _attach_tg_ready_entry(markup, await _tg_ready_total(session, service_code))
     await callback.message.edit_text(
         f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n" + SERVERS_HINT,
-        reply_markup=_servers_kb(service_code, servers),
+        reply_markup=markup,
     )
 
 
@@ -214,9 +243,12 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
         active = [s for s in servers if s.is_active]
         if active:
             await callback.answer()
+            markup = _servers_kb(service_code, active)
+            if service_code == "telegram":
+                markup = _attach_tg_ready_entry(markup, await _tg_ready_total(session, service_code))
             await callback.message.edit_text(
                 f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n" + SERVERS_HINT,
-                reply_markup=_servers_kb(service_code, active),
+                reply_markup=markup,
             )
             return
 
@@ -230,11 +262,14 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
         entries = []
 
     if not entries:
+        markup = back_to_main_kb()
+        if service_code == "telegram":
+            markup = _attach_tg_ready_entry(markup, await _tg_ready_total(session, service_code))
         await callback.message.edit_text(
             f"{service.emoji} <b>أرقام {service.name_ar}</b>\n\n"
             "❌ لا توجد أرقام متوفرة حالياً لهذه الخدمة.\n"
             "يرجى المحاولة لاحقاً أو تجربة خدمة أخرى.",
-            reply_markup=back_to_main_kb(),
+            reply_markup=markup,
         )
         return
 
@@ -243,9 +278,12 @@ async def number_service_selected(callback: CallbackQuery, session, db_user=None
         "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
         "اختر الدولة المطلوبة:"
     )
+    markup = countries_price_kb(service_code, entries, page=0)
+    if service_code == "telegram":
+        markup = _attach_tg_ready_entry(markup, await _tg_ready_total(session, service_code))
     await callback.message.edit_text(
         text,
-        reply_markup=countries_price_kb(service_code, entries, page=0),
+        reply_markup=markup,
     )
 
 
@@ -294,15 +332,18 @@ async def number_server_picked(callback: CallbackQuery, session, db_user=None):
         "🟢 الدول مرتبة من <b>الأرخص إلى الأغلى</b>:\n"
         "اختر الدولة المطلوبة:"
     )
+    markup = countries_price_kb(
+        service_code,
+        entries,
+        page=0,
+        server_id=server.id,
+        server_label=server_title,
+    )
+    if service_code == "telegram":
+        markup = _attach_tg_ready_entry(markup, await _tg_ready_total(session, service_code))
     await callback.message.edit_text(
         text,
-        reply_markup=countries_price_kb(
-            service_code,
-            entries,
-            page=0,
-            server_id=server.id,
-            server_label=server_title,
-        ),
+        reply_markup=markup,
     )
 
 

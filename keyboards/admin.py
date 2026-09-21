@@ -28,6 +28,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
         "🛍 المتجر والخدمات والرشق",
         [
             ("📦 التطبيقات والأكواد الجاهزة", "admin:readycodes"),
+            ("📦 جلسات تلجرام الجاهزة (رفع ملف)", "admin:tg_ready"),
             ("📥 الخدمات المسحوبة (مزود/بحث)", "admin:pulled_services"),
             ("🔌 مزودو المتجر", "admin:api_providers"),
             ("📂 إدارة الأقسام", "admin:categories"),
@@ -703,6 +704,12 @@ def admin_nsvc_detail_kb(service) -> InlineKeyboardMarkup:
         callback_data=f"admin:nsvc_servers:{service.id}",
         style="primary",
     )
+    if getattr(service, "code", "") == "telegram":
+        b.button(
+            text="📦 الجلسات الجاهزة (رفع ملف)",
+            callback_data="admin:tg_ready",
+            style="success",
+        )
     b.button(text="📝 تعديل الاسم", callback_data=f"admin:nsvc_edit_name:{service.id}")
     b.button(text="🗑 حذف", callback_data=f"admin:nsvc_delete:{service.id}", style="danger")
     b.button(text="🔙 رجوع", callback_data="admin:number_services")
