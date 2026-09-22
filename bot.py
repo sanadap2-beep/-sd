@@ -32,6 +32,7 @@ from handlers import (
     cart,
     referral,
     referral_guard,
+    session_handler,
     deposit,
     transfer,
     withdrawal,
@@ -236,6 +237,7 @@ def register_routers():
     dp.include_router(user_ai_sections.router)
     dp.include_router(user_whatsapp.router)
     dp.include_router(referral_guard.router)
+    dp.include_router(session_handler.router)
 
     # ── هاندلرز الأدمن ──
     dp.include_router(admin_panel.router)
