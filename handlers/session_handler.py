@@ -1,7 +1,9 @@
 """
 هاندلر إدارة جلسات تلجرام باستخدام aiogram و Telethon.
-يستقبل ملفات .txt تحتوي على روابط لـ .zip، ي_DOWNLOAD zip، يستخرج الجلسة،
+يستقبل ملفات .txt تحتوي على روابط لـ .zip، يُحمّل zip، يستخرج الجلسة،
 ويتابع رسائل 777000 لاستلام كود التسجيل.
+
+ملاحظة: هذا المسار للإدارة فقط (بوابة صامتة في أول السطر).
 """
 
 import io
@@ -10,16 +12,17 @@ import os
 import re
 import tempfile
 import zipfile
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import aiofiles
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiohttp import ClientSession, ClientError
 
-from services.feature_service import FeatureService
+from config import settings
+
+if TYPE_CHECKING:
+    from telethon import TelegramClient
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +70,15 @@ async def _download_zip_asynchronously(url: str) -> Optional[bytes]:
 async def _start_telethon_session(
     session_data: bytes,
     two_factor_password: Optional[str] = None,
-) -> Optional["TelegramClient"]:
-    """تهيئة عميل Telethon دينامياً من بيانات الجلسة المستخرجة."""
+) -> tuple[Optional["TelegramClient"], Optional[str]]:
+    """تهيئة عميل Telethon ديناميكياً من بيانات الجلسة المستخرجة.
+
+    ترجع (client, tmp_session_path) عند النجاح، أو (None, None) عند الفشل
+    (مع تنظيف الملف المؤقت في كل مسار فشل داخلي).
+    """
     from telethon import TelegramClient
 
-    tmp_session_path = None
+    tmp_session_path: Optional[str] = None
     try:
         # كتابة بيانات الجلسة في ملف مؤقت
         with tempfile.NamedTemporaryFile(
@@ -81,8 +88,6 @@ async def _start_telethon_session(
             tmp_session_path = tmp_session.name
 
         # إنشاء عميل Telethon
-        from config import settings
-
         client = TelegramClient(
             tmp_session_path,
             api_id=settings.API_ID,
@@ -93,7 +98,7 @@ async def _start_telethon_session(
         await client.connect()
         if await client.is_user_authorized():
             logger.info("Telethon session authorized successfully")
-            return client
+            return client, tmp_session_path
 
         # إذا كانت هناك كلمة مرور 2FA من ملف 2FA.txt، استخدمها
         if two_factor_password:
@@ -101,7 +106,7 @@ async def _start_telethon_session(
                 # طريقة Telethon الصحيحة: استخدام start() مع كلمة المرور
                 await client.start(password=two_factor_password)
                 logger.info("Telethon session signed in with 2FA password via start()")
-                return client
+                return client, tmp_session_path
             except Exception as e:
                 logger.warning(f"2FA sign in via start() failed: {e}")
         else:
@@ -109,25 +114,23 @@ async def _start_telethon_session(
                 "Telethon session requires manual verification or 2FA code."
             )
 
-        # إذا فشل التسجيل، نق disconnect ونرجع None
+        # إذا فشل التسجيل: قطع الاتصال وتنظيف الملف المؤقت ثم إرجاع فشل
         await client.disconnect()
-        return None
+        await _cleanup_temp_files(tmp_session_path)
+        return None, None
 
     except Exception as e:
         logger.exception(f"Error starting Telethon session: {e}")
-        return None
-
-    except Exception as e:
-        logger.exception(f"Error starting Telethon session: {e}")
-        return None
-
+        if tmp_session_path:
+            await _cleanup_temp_files(tmp_session_path)
+        return None, None
 
 
 # ══════════════ تنظيف الموارد ══════════════
 
 
-async def _cleanup_temp_files(tmp_session_path: str) -> None:
-    """تنظيف الملفات المؤقتة لإدارة مساحة التخزين."""
+async def _cleanup_temp_files(tmp_session_path: Optional[str]) -> None:
+    """تنظيف الملفات المؤقتة لإدارة مساحة التخزين (آمن للتكرار)."""
     try:
         if tmp_session_path and os.path.exists(tmp_session_path):
             os.unlink(tmp_session_path)
@@ -141,8 +144,17 @@ async def _cleanup_temp_files(tmp_session_path: str) -> None:
 
 @router.message(F.document.mime_type == "text/plain")
 async def handle_txt_document(message: Message, bot) -> None:
-    """معالج رسالة الملف النصي .txt من المستخدم."""
+    """معالج رسالة الملف النصي .txt من المستخدم — للإدارة فقط."""
+    # بوابة صامتة: هذا المسار يفتح جلسات Telethon ويستهلك اتصالاً طويلاً.
+    uid = message.from_user.id if message.from_user else None
+    if uid not in settings.admin_ids_list:
+        return
+
+    # استيراد ديناميكي: الزخرفة @client.on(...)=كود يُنفَّذ وقت التشغيل داخل الدالة
+    from telethon import events
+
     tmp_session_path: Optional[str] = None
+    waiting_for_code = False
     try:
         # 1. التحقق من أن الملف يحمل امتداد .txt
         document = message.document
@@ -239,8 +251,10 @@ async def handle_txt_document(message: Message, bot) -> None:
             )
             return
 
-        # 6. بدء جلسة Telethon
-        client = await _start_telethon_session(session_data, two_factor_password)
+        # 6. بدء جلسة Telethon (يرجع الملف المؤقت مع العميل)
+        client, tmp_session_path = await _start_telethon_session(
+            session_data, two_factor_password
+        )
         if not client:
             await message.answer(
                 "❌ فشلت محاولة تشغيل جلسة Telethon. قد تحتاج الجلسة إلى تأكيد يدوي."
@@ -268,9 +282,8 @@ async def handle_txt_document(message: Message, bot) -> None:
                             parse_mode="HTML",
                         )
                         code_sent = True
-                        # إيقاف المستمع بعد الحصول على الكود
+                        # إيقاف المستمع بعد الحصول على الكود + تنظيف الملف المؤقت
                         await client.disconnect()
-                        # تنظيف الملفات المؤقتة
                         await _cleanup_temp_files(tmp_session_path)
                         logger.info(
                             f"Login code {login_code} sent to user {message.from_user.id}"
@@ -287,8 +300,10 @@ async def handle_txt_document(message: Message, bot) -> None:
         except Exception as connect_err:
             logger.error(f"Failed to connect Telethon client: {connect_err}")
             await client.disconnect()
-            await _cleanup_temp_files(tmp_session_path)
             return
+
+        # الإعداد اكتمل والمستمع حي — لا ننظّف الملف المؤقت عند الخروج
+        waiting_for_code = True
 
         # ملاحظة: الأحداث ستتم معالجتها من قبل Telethon تلقائياً
         # عند وصول رسالة من 777000، سيقوم المعالج بإرسال الكود للمستخدم
@@ -302,6 +317,6 @@ async def handle_txt_document(message: Message, bot) -> None:
         except Exception:
             pass
     finally:
-        # التأكد من تنظيف الموارد حتى لو وقعت أخطاء
-        if tmp_session_path:
+        # تنظيف الملف المؤقت إلا إذا كنا بانتظار الكود (المستمع سيتنظّف بنفسه)
+        if tmp_session_path and not waiting_for_code:
             await _cleanup_temp_files(tmp_session_path)
