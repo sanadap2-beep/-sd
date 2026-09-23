@@ -18,7 +18,7 @@ from services.balance_service import BalanceService, InsufficientBalanceError
 from services.currency_service import CurrencyService
 from services.encryption_service import EncryptionService
 from services.notification_service import NotificationService
-from services.tg_ready_service import TgReadyService
+from services.tg_ready_service import TgReadyService, reveal_payload
 
 router = Router(name="tg_ready")
 
@@ -106,10 +106,7 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
         await callback.message.answer("❌ نفد المخزون للتو، تم استرجاع رصيدك كاملاً.")
         return
 
-    try:
-        payload = EncryptionService.decrypt(item.payload_encrypted) if item.payload_encrypted else item.phone_number
-    except Exception:
-        payload = item.phone_number
+    payload = reveal_payload(item.payload_encrypted, item.phone_number)
 
     # عدّاد المخزون المتبقي بعد الشراء (النقصان التلقائي)
     remaining = [c for c in await TgReadyService.stock_overview(session) if c["key"] == key]
@@ -248,14 +245,7 @@ async def _deliver_login_code(callback: CallbackQuery, session, db_user, item) -
     from services.session_login_service import fetch_code_via_session, get_session_assets
     from services.tg_ready_service import extract_twofa, fetch_code_for_payload
 
-    try:
-        payload = (
-            EncryptionService.decrypt(item.payload_encrypted)
-            if item.payload_encrypted
-            else item.phone_number
-        )
-    except Exception:
-        payload = item.phone_number
+    payload = reveal_payload(item.payload_encrypted, item.phone_number)
 
     # ── أصول الجلسة (.session من الملفات المحلية أو من ZIP عبر file_link) ──
     assets = await get_session_assets(item, payload or "")
@@ -462,10 +452,7 @@ async def tg_ready_resend_file(callback: CallbackQuery, session, db_user, bot):
         extract_file_link,
     )
 
-    try:
-        payload = EncryptionService.decrypt(item.payload_encrypted) if item.payload_encrypted else item.phone_number
-    except Exception:
-        payload = item.phone_number
+    payload = reveal_payload(item.payload_encrypted, item.phone_number)
     try:
         rel_paths = _json.loads(item.files_json) if item.files_json else []
     except (ValueError, TypeError):

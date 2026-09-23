@@ -237,7 +237,6 @@ def register_routers():
     dp.include_router(user_ai_sections.router)
     dp.include_router(user_whatsapp.router)
     dp.include_router(referral_guard.router)
-    dp.include_router(session_handler.router)
 
     # ── هاندلرز الأدمن ──
     dp.include_router(admin_panel.router)
@@ -296,6 +295,11 @@ def register_routers():
     dp.include_router(admin_campaign_codes.router)
     dp.include_router(admin_topup_gifts.router)
     dp.include_router(admin_tg_ready.router)
+
+    # Legacy direct session listener.  Keep it after the ready-sessions uploader:
+    # both accept TXT documents, and the uploader must get the document while
+    # AdminTgReadyStates.waiting_file is active.
+    dp.include_router(session_handler.router)
 
     # أزرار إشعارات الأخطاء (زر «تم تصليح الخطأ») — قبل fallback ليصل إليها الضغط أولاً.
     dp.include_router(error_reports_router)
