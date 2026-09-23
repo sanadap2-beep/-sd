@@ -2518,6 +2518,10 @@ class WaSubscription(Base):
     # آخر باقة اشتراها (للإظهار).
     last_package_days: Mapped[int] = mapped_column(Integer, default=1)
     last_renewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # منذ متى أُعلن الربط (يرجعها الجسر في /link/status).
+    connected_since: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # آخر سبب فشل ربط/جسر — يظهر للأدمن في شاشة المشتركين.
+    link_error: Mapped[str | None] = mapped_column(String(300), nullable=True)
     # منع تكرار تنبيه الانتهاء.
     expire_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

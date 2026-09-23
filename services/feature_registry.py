@@ -580,6 +580,11 @@ FEATURES: tuple[FeatureSpec, ...] = (
         price_per_day_usd=1.0,
         auto_renew_default=True,
         reminder_hours_before=12,
+        # حجم صفحة قائمة البوت الثاني داخل بوت SD + مدة صلاحية كاش القائمة.
+        menu_page_size=12,
+        menu_cache_ttl_minutes=30,
+        # عدد إخفاقات الجسر المتتالية قبل تنبيه الأدمن (فحص دوري كل 10 دقائق).
+        bridge_alert_failures=3,
         packages_json=[
             {"days": 1, "price_usd": 1.0},
             {"days": 3, "price_usd": 2.85},
