@@ -188,6 +188,24 @@ async def test_import_groups_countries_and_buy_decrements_stock():
     assert True
 
 
+def test_ready_section_explains_code_and_no_refund():
+    from handlers.tg_ready import _LIST_TEXT, _SECTION_INTRO, _country_caption
+    from keyboards.tg_ready import tg_ready_entry_kb
+
+    assert "100/100" in _SECTION_INTRO
+    assert "إعادة الرصيد" in _SECTION_INTRO
+    assert "طلب الكود" in _SECTION_INTRO
+    assert _SECTION_INTRO in _LIST_TEXT
+    caption = _country_caption({"flag": "🇸🇾", "name": "سوريا", "stock": 3}, "0.60$")
+    assert "إعادة الرصيد" in caption
+    assert "tdata" not in caption
+    kb = tg_ready_entry_kb(4)
+    button = kb.inline_keyboard[0][0]
+    assert button.text.startswith("📦 أرقام تلجرام — جلسات")
+    assert button.style == "success"
+    assert button.callback_data == "tgready:list"
+
+
 def test_public_notice_hides_phone_and_buyer_id():
     from services.bot_identity import tg_ready_start_link
     from services.notification_service import (

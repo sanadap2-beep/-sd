@@ -5,7 +5,7 @@
 """
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery
+from aiogram.types import CallbackQuery
 
 from database.models import TgReadyItem, TransactionType
 from keyboards.main_menu import back_to_main_kb, insufficient_balance_kb
@@ -16,19 +16,26 @@ from keyboards.tg_ready import (
 )
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.currency_service import CurrencyService
-from services.encryption_service import EncryptionService
 from services.notification_service import NotificationService
 from services.tg_ready_service import TgReadyService, reveal_payload
 
 router = Router(name="tg_ready")
 
+_SECTION_INTRO = (
+    "هذا القسم يحتوي على أرقام تلجرام نسبة وصول كودها <b>100/100</b>.\n"
+    "فقط عليك شراء رقم وطلب كوده، وبعدها الضغط على «طلب الكود» "
+    "وسيصلك الكود والرمز السري.\n\n"
+    "⚠️ <b>تنويه:</b> هذا القسم ليس فيه إعادة الرصيد أبداً، "
+    "لأن نسبة وصول الكود مؤكدة."
+)
 _LIST_TEXT = (
-    "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
-    "اختر الدولة: السعر يشمل الحساب كاملاً مع بيانات الدخول.\n"
-    "التسليم فوري والمخزون ينقص تلقائياً بعد كل شراء."
+    "📦 <b>أرقام تلجرام — جلسات</b>\n\n"
+    f"{_SECTION_INTRO}\n\n"
+    "اختر الدولة:"
 )
 _EMPTY_TEXT = (
-    "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
+    "📦 <b>أرقام تلجرام — جلسات</b>\n\n"
+    f"{_SECTION_INTRO}\n\n"
     "❌ لا يوجد مخزون متاح حالياً.\nيرجى المحاولة لاحقاً."
 )
 
@@ -38,8 +45,7 @@ def _country_caption(entry: dict, price_display: str) -> str:
         f"{entry['flag']} <b>{entry['name']}</b>\n\n"
         f"💰 <b>السعر:</b> <b>{price_display}</b>\n"
         f"📦 <b>المتاح الآن:</b> <b>{entry['stock']}</b>\n\n"
-        "📎 <b>ستستلم:</b> الرقم + بيانات الجلسة (tdata/session) + كلمة 2FA إن وجدت.\n"
-        "⚡️ التسليم فوري بعد التأكيد."
+        f"{_SECTION_INTRO}"
     )
 
 
@@ -85,11 +91,7 @@ async def tg_ready_country(callback: CallbackQuery, session, db_user=None):
         return
     price_display = await CurrencyService.format_dual(entry["price"], db_user, session)
     await callback.message.edit_text(
-        f"{entry['flag']} <b>{entry['name']}</b>\n\n"
-        f"💰 <b>السعر:</b> <b>{price_display}</b>\n"
-        f"📦 <b>المتاح الآن:</b> <b>{entry['stock']}</b>\n\n"
-        "📎 <b>ستستلم:</b> الرقم + بيانات الجلسة (tdata/session) + كلمة 2FA إن وجدت.\n"
-        "⚡️ التسليم فوري بعد التأكيد.",
+        _country_caption(entry, price_display),
         reply_markup=tg_ready_confirm_kb(key),
     )
     await callback.answer()
@@ -137,48 +139,9 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
         await callback.message.answer("❌ نفد المخزون للتو، تم استرجاع رصيدك كاملاً.")
         return
 
-    payload = reveal_payload(item.payload_encrypted, item.phone_number)
-
-    # عدّاد المخزون المتبقي بعد الشراء (النقصان التلقائي)
+    # لا يُرسل ملف جلسة أبداً. الزبون يرى الرقم وزر «طلب الكود» فقط.
     remaining = [c for c in await TgReadyService.stock_overview(session) if c["key"] == key]
     left = remaining[0]["stock"] if remaining else 0
-
-    import json as _json
-
-    from services.tg_ready_service import (
-        build_account_zip,
-        download_file_bytes,
-        extract_file_link,
-        extract_twofa,
-    )
-
-    file_link = extract_file_link(payload)
-    twofa = extract_twofa(payload)
-    try:
-        rel_paths = _json.loads(item.files_json) if item.files_json else []
-    except (ValueError, TypeError):
-        rel_paths = []
-
-    # رسالة مبسطة: الرقم + خطوتان فقط (بدون إغراق المستخدم بالروابط الخام).
-    # ملف ZIP يُرسل تلقائياً بالأسفل، والكود يُجلب بزر «طلب الكود».
-    has_session_file = bool(rel_paths) or bool(file_link)
-    twofa_line = f"\n🔐 <b>كلمة 2FA:</b> <code>{twofa}</code>" if twofa else ""
-    if has_session_file:
-        how_to = (
-            "📁 <b>الدخول بدون كود (الأسهل):</b> حمّل ملف الـ ZIP بالأسفل وفك ضغطه — "
-            "ستجد ملف <code>.session</code> + مجلد <code>tdata</code> + كلمة 2FA بملف <code>2FA.txt</code>."
-            f"{twofa_line}\n\n"
-            "🔢 <b>أو الدخول بالرقم:</b>\n"
-            "1) افتح تيليجرام وأدخل الرقم فوق واطلب الكود حتى ترى شاشة إدخال الكود\n"
-            "2) اضغط زر «📩 طلب الكود» هنا — البوت يجيبه لك تلقائياً"
-        )
-    else:
-        how_to = (
-            "🔢 <b>طريقة الدخول:</b>\n"
-            "1) افتح تيليجرام وأدخل الرقم فوق واطلب الكود حتى ترى شاشة إدخال الكود\n"
-            "2) اضغط زر «📩 طلب الكود» هنا — البوت يجيبه لك تلقائياً"
-            f"{twofa_line}"
-        )
 
     await callback.message.answer(
         f"✅ <b>تم الشراء بنجاح!</b>\n\n"
@@ -186,51 +149,11 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
         f"📱 الرقم: <code>{item.phone_number}</code>\n"
         f"💰 السعر: <b>{price}$</b>\n"
         f"📦 المتبقي من هذه الدولة: <b>{left}</b>\n\n"
-        f"{how_to}\n\n"
-        "⚠️ سجّل الدخول فوراً. الدعم خلال 24 ساعة للاستبدال.",
+        "افتح تيليجرام وأدخل الرقم واطلب الكود، ثم اضغط «📩 طلب الكود» "
+        "وسيصلك الكود والرمز السري.\n\n"
+        "⚠️ لا يُعاد الرصيد في هذا القسم.",
         reply_markup=tg_ready_owned_kb(item.id),
     )
-    # تسليم الملفات: أرشيف ZIP بملفات الجلسة الفعلية إن وُجدت،
-    # وإلا تحميل ZIP من رابط الملف مباشرة، وإلا ملف نصي.
-    try:
-        built = build_account_zip(item.phone_number, rel_paths) if rel_paths else None
-        if built is not None:
-            fname, blob = built
-            await bot.send_document(
-                chat_id=db_user.telegram_id,
-                document=BufferedInputFile(blob, filename=fname),
-                caption="📁 ملفات الجلسة — فك الضغط وسجّل الدخول مباشرة بلا كود",
-            )
-        elif file_link:
-            blob = await download_file_bytes(file_link)
-            if blob is not None:
-                fname = f"telegram_session_{item.phone_number.replace('+', '')}.zip"
-                # إن لم يكن zip فعلياً أرسله كما هو مع تنبيه
-                await bot.send_document(
-                    chat_id=db_user.telegram_id,
-                    document=BufferedInputFile(blob, filename=fname),
-                    caption="📁 ملف الجلسة من رابط البائع — فك الضغط وسجّل الدخول مباشرة",
-                )
-            else:
-                await bot.send_document(
-                    chat_id=db_user.telegram_id,
-                    document=BufferedInputFile(
-                        f"رقم: {item.phone_number}\nالدولة: {item.country_name_ar}\n\n{payload}\n".encode("utf-8-sig"),
-                        filename=f"telegram_session_{item.phone_number.replace('+', '')}.txt",
-                    ),
-                    caption="📎 ملف بيانات الجلسة — رابط ZIP بالداخل، اضغط عليه للتحميل",
-                )
-        else:
-            await bot.send_document(
-                chat_id=db_user.telegram_id,
-                document=BufferedInputFile(
-                    f"رقم: {item.phone_number}\nالدولة: {item.country_name_ar}\n\n{payload}\n".encode("utf-8-sig"),
-                    filename=f"telegram_session_{item.phone_number.replace('+', '')}.txt",
-                ),
-                caption="📎 ملف بيانات الجلسة — احتفظ به بمكان آمن",
-            )
-    except Exception:
-        pass
 
     try:
         notifier = NotificationService(bot)
@@ -405,8 +328,8 @@ async def _deliver_login_code(callback: CallbackQuery, session, db_user, item) -
     if sess_err == "not_authorized":
         extra = f"\n🔐 كلمة 2FA: <code>{twofa_show}</code>" if twofa_show else ""
         await callback.message.answer(
-            f"⚠️ ملف جلسة الرقم <code>{item.phone_number}</code> لم يعد صالحاً للدخول.\n"
-            f"استخدم ملف ZIP الذي استلمته يدوياً أو تواصل مع الدعم للحصول على بديل.{extra}",
+            f"⚠️ تعذّر جلب كود الرقم <code>{item.phone_number}</code> الآن.\n"
+            f"أعد الضغط على «📩 طلب الكود» بعد قليل، أو تواصل مع الدعم.{extra}",
             reply_markup=tg_ready_owned_kb(item.id),
         )
         return
@@ -414,7 +337,7 @@ async def _deliver_login_code(callback: CallbackQuery, session, db_user, item) -
     if sess_err == "not_configured":
         await callback.message.answer(
             "⚠️ خدمة جلب الكود المباشر غير مُفعّلة حالياً.\n"
-            "تواصل مع الدعم — أو ادخل بالملف (ZIP) الذي استلمته مباشرة بلا كود.",
+            "تواصل مع الدعم ثم أعد الضغط على «📩 طلب الكود».",
             reply_markup=tg_ready_owned_kb(item.id),
         )
         return
@@ -489,6 +412,7 @@ async def tg_ready_request_code(callback: CallbackQuery, session, db_user, bot):
 
 @router.callback_query(F.data.startswith("tgready:file:"))
 async def tg_ready_resend_file(callback: CallbackQuery, session, db_user, bot):
+    """أزرار قديمة كانت ترسل ملف الجلسة — القسم لم يعد يسلّم أي ملف."""
     try:
         item_id = int(callback.data.rsplit(":", 1)[-1])
     except (ValueError, TypeError):
@@ -498,50 +422,9 @@ async def tg_ready_resend_file(callback: CallbackQuery, session, db_user, bot):
     if item is None or item.buyer_user_id != db_user.id:
         await callback.answer("⚠️ هذا الرقم ليس لك.", show_alert=True)
         return
-    await callback.answer("⏳ جاري تجهيز ملف الجلسة...")
-
-    import json as _json
-
-    from services.tg_ready_service import (
-        build_account_zip,
-        download_file_bytes,
-        extract_file_link,
+    await callback.answer("هذا القسم لا يرسل ملف جلسة.", show_alert=True)
+    await callback.message.answer(
+        f"📱 الرقم: <code>{item.phone_number}</code>\n\n"
+        "لا يُرسل ملف جلسة. اضغط «📩 طلب الكود» بعد طلب الكود من تيليجرام.",
+        reply_markup=tg_ready_owned_kb(item.id),
     )
-
-    payload = reveal_payload(item.payload_encrypted, item.phone_number)
-    try:
-        rel_paths = _json.loads(item.files_json) if item.files_json else []
-    except (ValueError, TypeError):
-        rel_paths = []
-
-    try:
-        built = build_account_zip(item.phone_number, rel_paths) if rel_paths else None
-        if built is not None:
-            fname, blob = built
-            await bot.send_document(
-                chat_id=db_user.telegram_id,
-                document=BufferedInputFile(blob, filename=fname),
-                caption="📁 ملفات الجلسة — فك الضغط وسجّل الدخول مباشرة بلا كود",
-            )
-            return
-        file_link = extract_file_link(payload or "")
-        if file_link:
-            blob = await download_file_bytes(file_link)
-            if blob is not None:
-                await bot.send_document(
-                    chat_id=db_user.telegram_id,
-                    document=BufferedInputFile(
-                        blob, filename=f"telegram_session_{item.phone_number.replace('+', '')}.zip"
-                    ),
-                    caption=f"📁 ملف الجلسة للرقم <code>{item.phone_number}</code>",
-                    parse_mode="HTML",
-                )
-                return
-            await callback.message.answer(
-                f"📁 رابط ملف الجلسة:\n{file_link}\n\nاضغط عليه — بينزل عندك ملف ZIP.",
-                reply_markup=tg_ready_owned_kb(item.id),
-            )
-            return
-        await callback.message.answer("⚠️ لا يوجد ملف جلسة مخزن لهذا الرقم.")
-    except Exception:
-        await callback.message.answer("⚠️ تعذّر إرسال الملف الآن، حاول مجدداً.")

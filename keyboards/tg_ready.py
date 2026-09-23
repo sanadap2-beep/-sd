@@ -10,6 +10,7 @@ def tg_ready_countries_kb(countries: list[dict]) -> InlineKeyboardMarkup:
         b.button(
             text=f"{c['flag']} {c['name']} — {c['price']}$ ({c['stock']})",
             callback_data=f"tgready:country:{c['key']}",
+            style="success",
         )
     b.button(text="🏠 القائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)
@@ -18,7 +19,11 @@ def tg_ready_countries_kb(countries: list[dict]) -> InlineKeyboardMarkup:
 
 def tg_ready_confirm_kb(country_key: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="✅ تأكيد الشراء الآن", callback_data=f"tgready:buy:{country_key}")
+    b.button(
+        text="✅ تأكيد الشراء الآن",
+        callback_data=f"tgready:buy:{country_key}",
+        style="primary",
+    )
     b.button(text="🔙 رجوع للدول", callback_data="tgready:list")
     b.adjust(1)
     return b.as_markup()
@@ -27,8 +32,12 @@ def tg_ready_confirm_kb(country_key: str) -> InlineKeyboardMarkup:
 def tg_ready_after_kb(item_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if item_id:
-        b.button(text="📩 طلب الكود", callback_data=f"tgready:code:{item_id}")
-    b.button(text="🔄 شراء رقم آخر", callback_data="tgready:list")
+        b.button(
+            text="📩 طلب الكود",
+            callback_data=f"tgready:code:{item_id}",
+            style="success",
+        )
+    b.button(text="🔄 شراء رقم آخر", callback_data="tgready:list", style="success")
     b.button(text="🏠 القائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)
     return b.as_markup()
@@ -44,8 +53,9 @@ def tg_ready_entry_kb(total: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if total > 0:
         b.button(
-            text=f"📦 حسابات جاهزة — جلسات (متاح {total})",
+            text=f"📦 أرقام تلجرام — جلسات (متاح {total})",
             callback_data="tgready:list",
+            style="success",
         )
     return b.as_markup()
 
