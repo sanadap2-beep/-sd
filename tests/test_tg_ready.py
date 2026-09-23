@@ -186,3 +186,76 @@ async def test_import_groups_countries_and_buy_decrements_stock():
         # أبقِ سجل الدولة (يُعاد استخدامه) لكن أعد سعره الافتراضي إن لزم
         await session.commit()
     assert True
+
+
+def test_public_notice_hides_phone_and_buyer_id():
+    from services.bot_identity import tg_ready_start_link
+    from services.notification_service import (
+        build_tg_ready_public_text,
+        mask_ready_buyer,
+        mask_ready_phone,
+    )
+
+    phone = "+963944000001"
+    buyer = "591234521"
+    text = build_tg_ready_public_text(
+        country_name="سوريا",
+        country_flag="🇸🇾",
+        price_usd="0.60",
+        remaining=12,
+        phone_number=phone,
+        buyer_telegram_id=buyer,
+    )
+    assert "سوريا" in text
+    assert "0.60$" in text
+    assert "12" in text
+    assert mask_ready_phone(phone) in text
+    assert mask_ready_buyer(buyer) in text
+    assert phone not in text
+    assert buyer not in text
+    assert "47291" not in text
+    assert tg_ready_start_link("shop_bot", "963") == "https://t.me/shop_bot?start=tgr_963"
+    assert tg_ready_start_link("shop_bot") == "https://t.me/shop_bot?start=tgready"
+
+
+async def test_force_all_activates_existing_while_normal_upload_skips_dupes():
+    from sqlalchemy import delete, select
+
+    from database.models import TgReadyItem, TgReadyItemStatus
+
+    suffix = str(int(time.time() * 1000))[-7:]
+    phone = f"+963944{suffix}"
+    first = parse_text_entries(f"{phone}|old-session")
+    async with async_session_maker() as session:
+        first_result = await TgReadyService.import_entries(
+            session, first, Decimal("0.40"), Decimal("50"), file_name="first.txt"
+        )
+    assert first_result["added"] == 1
+    assert first_result["dupes"] == 0
+
+    again = parse_text_entries(f"https://dl-cloude.org/c/NEW|{phone}|fresh")
+    async with async_session_maker() as session:
+        skipped = await TgReadyService.import_entries(
+            session, again, Decimal("0.40"), Decimal("50"), file_name="again.txt"
+        )
+    assert skipped["added"] == 0
+    assert skipped["dupes"] == 1
+
+    async with async_session_maker() as session:
+        forced = await TgReadyService.import_entries(
+            session,
+            again,
+            Decimal("0.50"),
+            Decimal("50"),
+            file_name="force.txt",
+            force_all=True,
+        )
+        item = (
+            await session.execute(select(TgReadyItem).where(TgReadyItem.phone_number == phone))
+        ).scalar_one()
+        assert forced["added"] == 1
+        assert forced["dupes"] == 0
+        assert item.status == TgReadyItemStatus.AVAILABLE
+        assert item.price_usd == Decimal("0.7500")
+        await session.execute(delete(TgReadyItem).where(TgReadyItem.phone_number == phone))
+        await session.commit()

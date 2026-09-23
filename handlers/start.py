@@ -237,6 +237,13 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
                 )
                 return
 
+    if args in ("tgready", "tgr") or (args and args.startswith("tgr_")):
+        from handlers.tg_ready import present_tg_ready
+
+        country_key = args[4:] if args.startswith("tgr_") else None
+        await present_tg_ready(message, session, db_user, country_key or None)
+        return
+
     # 4. رسالة الترحيب الافتراضية
     default_name = "friend" if db_user.language_code == "en" else "عزيزي"
     welcome_msg = await SettingsService.get(

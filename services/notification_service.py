@@ -49,6 +49,67 @@ def _mask_customer(telegram_id) -> str:
     return "••••••"
 
 
+def mask_ready_phone(phone: str) -> str:
+    """إخفاء رقم الجلسة الجاهزة: مقدمة الدولة ظاهرة والباقي مخفي."""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if len(digits) < 6:
+        return "••••••"
+    hidden = max(3, len(digits) - 6)
+    return f"+{digits[:4]}{'•' * hidden}{digits[-2:]}"
+
+
+def mask_ready_buyer(telegram_id) -> str:
+    """إخفاء آيدي مشتري الجلسة: أول رقمين + •••• + آخر رقمين."""
+    digits = "".join(ch for ch in str(telegram_id or "") if ch.isdigit())
+    if len(digits) >= 6:
+        return f"{digits[:2]}••••{digits[-2:]}"
+    return "••••••"
+
+
+def format_ready_price(price_usd) -> str:
+    from decimal import Decimal, InvalidOperation
+
+    try:
+        return f"{Decimal(str(price_usd)):.2f}"
+    except (InvalidOperation, ValueError, TypeError):
+        return "0.00"
+
+
+def build_tg_ready_public_text(
+    *,
+    country_name: str,
+    country_flag: str,
+    price_usd,
+    remaining: int,
+    phone_number: str,
+    buyer_telegram_id,
+) -> str:
+    """قالب إشعار القناة العامة بعد وصول كود الجلسة الجاهزة بنجاح."""
+    sep = "▬" * 16
+    try:
+        left = max(0, int(remaining))
+    except (TypeError, ValueError):
+        left = 0
+    flag = country_flag or "🌍"
+    name = country_name or "غير معروف"
+    return (
+        "🔔 <b>تفعيل جلسة تلجرام جاهزة</b>\n"
+        f"{sep}\n"
+        f"🌍 الدولة : {esc(flag)} {esc(name)}\n"
+        f"💰 السعر : <b>{format_ready_price(price_usd)}$</b>\n"
+        f"📦 الكمية المتبقية : <b>{left}</b>\n"
+        f"📱 الرقم : <code>{esc(mask_ready_phone(phone_number))}</code>\n"
+        f"🆔 المشتري : <code>{esc(mask_ready_buyer(buyer_telegram_id))}</code>\n"
+        "✅ الحالة : وصل الكود بنجاح\n"
+        f"{sep}\n"
+        "⚡️ تسليم فوري — حساب جاهز للدخول"
+    )
+
+
+# عناصر أُعلن عنها في هذه العملية — يمنع النشر المزدوج قبل ما يُحفظ المفتاح.
+_TG_READY_ANNOUNCED: set[int] = set()
+
+
 class NotificationService:
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -387,6 +448,78 @@ class NotificationService:
             )
 
         await self.notify_public_channel(text, reply_markup=reply_markup)
+
+    async def notify_successful_tg_ready(
+        self,
+        *,
+        country_name: str,
+        country_flag: str,
+        price_usd,
+        remaining: int,
+        phone_number: str,
+        buyer_telegram_id,
+        item_id: int,
+        country_key: str | None = None,
+    ) -> bool:
+        """إشعار القناة العامة عند وصول كود جلسة جاهزة بنجاح — مرة واحدة لكل رقم."""
+        try:
+            item_key = int(item_id)
+        except (TypeError, ValueError):
+            return False
+        dedupe = f"tgready_public:{item_key}"
+        if item_key in _TG_READY_ANNOUNCED:
+            return False
+        from services.notification_center_service import NotificationCenterService
+
+        if await NotificationCenterService.was_sent(dedupe):
+            _TG_READY_ANNOUNCED.add(item_key)
+            return False
+
+        text = build_tg_ready_public_text(
+            country_name=country_name,
+            country_flag=country_flag,
+            price_usd=price_usd,
+            remaining=remaining,
+            phone_number=phone_number,
+            buyer_telegram_id=buyer_telegram_id,
+        )
+        reply_markup = None
+        try:
+            from services.bot_identity import resolve_bot_username, tg_ready_start_link
+
+            username = await resolve_bot_username(self.bot)
+            link = tg_ready_start_link(username, country_key)
+            if link:
+                label = f"⚡ اطلب جلسة {country_flag or ''} {country_name or ''}".strip()
+                if len(label) > 60:
+                    label = "⚡ اطلب جلسة تلجرام جاهزة"
+                reply_markup = InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text=label, url=link)]]
+                )
+        except Exception:
+            reply_markup = None
+
+        ok = await self.notify_public_channel(text, reply_markup=reply_markup)
+        if not ok:
+            return False
+        _TG_READY_ANNOUNCED.add(item_key)
+        try:
+            from database.engine import async_session_maker
+
+            async with async_session_maker() as session:
+                await NotificationCenterService.record(
+                    session,
+                    channel="public",
+                    category="order",
+                    priority="normal",
+                    title="تفعيل جلسة تلجرام جاهزة",
+                    body=text,
+                    status="sent",
+                    dedupe_key=dedupe,
+                )
+        except Exception:
+            logger.warning("تعذر تسجيل إشعار الجلسة الجاهزة في السجل، والمنشور أُرسل.")
+        return True
 
     async def notify_successful_unified_order(
         self,

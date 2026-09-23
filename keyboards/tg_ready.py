@@ -55,6 +55,7 @@ def admin_tg_ready_kb(
 ) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="📤 رفع ملف أرقام جديد", callback_data="admin:tg_ready_upload")
+    b.button(text="إضافة الكل", callback_data="admin:tg_ready_upload_all")
     b.button(text=f"💰 نسبة الربح الحالية: {margin}% (تغيير)", callback_data="admin:tg_ready_margin")
     for c in countries:
         b.button(

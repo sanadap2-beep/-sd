@@ -87,6 +87,22 @@ def referral_start_link(username: str, telegram_id: int) -> str:
     return f"https://t.me/{clean}?start=ref_{int(telegram_id)}"
 
 
+def tg_ready_start_link(username: str, country_key: str | None = None) -> str:
+    """رابط شراء جلسة تلجرام جاهزة من القناة العامة.
+
+    ``start=tgready`` يفتح القائمة، و``start=tgr_{country}`` يفتح دولة بعينها.
+    حمولة ``start`` محدودة بـ 64 بايت.
+    """
+    clean = normalize_bot_username(username)
+    if not clean:
+        return ""
+    key = re.sub(r"[^A-Za-z0-9_]", "", str(country_key or ""))
+    payload = f"tgr_{key}" if key else "tgready"
+    if len(payload.encode("utf-8")) > 64:
+        payload = "tgready"
+    return f"https://t.me/{clean}?start={payload}"
+
+
 def number_buy_start_link(username: str, service_code: str, country_id: int) -> str:
     """Build a buy deep link for the live availability channel.
 

@@ -22,24 +22,55 @@ from services.tg_ready_service import TgReadyService, reveal_payload
 
 router = Router(name="tg_ready")
 
+_LIST_TEXT = (
+    "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
+    "اختر الدولة: السعر يشمل الحساب كاملاً مع بيانات الدخول.\n"
+    "التسليم فوري والمخزون ينقص تلقائياً بعد كل شراء."
+)
+_EMPTY_TEXT = (
+    "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
+    "❌ لا يوجد مخزون متاح حالياً.\nيرجى المحاولة لاحقاً."
+)
+
+
+def _country_caption(entry: dict, price_display: str) -> str:
+    return (
+        f"{entry['flag']} <b>{entry['name']}</b>\n\n"
+        f"💰 <b>السعر:</b> <b>{price_display}</b>\n"
+        f"📦 <b>المتاح الآن:</b> <b>{entry['stock']}</b>\n\n"
+        "📎 <b>ستستلم:</b> الرقم + بيانات الجلسة (tdata/session) + كلمة 2FA إن وجدت.\n"
+        "⚡️ التسليم فوري بعد التأكيد."
+    )
+
+
+async def present_tg_ready(message, session, db_user, country_key: str | None = None) -> None:
+    """فتح قسم الجلسات الجاهزة من رابط القناة العامة."""
+    from services.currency_service import CurrencyService
+
+    countries = await TgReadyService.stock_overview(session)
+    if country_key:
+        entry = next((c for c in countries if c["key"] == country_key), None)
+        if entry is not None:
+            price_display = await CurrencyService.format_dual(entry["price"], db_user, session)
+            await message.answer(
+                _country_caption(entry, price_display),
+                reply_markup=tg_ready_confirm_kb(country_key),
+            )
+            return
+    if not countries:
+        await message.answer(_EMPTY_TEXT, reply_markup=back_to_main_kb())
+        return
+    await message.answer(_LIST_TEXT, reply_markup=tg_ready_countries_kb(countries))
+
 
 @router.callback_query(F.data == "tgready:list")
 async def tg_ready_list(callback: CallbackQuery, session, db_user=None):
     countries = await TgReadyService.stock_overview(session)
     if not countries:
-        await callback.message.edit_text(
-            "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
-            "❌ لا يوجد مخزون متاح حالياً.\nيرجى المحاولة لاحقاً.",
-            reply_markup=back_to_main_kb(),
-        )
+        await callback.message.edit_text(_EMPTY_TEXT, reply_markup=back_to_main_kb())
         await callback.answer()
         return
-    await callback.message.edit_text(
-        "📦 <b>حسابات تلجرام جاهزة — جلسات</b>\n\n"
-        "اختر الدولة: السعر يشمل الحساب كاملاً مع بيانات الدخول.\n"
-        "التسليم فوري والمخزون ينقص تلقائياً بعد كل شراء.",
-        reply_markup=tg_ready_countries_kb(countries),
-    )
+    await callback.message.edit_text(_LIST_TEXT, reply_markup=tg_ready_countries_kb(countries))
     await callback.answer()
 
 
@@ -222,6 +253,29 @@ _CODE_COOLDOWN_SECONDS = 20
 _CODE_INFLIGHT: set[int] = set()
 
 
+async def _announce_ready_code(callback: CallbackQuery, session, db_user, item) -> None:
+    """نشر إشعار القناة العامة بعد وصول الكود بنجاح. الفشل لا يقطع التسليم."""
+    try:
+        from services.notification_service import NotificationService
+
+        overview = await TgReadyService.stock_overview(session)
+        match = next((c for c in overview if c["key"] == item.country_key), None)
+        left = int(match["stock"]) if match else 0
+        notifier = NotificationService(callback.bot)
+        await notifier.notify_successful_tg_ready(
+            country_name=item.country_name_ar,
+            country_flag=item.flag,
+            price_usd=item.price_usd,
+            remaining=left,
+            phone_number=item.phone_number,
+            buyer_telegram_id=db_user.telegram_id,
+            item_id=item.id,
+            country_key=item.country_key,
+        )
+    except Exception:
+        return
+
+
 async def _send_code_result(callback: CallbackQuery, item, codes: list[str], twofa_show) -> None:
     """إرسال رسالة الكود الناجحة (قالب موحّد لكل المسارات)."""
     best = codes[0]
@@ -286,6 +340,7 @@ async def _deliver_login_code(callback: CallbackQuery, session, db_user, item) -
         )
         if sres.get("ok"):
             await _send_code_result(callback, item, [str(sres["code"])], twofa)
+            await _announce_ready_code(callback, session, db_user, item)
             return
         sess_err = str(sres.get("error") or "")
         sess_retry = int(sres.get("retry_after") or 0)
@@ -302,6 +357,7 @@ async def _deliver_login_code(callback: CallbackQuery, session, db_user, item) -
 
     if codes:
         await _send_code_result(callback, item, codes, twofa_show)
+        await _announce_ready_code(callback, session, db_user, item)
         return
 
     # ── أولوية رسائل الخطأ حسب حالة المسارين ──
