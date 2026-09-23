@@ -1,7 +1,7 @@
 """مخزون الجلسات الجاهزة (أرقام تلجرام الجاهزة) — فرز تلقائي من ملف.
 
 الأدمن يرفع ملف واحد (txt / csv / zip بأسماء ملفات تحوي أرقاماً)، والبوت:
-1) يستخرج كل الأرقام، 2) يتعرف على الدولة من مقدمة الرقم (الاسم + العلم)،
+1) يستخرج كل الأرقام، 2) يتعرف على الدولة من مقدمة الرقم (الاسم + العلم),
 3) يحسب سعر البيع = التكلفة + نسبة الربح، 4) يجمّع الدول تلقائياً كمخزون جاهز.
 عند كل عملية شراء ينقص المخزون تلقائياً (عدّ العناصر المتاحة live).
 """
@@ -14,7 +14,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation, ROUND_UP
+from decimal import Decimal, ROUND_UP
 from pathlib import Path
 
 from sqlalchemy import func, select, update
@@ -130,7 +130,7 @@ DIAL_MAP: dict[str, tuple[str, str]] = {
     "350": ("جبل طارق", "🇬🇮"),
     "351": ("البرتغال", "🇵🇹"),
     "352": ("لوكسمبورغ", "🇱🇺"),
-    "353": ("إيرلندا", "🇮🇪"),
+    "353": ("أيرلندا", "🇮🇪"),
     "354": ("آيسلندا", "🇮🇸"),
     "355": ("ألبانيا", "🇦🇱"),
     "356": ("مالطا", "🇲🇹"),
@@ -153,8 +153,8 @@ DIAL_MAP: dict[str, tuple[str, str]] = {
     "384": ("كوسوفو", "🇽🇰"),
     "385": ("كرواتيا", "🇭🇷"),
     "386": ("سلوفينيا", "🇸🇮"),
-    "387": ("البوسنة", "🇧🇦"),
-    "389": ("مقدونيا", "🇲🇰"),
+    "387": ("البوسنة والهرسك", "🇧🇦"),
+    "389": ("مقدونيا الشمالية", "🇲🇰"),
     "420": ("التشيك", "🇨🇿"),
     "421": ("سلوفاكيا", "🇸🇰"),
     "423": ("ليختنشتاين", "🇱🇮"),
@@ -178,7 +178,7 @@ DIAL_MAP: dict[str, tuple[str, str]] = {
     "672": ("القارة القطبية", "🇦🇶"),
     "673": ("بروناي", "🇧🇳"),
     "674": ("ناورو", "🇳🇷"),
-    "675": ("بابوا غينيا", "🇵🇬"),
+    "675": ("بابوا غينيا الجديدة", "🇵🇬"),
     "676": ("تونغا", "🇹🇴"),
     "677": ("جزر سليمان", "🇸🇧"),
     "678": ("فانواتو", "🇻🇺"),
@@ -200,7 +200,7 @@ DIAL_MAP: dict[str, tuple[str, str]] = {
     "853": ("ماكاو", "🇲🇴"),
     "855": ("كمبوديا", "🇰🇭"),
     "856": ("لاوس", "🇱🇦"),
-    "880": ("بنغلادش", "🇧🇩"),
+    "880": ("بنغلاديش", "🇧🇩"),
     "886": ("تايوان", "🇹🇼"),
     "960": ("المالديف", "🇲🇻"),
     "961": ("لبنان", "🇱🇧"),
@@ -216,7 +216,7 @@ DIAL_MAP: dict[str, tuple[str, str]] = {
     "972": ("إسرائيل", "🇮🇱"),
     "973": ("البحرين", "🇧🇭"),
     "974": ("قطر", "🇶🇦"),
-    "975": ("بوتان", "🇧🇹"),
+    "975": ("بيلاروسيا", "🇧🇾"),
     "976": ("منغوليا", "🇲🇳"),
     "977": ("نيبال", "🇳🇵"),
     "992": ("طاجيكستان", "🇹🇯"),
@@ -255,6 +255,37 @@ def calc_sell_price(cost: Decimal, margin_percent: Decimal) -> Decimal:
 class ParsedEntry:
     phone: str
     payload: str  # السطر الأصلي كاملاً (رقم|سيشن|2FA...)
+
+
+def protect_payload(payload: str) -> str | None:
+    """حفظ حمولة السطر: مشفّرة إن توفّر المفتاح، وإلا صريحة — لا نضيع الروابط أبداً.
+
+    كان السلوك السابق: أي فشل تشفير (مفتاح ناقص) يسجّل payload_encrypted=None،
+    فيفقد المشتري رابط ZIP ورابط الكود ويظهر «لا توجد جلسة محفوظة».
+    """
+    if not payload:
+        return None
+    try:
+        from services.encryption_service import EncryptionService
+
+        return EncryptionService.encrypt(payload)
+    except Exception:
+        return payload
+
+
+def reveal_payload(stored: str | None, phone: str = "") -> str:
+    """قراءة الحمولة سواء كانت مشفّرة أو صريحة (رفعات قديمة بلا مفتاح)."""
+    if not stored:
+        return phone or ""
+    try:
+        from services.encryption_service import EncryptionService
+
+        return EncryptionService.decrypt(stored)
+    except Exception:
+        # ليست رمزاً مشفّراً صالحاً — إن بدت حمولة (روابط/مقسّم) استعملها كما هي
+        if "http" in stored or "|" in stored or stored.lstrip().startswith("+"):
+            return stored
+        return phone or ""
 
 
 def _norm_phone(raw: str) -> str | None:
@@ -473,7 +504,7 @@ def extract_all_links(payload: str) -> list[str]:
     if not payload:
         return []
     found: list[str] = []
-    for m in re.finditer(r"https?://[^\s'\"<>\|,;]+", payload):
+    for m in re.finditer(r"https?://[^\s'\"<>|,;]+", payload):
         url = m.group(0).rstrip(".,)")
         if url and url not in found:
             found.append(url)
@@ -548,7 +579,7 @@ def parse_login_codes(text: str) -> list[str]:
         return []
     # أكواد تيليجرام عادة 5 أرقام
     codes = re.findall(r"\b(\d{5,6})\b", text)
-    # رتّب: الأكواد القريبة من كلمات (code/login/telegram/كود) أولاً
+    # رتّب الأكواد القريبة من كلمات (code/login/telegram/كود) أولاً
     scored: list[tuple[int, str]] = []
     low = text.lower()
     for c in dict.fromkeys(codes):  # إزالة التكرار مع الحفاظ على الترتيب
@@ -589,10 +620,7 @@ async def _fetch_json(url: str, timeout_s: int = 20, method: str = "GET") -> dic
             timeout=aiohttp.ClientTimeout(total=timeout_s),
             headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
         ) as sess:
-            if method.upper() == "POST":
-                ctx = sess.post(url, allow_redirects=True)
-            else:
-                ctx = sess.get(url, allow_redirects=True)
+            ctx = sess.post(url, allow_redirects=True) if method.upper() == "POST" else sess.get(url, allow_redirects=True)
             async with ctx as resp:
                 if resp.status != 200:
                     return None
@@ -655,10 +683,6 @@ async def fetch_url_text(url: str, timeout_s: int = 20, max_chars: int = 200_000
             async with sess.get(url, allow_redirects=True) as resp:
                 if resp.status != 200:
                     return None
-                ctype = (resp.headers.get("Content-Type") or "").lower()
-                if "html" not in ctype and "text" not in ctype and "json" not in ctype:
-                    # قد تكون صفحة كود بلا content-type واضح — تابع القراءة بحذر
-                    pass
                 data = await resp.content.read(max_chars + 1)
                 if len(data) > max_chars:
                     data = data[:max_chars]
@@ -857,7 +881,6 @@ class TgReadyService:
         import json as _json
 
         from database.models import TgReadyBatch, TgReadyCountry, TgReadyItem, TgReadyItemStatus
-        from services.encryption_service import EncryptionService
 
         sell = calc_sell_price(cost_usd, margin_percent)
         batch = TgReadyBatch(
@@ -886,13 +909,30 @@ class TgReadyService:
         per_country: dict[str, dict] = {}
         for e in entries:
             if e.phone in existing_phones:
+                # إصلاح الرفعات القديمة: حمولة ناقصة (بلا مفتاح تشفير) تُملأ الآن
+                try:
+                    from sqlalchemy import select as _select
+
+                    old = (
+                        await session.execute(
+                            _select(TgReadyItem).where(TgReadyItem.phone_number == e.phone)
+                        )
+                    ).scalars().first()
+                    if old is not None:
+                        cur = (
+                            reveal_payload(old.payload_encrypted, "")
+                            if old.payload_encrypted
+                            else ""
+                        )
+                        new_useful = ("http" in e.payload) or ("|" in e.payload)
+                        if new_useful and "http" not in cur:
+                            old.payload_encrypted = protect_payload(e.payload)
+                except Exception:
+                    pass
                 dupes += 1
                 continue
             key, name, flag = detect_country(e.phone)
-            try:
-                enc = EncryptionService.encrypt(e.payload)
-            except Exception:
-                enc = None
+            enc = protect_payload(e.payload)
             files_json = None
             if files_map and e.phone in files_map:
                 try:
