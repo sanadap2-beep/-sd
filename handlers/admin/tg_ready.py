@@ -41,8 +41,9 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
             "<code>https://dl-cloude.org/files/abc|+63955xxxx|https://dl-cloude.org/c/xyz</code>\n\n"
             "البوت سيتعرف على الدولة تلقائياً ويضع اسمها وعلمها وسعرها "
             f"(التكلفة + ربح {margin}%).\n"
-            "بعد الشراء الزبون يرى الرقم + رابط الملف (بينزل ZIP) + زر «📩 طلب الكود» "
-            "يجيب الكود جاهزاً من رابط الكود + كلمة 2FA إن وُجدت."
+            "بعد الشراء الزبون يرى الرقم + زر «📩 طلب الكود» — "
+            "البوت يجلب الكود من الرابط أو الجلسة + كلمة 2FA إن وُجدت "
+            "(بدون إرسال ملف جلسة)."
         )
     else:
         lines = [
@@ -184,7 +185,7 @@ async def tg_ready_file_received(message: Message, state: FSMContext, session, b
     lines = [
         "✅ <b>تم فرز الملف تلقائياً وهو جاهز للبيع!</b>\n",
         f"📥 المضاف: <b>{result['added']}</b> | ⏭ المكرر: <b>{result['dupes']}</b>",
-        f"💰 سعر البيع: <b>{result['sell']}$</b> (تكلفة {cost}$ + ربح {margin}%)\n",
+        f"💰 سعر البيع: <b>{result['sell']}$</b> (تكلفة {cost}$ + ربح {margin}%)",
         "<b>الدول المفرزة:</b>",
     ]
     for key, info in result["countries"].items():
@@ -192,12 +193,12 @@ async def tg_ready_file_received(message: Message, state: FSMContext, session, b
     if result.get("with_files"):
         lines.append(
             f"\n📁 حسابات بملفات جلسة فعلية: <b>{result['with_files']}</b> — "
-            "الزبون بيستلم ملف ZIP وبيدخل مباشرة بلا كود."
+            "تُستخدم داخلياً لجلب الكود عبر زر «طلب الكود» (البوت لا يرسل ملفاً للزبون)."
         )
     else:
         lines.append(
-            "\n⚠️ الملف نصي بلا ملفات جلسة مرفقة — الزبون بيستلم الرقم + رابط "
-            "الكود (إن وُجد بالسطر) + 2FA وبيدخل بالرقم والكود."
+            "\n⚠️ الملف نصي بلا ملفات جلسة مرفقة — الدخول بالرقم ورابط الكود "
+            "(إن وُجد بالسطر) عبر زر «طلب الكود» + 2FA."
         )
     lines.append("\nالزبون الآن يرى هذه الدول بقسم أرقام تلجرام ← 📦 حسابات جاهزة.")
     await message.answer("\n".join(lines))
@@ -330,7 +331,7 @@ async def tg_ready_toggle(callback: CallbackQuery, session):
     key = callback.data.rsplit(":", 1)[-1]
     country = await session.get(TgReadyCountry, key)
     if country is None:
-        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        await callback.answer("⚠️ الدولة غير موجودة.", show_alert=True)
         return
     country.is_active = not country.is_active
     await session.commit()
