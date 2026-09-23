@@ -871,12 +871,17 @@ class TgReadyService:
         file_name: str = "",
         created_by: int | None = None,
         files_map: dict[str, list[tuple[str, bytes]]] | None = None,
+        force_all: bool = False,
     ) -> dict:
         """يفرز الملف تلقائياً: دولة + علم + سعر لكل مجموعة، ويسجّل المخزون.
 
         files_map (اختياري، من extract_zip_files): ملفات الجلسة الفعلية لكل
         رقم — تُحفظ على القرص تحت data/tg_ready وتُسلَّم ZIP للمشتري، فيدخل
         الزبون بالملف مباشرة بلا انتظار أي كود.
+
+        force_all: يضيف/يفعّل كل رقم في الملف حتى لو كان موجوداً مسبقاً
+        (كان مضافاً ولم يُفعَّل، أو مباعاً). لا يُحسب كمكرر.
+        الرفع العادي (force_all=False) يبقى يتخطى الموجود ويبلّغ عن المكرر.
         """
         import json as _json
 
@@ -893,40 +898,41 @@ class TgReadyService:
         session.add(batch)
         await session.flush()
 
-        existing_phones = set(
-            (
-                await session.execute(
-                    select(TgReadyItem.phone_number).where(
-                        TgReadyItem.phone_number.in_([e.phone for e in entries])
+        phones = [e.phone for e in entries]
+        existing_by_phone: dict[str, TgReadyItem] = {}
+        if phones:
+            existing_by_phone = {
+                row.phone_number: row
+                for row in (
+                    await session.execute(
+                        select(TgReadyItem).where(TgReadyItem.phone_number.in_(phones))
                     )
                 )
-            )
-            .scalars()
-            .all()
-        )
+                .scalars()
+                .all()
+            }
         added = 0
         dupes = 0
         per_country: dict[str, dict] = {}
+        seen_this_batch: set[str] = set()
         for e in entries:
-            if e.phone in existing_phones:
+            if e.phone in seen_this_batch:
+                if not force_all:
+                    dupes += 1
+                continue
+            seen_this_batch.add(e.phone)
+            old = existing_by_phone.get(e.phone)
+            if old is not None and not force_all:
                 # إصلاح الرفعات القديمة: حمولة ناقصة (بلا مفتاح تشفير) تُملأ الآن
                 try:
-                    from sqlalchemy import select as _select
-
-                    old = (
-                        await session.execute(
-                            _select(TgReadyItem).where(TgReadyItem.phone_number == e.phone)
-                        )
-                    ).scalars().first()
-                    if old is not None:
-                        cur = (
-                            reveal_payload(old.payload_encrypted, "")
-                            if old.payload_encrypted
-                            else ""
-                        )
-                        new_useful = ("http" in e.payload) or ("|" in e.payload)
-                        if new_useful and "http" not in cur:
-                            old.payload_encrypted = protect_payload(e.payload)
+                    cur = (
+                        reveal_payload(old.payload_encrypted, "")
+                        if old.payload_encrypted
+                        else ""
+                    )
+                    new_useful = ("http" in e.payload) or ("|" in e.payload)
+                    if new_useful and "http" not in cur:
+                        old.payload_encrypted = protect_payload(e.payload)
                 except Exception:
                     pass
                 dupes += 1
@@ -941,8 +947,23 @@ class TgReadyService:
                         files_json = _json.dumps(saved, ensure_ascii=False)
                 except OSError:
                     files_json = None
-            session.add(
-                TgReadyItem(
+            if old is not None:
+                # إضافة الكل: الرقم كان مضافاً ولم يُفعَّل — نحدّثه ونفتحه للبيع
+                old.country_key = key
+                old.country_name_ar = name
+                old.flag = flag
+                old.cost_usd = cost_usd
+                old.price_usd = sell
+                if enc:
+                    old.payload_encrypted = enc
+                if files_json:
+                    old.files_json = files_json
+                old.batch_id = batch.id
+                old.status = TgReadyItemStatus.AVAILABLE
+                old.buyer_user_id = None
+                old.sold_at = None
+            else:
+                item = TgReadyItem(
                     phone_number=e.phone,
                     country_key=key,
                     country_name_ar=name,
@@ -954,8 +975,8 @@ class TgReadyService:
                     batch_id=batch.id,
                     status=TgReadyItemStatus.AVAILABLE,
                 )
-            )
-            existing_phones.add(e.phone)
+                session.add(item)
+                existing_by_phone[e.phone] = item
             added += 1
             slot = per_country.setdefault(key, {"name": name, "flag": flag, "count": 0})
             slot["count"] += 1
