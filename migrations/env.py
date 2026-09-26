@@ -12,7 +12,9 @@ from database.models import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False ضروري: بدونه يعطّل fileConfig كل سجلات
+    # البوت (INFO/ERROR كلها تختفي بعد أول إقلاع) لأن كل سجلاتنا أُنشئت قبل الترقية.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 def database_url() -> str:

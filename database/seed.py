@@ -559,12 +559,13 @@ async def init_db() -> None:
                         is_active=True,
                     )
                 )
-            elif getattr(existing_svc, "smspool_code", None) is None and svc.get("smspool_code"):
-                # تعبئة رجعية: خدمات قديمة (واتساب/تيليجرام) بلا كود SMSPool
-                existing_svc.smspool_code = svc["smspool_code"]
-            if getattr(existing_svc, "grizzly_code", None) is None and svc.get("grizzly_code"):
-                # تعبئة رجعية: خدمات قديمة بلا كود GrizzlySMS
-                existing_svc.grizzly_code = svc["grizzly_code"]
+            else:
+                if getattr(existing_svc, "smspool_code", None) is None and svc.get("smspool_code"):
+                    # تعبئة رجعية: خدمات قديمة (واتساب/تيليجرام) بلا كود SMSPool
+                    existing_svc.smspool_code = svc["smspool_code"]
+                if getattr(existing_svc, "grizzly_code", None) is None and svc.get("grizzly_code"):
+                    # تعبئة رجعية: خدمات قديمة بلا كود GrizzlySMS
+                    existing_svc.grizzly_code = svc["grizzly_code"]
 
         # ── زرع جوائز عجلة الحظ وقاعدة مكافأة الشحن الافتراضية ──
         # (آمنة: تعمل مرة واحدة فقط ولا تكرر شيئاً على الترقية.)
