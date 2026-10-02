@@ -43,6 +43,7 @@ class ProductRequestStates(StatesGroup):
 
 class AdminProductRequestStates(StatesGroup):
     waiting_note = State()
+    waiting_amount = State()
 
 
 class SupportTicketStates(StatesGroup):
@@ -614,6 +615,7 @@ class TopupGiftStates(StatesGroup):
     waiting_quantity = State()
     waiting_recipient = State()
     waiting_note = State()
+    waiting_amount = State()
 
 
 class AdminCampaignCodeStates(StatesGroup):
