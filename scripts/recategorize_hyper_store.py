@@ -118,7 +118,7 @@ AR_NAMES = {
 }
 
 
-from collections import deque as _deque
+from collections import deque
 
 _TOKEN = os.environ.get("HYPER_STORE_TOKEN", "")
 _BASE = os.environ.get("HYPER_STORE_API_URL", "https://api.hyper4store.com")
@@ -136,7 +136,6 @@ _ROOT_OF: dict[int, str] = {}
 
 async def _fetch_roots() -> None:
     import aiohttp as _aiohttp
-    from collections import deque as _tq
     async with _aiohttp.ClientSession() as _s:
         try:
             resp = await _s.get(f"{_BASE}/categories?parent_id=0", headers={"api-token": _TOKEN})
@@ -146,7 +145,7 @@ async def _fetch_roots() -> None:
         for r in roots:
             _ROOT_OF[r["id"]] = r["name"]
         # BFS down the tree building parent map
-        queue = _tq.deque([(r["id"], r["name"]) for r in roots])
+        queue = deque([(r["id"], r["name"]) for r in roots])
         while queue:
             cid, cname = queue.popleft()
             try:
