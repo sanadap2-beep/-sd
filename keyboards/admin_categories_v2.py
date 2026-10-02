@@ -30,6 +30,10 @@ def categories_list_kb(
         callback_data="admin:cat_add", style="success",
     )
     b.button(
+        text="🗑 تفريغ المنتجات (بدون الأرقام)",
+        callback_data="admin:cats_wipe_products", style="danger",
+    )
+    b.button(
         text="🔙 رجوع",
         callback_data="admin:main",
     )

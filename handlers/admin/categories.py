@@ -15,7 +15,8 @@ import logging
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import InlineKeyboardButton, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from sqlalchemy import func, select
 
@@ -25,6 +26,9 @@ from database.models import (
     Product,
     SubCategory,
     CategoryType,
+    NumberOrder,
+    ProductReview,
+    UnifiedOrder,
 )
 from services.audit_service import AuditService
 from services.dynamic_service import DynamicService
@@ -85,6 +89,86 @@ async def categories_list(callback: CallbackQuery, session):
     await callback.message.edit_text(
         text,
         reply_markup=categories_list_kb(categories),
+    )
+
+
+# ══════════════════════════════════════════════
+# ══════════════ تفريغ المنتجات (ماعدا الأرقام) ══════════════
+# ══════════════════════════════════════════════
+
+
+@router.callback_query(F.data == "admin:cats_wipe_products")
+async def cats_wipe_products_confirm(callback: CallbackQuery, session):
+    """يعرض عدّاد المنتجات التي سيتم حذفها."""
+    from sqlalchemy import func
+
+    row = (
+        await session.execute(
+            select(func.count(Product.id))
+            .join(SubCategory, Product.sub_category_id == SubCategory.id)
+            .join(Category, SubCategory.category_id == Category.id)
+            .where(Category.type != CategoryType.NUMBERS)
+        )
+    ).scalar_one()
+
+    text = (
+        "🗑 <b>تفريغ كل منتجات الأقسام</b>\n\n"
+        f"سيتم حذف <b>{row}</b> منتج من كل الأقسام ما عدا الأرقام.\n\n"
+        "⚠️ <b>هذه العملية لا تُسترجع!</b>\n"
+        "الأقسام نفسها والبيانات الشخصية للمستخدمين باقية."
+    )
+    from keyboards.admin_categories_v2 import categories_list_kb
+
+    b_kb = InlineKeyboardMarkup(inline_keyboard=[])
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    b = InlineKeyboardBuilder()
+    b.button(text="🗑 تأكيد الحذف", callback_data="admin:cats_wipe_products_go", style="danger")
+    b.button(text="🔙 إلغاء", callback_data="admin:categories")
+    b.adjust(1)
+    await callback.message.edit_text(text, reply_markup=b.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:cats_wipe_products_go")
+async def cats_wipe_products_do(callback: CallbackQuery, session):
+    """يحذف كل المنتجات ما عدا منتجات نوع 'أرقام'."""
+    from database.models import Base
+    from sqlalchemy import text
+
+    clause = (
+        "sub_category_id IN (SELECT id FROM sub_categories "
+        "WHERE category_id IN (SELECT id FROM categories WHERE type != 'numbers'))"
+    )
+    # أولاً: البيانات التي ترتبط بالمنتج مع nullable أو بحذف مفيد
+    for table in Base.metadata.tables.values():
+        if "product_id" in table.c:
+            if table.c["product_id"].nullable:
+                await session.execute(
+                    text(
+                        f"UPDATE {table.name} SET product_id = NULL "
+                        f"WHERE product_id IN (SELECT id FROM products WHERE {clause})"
+                    )
+                )
+            else:
+                await session.execute(
+                    text(
+                        f"DELETE FROM {table.name} "
+                        f"WHERE product_id IN (SELECT id FROM products WHERE {clause})"
+                    )
+                )
+
+    # ثانياً: حذف المنتجات غير الأرقامية نفسها
+    result = await session.execute(
+        text(f"DELETE FROM products WHERE {clause}")
+    )
+    deleted = result.rowcount if result is not None else 0
+    await session.commit()
+    await callback.answer(f"✅ تم حذف {deleted} منتج منتج من كل الأقسام ماعدا الأرقام.", show_alert=True)
+    await callback.message.edit_text(
+        f"✅ <b>تم التفريغ</b>\n\nتم حذف <b>{deleted}</b>   منتج من كل الأقسام باستثناء منتجات الأرقام.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع للإدارة", callback_data="admin:categories")]]
+        ),
     )
 
 
