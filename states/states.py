@@ -78,6 +78,8 @@ class AdminAiProviderStates(StatesGroup):
 
 class WaStates(StatesGroup):
     waiting_phone = State()
+    # نص يكتبه المستخدم ردّاً على زر kind="input" عند البوت الثاني.
+    waiting_action_input = State()
 
 
 class AdminWaStates(StatesGroup):

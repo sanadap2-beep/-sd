@@ -5,6 +5,7 @@
 """
 
 from decimal import Decimal
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +20,19 @@ class Settings(BaseSettings):
     # This remains as a sanitized fallback for offline/local contexts.
     BOT_USERNAME: str = ""
     ADMIN_IDS: str
+
+    # ── Telegram API (my.telegram.org) — لفتح جلسات الأرقام وجلب كود 777000 ──
+    # مطلوب لزر «📩 طلب الكود» بقسم الجلسات الجاهزة؛ الافتراضي 0 = غير مُهيّأ.
+    API_ID: int = 0
+    API_HASH: str = ""
+
+    @field_validator("API_ID", mode="before")
+    @classmethod
+    def _empty_api_id_to_zero(cls, v):
+        # .env قديم قد يحتوي API_ID= فارغاً — لا نُسقط الإقلاع كاملاً بسببه.
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return 0
+        return v
 
     # ── قنوات الإشعارات ──
     ADMIN_NOTIFY_CHAT_ID: int

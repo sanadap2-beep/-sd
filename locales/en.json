@@ -444,5 +444,15 @@
   "wa_purchase_ok": "✓ Your subscription is active.",
   "wa_expired_notice": "⚠️ Your WhatsApp section subscription has expired. Subscribe again from the WhatsApp section in the main menu.",
   "wa_renewed_notice": "🔄 Your WhatsApp subscription was auto-renewed for one day ({price}).",
-  "wa_disabled": "This section is currently disabled."
+  "wa_disabled": "This section is currently disabled.",
+  "wa_working": "Working…",
+  "wa_bridge_unconfigured": "🔴 This section is paused — the WhatsApp bot bridge is not configured yet. Contact the admin.",
+  "wa_unlink": "🚫 Unlink",
+  "wa_unlink_done": "✓ Session disconnected on the second bot.",
+  "wa_unlink_local": "✓ Unlinked here. The bridge did not confirm — stop the session at your provider if it is still active.",
+  "wa_linked_ok": "✅ Linked! Here is your WhatsApp bot menu.",
+  "wa_cancelled": "Input cancelled.",
+  "wa_input_prompt": "✍️ Type your reply and send it",
+  "wa_input_hint": "Send /cancel to abort and go back.",
+  "wa_cancel_input": "✖️ Cancel"
 }

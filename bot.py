@@ -238,7 +238,6 @@ def register_routers():
     dp.include_router(user_ai_sections.router)
     dp.include_router(user_whatsapp.router)
     dp.include_router(referral_guard.router)
-    dp.include_router(session_handler.router)
 
     # ── هاندلرز الأدمن ──
     dp.include_router(admin_panel.router)
@@ -298,6 +297,11 @@ def register_routers():
     dp.include_router(admin_campaign_codes.router)
     dp.include_router(admin_topup_gifts.router)
     dp.include_router(admin_tg_ready.router)
+
+    # Legacy direct session listener.  Keep it after the ready-sessions uploader:
+    # both accept TXT documents, and the uploader must get the document while
+    # AdminTgReadyStates.waiting_file is active.
+    dp.include_router(session_handler.router)
 
     # أزرار إشعارات الأخطاء (زر «تم تصليح الخطأ») — قبل fallback ليصل إليها الضغط أولاً.
     dp.include_router(error_reports_router)
@@ -434,6 +438,22 @@ async def bid_cleanup_cycle():
         return
     async with async_session_maker() as session:
         await ProviderBiddingService.cleanup_expired(session)
+
+
+async def wa_bridge_health_cycle(bot):
+    """صحة جسر واتساب: تنبيه الأدمن عند انقطاع البوت الثاني وعند عودته.
+
+    بدون هذا الفحص يبقى عطب الجسر صامتاً: المستخدمون يرون رسالة خطأ فقط،
+    ولا يعرف الأدمن أن القسم كله واقف إلا من الشكاوى.
+    """
+    from services.whatsapp_section_service import WhatsAppSectionService
+
+    if not await FeatureService.enabled("whatsapp_section"):
+        return
+    try:
+        await WhatsAppSectionService.bridge_health(bot=bot)
+    except Exception:  # noqa: BLE001 — المراقبة لا تُسقط البوت
+        logger.exception("فشل فحص جسر واتساب")
 
 
 async def wa_renewal_cycle():
@@ -635,6 +655,14 @@ async def start_scheduler() -> AsyncIOScheduler:
         wa_renewal_cycle,
         "interval",
         hours=1,
+    )
+
+    # قسم واتساب: صحة جسر البوت الثاني — إنذار الأدمن عند انقطاعه (كل 10 دقائق).
+    scheduler.add_job(
+        wa_bridge_health_cycle,
+        "interval",
+        minutes=10,
+        args=[bot],
     )
 
     # التوفر المتقطع: كل دورة (افتراضياً دقيقة) تُحذف اللوحة وتُنشأ بأحدث

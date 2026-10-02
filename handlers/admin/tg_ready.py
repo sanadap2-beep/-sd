@@ -41,8 +41,11 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
             "<code>https://dl-cloude.org/files/abc|+63955xxxx|https://dl-cloude.org/c/xyz</code>\n\n"
             "البوت سيتعرف على الدولة تلقائياً ويضع اسمها وعلمها وسعرها "
             f"(التكلفة + ربح {margin}%).\n"
-            "بعد الشراء الزبون يرى الرقم + رابط الملف (بينزل ZIP) + زر «📩 طلب الكود» "
-            "يجيب الكود جاهزاً من رابط الكود + كلمة 2FA إن وُجدت."
+            "بعد الشراء الزبون يرى الرقم + زر «📩 طلب الكود» — "
+            "البوت يجلب الكود من الرابط أو الجلسة + كلمة 2FA إن وُجدت "
+            "(بدون إرسال ملف جلسة).\n\n"
+            "«إضافة الكل» يفعّل كل أرقام الملف حتى التي رُفعت سابقاً ولم تُفعَّل. "
+            "«رفع ملف» يبقى ويتخطى المكرر."
         )
     else:
         lines = [
@@ -54,6 +57,10 @@ async def _home_text(session) -> tuple[str, list[dict], int, str]:
                 f"{c['flag']} {c['name']}: <b>{c['stock']}</b> بسعر <b>{c['price']}$</b>"
             )
         lines.append("\nاضغط أي دولة لتعديل سعرها أو إخفائها أو حذف مخزونها.")
+        lines.append(
+            "«إضافة الكل» يفعّل كل أرقام الملف حتى التي رُفعت سابقاً ولم تُفعَّل. "
+            "«رفع ملف» يبقى ويتخطى المكرر."
+        )
         text = "\n".join(lines)
     return text, countries, total, str(margin)
 
@@ -67,19 +74,40 @@ async def tg_ready_home(callback: CallbackQuery, session):
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin:tg_ready_upload")
-async def tg_ready_upload_start(callback: CallbackQuery, state: FSMContext, session):
+async def _begin_upload(callback: CallbackQuery, state: FSMContext, session, force_all: bool):
     margin = await TgReadyService.get_margin(session)
-    await state.update_data(tg_ready_margin=str(margin))
+    await state.update_data(tg_ready_margin=str(margin), tg_ready_force_all=force_all)
     await state.set_state(AdminTgReadyStates.waiting_margin)
+    if force_all:
+        title = "➕ <b>إضافة الكل</b>"
+        mode = (
+            "كل رقم في الملف يُضاف ويُفعَّل للبيع، حتى لو كان مرفوعاً من قبل ولم يُفعَّل.\n"
+            "لن تظهر رسالة «مكرر» أو «موجود من قبل».\n\n"
+        )
+    else:
+        title = "📤 <b>رفع ملف أرقام جديد</b>"
+        mode = (
+            "الرفع العادي يتخطى الأرقام الموجودة مسبقاً ويخبرك بعدد المكرر.\n"
+            "لتفعيل الكل بدون تخطي استخدم زر «إضافة الكل».\n\n"
+        )
     await callback.message.edit_text(
-        "📤 <b>رفع ملف أرقام جديد</b>\n\n"
+        f"{title}\n\n{mode}"
         f"نسبة الربح الحالية: <b>{margin}%</b>\n\n"
         "أرسل نسبة الربح % لهذه الدفعة (مثال: <code>50</code>)،\n"
         "أو أرسل <code>-</code> لاستخدام النسبة الحالية.",
         reply_markup=admin_back_kb(),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin:tg_ready_upload")
+async def tg_ready_upload_start(callback: CallbackQuery, state: FSMContext, session):
+    await _begin_upload(callback, state, session, force_all=False)
+
+
+@router.callback_query(F.data == "admin:tg_ready_upload_all")
+async def tg_ready_upload_all_start(callback: CallbackQuery, state: FSMContext, session):
+    await _begin_upload(callback, state, session, force_all=True)
 
 
 @router.message(AdminTgReadyStates.waiting_margin)
@@ -172,32 +200,48 @@ async def tg_ready_file_received(message: Message, state: FSMContext, session, b
     files_map = None
     if (fname or "").lower().endswith(".zip"):
         files_map = extract_zip_files(raw)
+    force_all = bool(data.get("tg_ready_force_all"))
     try:
         result = await TgReadyService.import_entries(
             session, entries, cost, margin, file_name=fname, created_by=None,
-            files_map=files_map,
+            files_map=files_map, force_all=force_all,
         )
     except Exception as exc:
         await message.answer(f"❌ فشل الاستيراد: {exc}")
         return
     await state.clear()
-    lines = [
-        "✅ <b>تم فرز الملف تلقائياً وهو جاهز للبيع!</b>\n",
-        f"📥 المضاف: <b>{result['added']}</b> | ⏭ المكرر: <b>{result['dupes']}</b>",
-        f"💰 سعر البيع: <b>{result['sell']}$</b> (تكلفة {cost}$ + ربح {margin}%)\n",
-        "<b>الدول المفرزة:</b>",
-    ]
+    if force_all:
+        lines = [
+            "✅ <b>تمت إضافة كل الأرقام وتفعيلها للبيع!</b>\n",
+            f"📥 المضاف والمفعّل: <b>{result['added']}</b>",
+        ]
+    else:
+        lines = [
+            "✅ <b>تم فرز الملف تلقائياً وهو جاهز للبيع!</b>\n",
+            f"📥 المضاف: <b>{result['added']}</b> | ⏭ المكرر: <b>{result['dupes']}</b>",
+        ]
+        if result.get("dupes"):
+            lines.append(
+                "الأرقام المكررة كانت مضافة ولم تُفعَّل من هذا الملف.\n"
+                "لتفعيلها كلها ارجع واضغط «إضافة الكل» ثم أعد إرسال نفس الملف."
+            )
+    lines.extend(
+        [
+            f"💰 سعر البيع: <b>{result['sell']}$</b> (تكلفة {cost}$ + ربح {margin}%)",
+            "<b>الدول المفرزة:</b>",
+        ]
+    )
     for key, info in result["countries"].items():
         lines.append(f"{info['flag']} {info['name']}: <b>{info['count']}</b>")
     if result.get("with_files"):
         lines.append(
             f"\n📁 حسابات بملفات جلسة فعلية: <b>{result['with_files']}</b> — "
-            "الزبون بيستلم ملف ZIP وبيدخل مباشرة بلا كود."
+            "تُستخدم داخلياً لجلب الكود عبر زر «طلب الكود» (البوت لا يرسل ملفاً للزبون)."
         )
     else:
         lines.append(
-            "\n⚠️ الملف نصي بلا ملفات جلسة مرفقة — الزبون بيستلم الرقم + رابط "
-            "الكود (إن وُجد بالسطر) + 2FA وبيدخل بالرقم والكود."
+            "\n⚠️ الملف نصي بلا ملفات جلسة مرفقة — الدخول بالرقم ورابط الكود "
+            "(إن وُجد بالسطر) عبر زر «طلب الكود» + 2FA."
         )
     lines.append("\nالزبون الآن يرى هذه الدول بقسم أرقام تلجرام ← 📦 حسابات جاهزة.")
     await message.answer("\n".join(lines))
@@ -330,7 +374,7 @@ async def tg_ready_toggle(callback: CallbackQuery, session):
     key = callback.data.rsplit(":", 1)[-1]
     country = await session.get(TgReadyCountry, key)
     if country is None:
-        await callback.answer("⚠️ غير موجود.", show_alert=True)
+        await callback.answer("⚠️ الدولة غير موجودة.", show_alert=True)
         return
     country.is_active = not country.is_active
     await session.commit()

@@ -45,6 +45,25 @@ class NotificationCenterService:
         return True if pref is None else bool(pref.enabled)
 
     @staticmethod
+    async def was_sent(dedupe_key: str | None) -> bool:
+        """هل أُرسل إشعار بهذا المفتاح من قبل؟ يمنع تكرار منشور القناة بعد إعادة التشغيل."""
+        if not dedupe_key:
+            return False
+        try:
+            async with async_session_maker() as session:
+                count = (
+                    await session.execute(
+                        select(func.count(Notification.id)).where(
+                            Notification.dedupe_key == dedupe_key,
+                            Notification.status == "sent",
+                        )
+                    )
+                ).scalar_one()
+                return int(count or 0) > 0
+        except Exception:
+            return False
+
+    @staticmethod
     async def recently_sent(session, dedupe_key: str | None, minutes: int = 30) -> bool:
         if not dedupe_key:
             return False

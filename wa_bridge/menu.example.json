@@ -1,0 +1,45 @@
+{
+  "status_text": "🧪 وضع تجريبي — لم يوصَّل الـ adapter الحقيقي بعد",
+  "menu": [
+    {
+      "id": "sessions",
+      "label": "🟢 حالات الجلسات",
+      "data": { "view": "sessions" }
+    },
+    {
+      "id": "send",
+      "label": "📮 إرسال رسالة",
+      "kind": "input",
+      "prompt": "اكتب نص الرسالة التي تريد إرسالها (سيستلمها الـ adapter عندك)"
+    },
+    {
+      "id": "contacts",
+      "label": "👥 جهات الاتصال"
+    },
+    {
+      "id": "groups",
+      "label": "👥 المجموعات"
+    },
+    {
+      "id": "status",
+      "label": "🖼 حالات واتساب"
+    },
+    {
+      "id": "docs",
+      "label": "📄 إرجاع ملف (تجربة files)",
+      "kind": "action",
+      "data": { "demo": "file" }
+    },
+    {
+      "id": "portal",
+      "label": "🌐 لوحة المزود",
+      "kind": "url",
+      "url": "https://example.com"
+    },
+    {
+      "id": "logout",
+      "label": "🚫 إنهاء الجلسة",
+      "data": { "confirm": true }
+    }
+  ]
+}

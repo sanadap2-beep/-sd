@@ -77,8 +77,9 @@ def _attach_tg_ready_entry(markup: InlineKeyboardMarkup, total: int) -> InlineKe
     rows = [
         [
             InlineKeyboardButton(
-                text=f"📦 حسابات جاهزة — جلسات (متاح {total})",
+                text=f"📦 أرقام تلجرام — جلسات (متاح {total})",
                 callback_data="tgready:list",
+                style="success",
             )
         ]
     ] + [list(row) for row in markup.inline_keyboard]

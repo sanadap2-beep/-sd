@@ -59,6 +59,27 @@ services:
       - "8080:8080"
     restart: unless-stopped
 
+  # جسر واتساب (قسم 📱 واتساب) — يعمل بجانب البوت الثاني.
+  # هنا موصول بوضع «تجريبي» ليختبر أحدهما العقد كاملاً قبل كتابة الـ adapter:
+  #   docker compose --profile wa-bridge up -d wa-bridge
+  # ملاحظة أمنية: لا ports منشورة — الجسر reached فقط من شبكة Docker الداخلية،
+  # لأنه يثق برأس X-TG-User-Id ومن يعرف السر يتصرف باسم أي مستخدم.
+  wa-bridge:
+    profiles: ["wa-bridge"]
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./wa_bridge:/app/wa_bridge:ro
+    environment:
+      BRIDGE_SECRET: ${WA_BRIDGE_SECRET:-}
+      BRIDGE_HOST: 0.0.0.0
+      BRIDGE_PORT: "8090"
+      WA_BRIDGE_ALLOW_PUBLIC: "1"          # المنفذ غير منشور — الوصول داخلي فقط
+      WA_BRIDGE_ADAPTER: wa_bridge.adapter_example:ExampleWaAdapter
+    command: sh -c "pip install --no-cache-dir -q -r wa_bridge/requirements.txt && uvicorn wa_bridge.bridge:app --host $${BRIDGE_HOST} --port $${BRIDGE_PORT}"
+    restart: unless-stopped
+
+
 volumes:
   redis_data:
   postgres_data:
