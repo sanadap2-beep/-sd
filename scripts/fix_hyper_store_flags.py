@@ -16,6 +16,11 @@ os.environ.setdefault(
     "DATABASE_URL",
     os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./bot_database.db"),
 )
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 os.environ.setdefault("INVENTORY_ENCRYPTION_KEY", "dev-encryption-key-not-for-prod")
 
 import json as _json

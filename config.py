@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     API_ID: int = 0
     API_HASH: str = ""
 
+    # ── Hyper Store (تزويد خدمات الألعاب والتطبيقات والأرصدة) ──
+    HYPER_STORE_TOKEN: str = ""
+
     @field_validator("API_ID", mode="before")
     @classmethod
     def _empty_api_id_to_zero(cls, v):

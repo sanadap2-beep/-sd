@@ -13,6 +13,11 @@ os.environ.setdefault("BOT_USERNAME", "x")
 os.environ.setdefault("ADMIN_IDS", "1")
 os.environ.setdefault("ADMIN_NOTIFY_CHAT_ID", "-1")
 os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./bot_database.db"))
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 os.environ.setdefault("INVENTORY_ENCRYPTION_KEY", "dev")
 
 from sqlalchemy import select, update
@@ -117,6 +122,14 @@ from collections import deque as _deque
 
 _TOKEN = os.environ.get("HYPER_STORE_TOKEN", "")
 _BASE = os.environ.get("HYPER_STORE_API_URL", "https://api.hyper4store.com")
+try:
+    from config import settings as _settings  # noqa: E402
+    if not _TOKEN:
+        _TOKEN = getattr(_settings, "HYPER_STORE_TOKEN", "") or ""
+except Exception:
+    _settings = None
+    if not _TOKEN:
+        _TOKEN = ""
 
 _PARENT_MAP: dict[int, int] = {}
 _ROOT_OF: dict[int, str] = {}
@@ -125,16 +138,22 @@ async def _fetch_roots() -> None:
     import aiohttp as _aiohttp
     from collections import deque as _tq
     async with _aiohttp.ClientSession() as _s:
-        resp = await _s.get(f"{_BASE}/categories?parent_id=0", headers={"api-token": _TOKEN})
-        roots = (await resp.json())["data"]
+        try:
+            resp = await _s.get(f"{_BASE}/categories?parent_id=0", headers={"api-token": _TOKEN})
+            roots = (await resp.json()).get("data", [])
+        except Exception:
+            roots = []
         for r in roots:
             _ROOT_OF[r["id"]] = r["name"]
         # BFS down the tree building parent map
         queue = _tq.deque([(r["id"], r["name"]) for r in roots])
         while queue:
             cid, cname = queue.popleft()
-            resp = await _s.get(f"{_BASE}/categories?parent_id={cid}", headers={"api-token": _TOKEN})
-            data = (await resp.json()).get("data", [])
+            try:
+                resp = await _s.get(f"{_BASE}/categories?parent_id={cid}", headers={"api-token": _TOKEN})
+                data = (await resp.json()).get("data", [])
+            except Exception:
+                continue
             for child in data:
                 _PARENT_MAP[child["id"]] = cid
                 _ROOT_OF[child["id"]] = cname
@@ -209,8 +228,11 @@ async def main():
         )).scalars().all()
 
         moved = {g: 0 for g in ["games", "apps", "balances", "cards"]}
-        # فهرسة خريطة الجذر قبل التصنيف
-        await _fetch_roots()
+        # فهرسة خريطة الجذر قبل التصنيف (لا يُسقط التشغيل عند الفشل)
+        try:
+            await _fetch_roots()
+        except Exception as _e:
+            print(f"⚠️ تعذّر جلب خريطة الجذر: {_e}. سيتم استخدام التصنيف بالاسم.")
         for svc in services:
             cat_type = classify(svc)
             moved[cat_type] = moved.get(cat_type, 0) + 1
