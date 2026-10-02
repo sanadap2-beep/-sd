@@ -17,6 +17,7 @@ os.environ.setdefault("INVENTORY_ENCRYPTION_KEY", "dev")
 
 from sqlalchemy import select, update
 from database.seed import init_db
+import aiohttp as _aiohttp
 from database.engine import async_session_maker
 from database.models import (
     ApiProvider, Category, CategoryType, SubCategory, Product, ProductStatus,
@@ -112,22 +113,77 @@ AR_NAMES = {
 }
 
 
-def classify(cat_name: str) -> str:
-    """يرجع نوع القسم المناسب لفئة المزود."""
-    cl = cat_name.lower() if cat_name else ""
-    for keyword in CATEGORY_MAP["balances"]:
+from collections import deque as _deque
+
+_TOKEN = os.environ.get("HYPER_STORE_TOKEN", "")
+_BASE = os.environ.get("HYPER_STORE_API_URL", "https://api.hyper4store.com")
+
+_PARENT_MAP: dict[int, int] = {}
+_ROOT_OF: dict[int, str] = {}
+
+async def _fetch_roots() -> None:
+    import aiohttp as _aiohttp
+    from collections import deque as _tq
+    async with _aiohttp.ClientSession() as _s:
+        resp = await _s.get(f"{_BASE}/categories?parent_id=0", headers={"api-token": _TOKEN})
+        roots = (await resp.json())["data"]
+        for r in roots:
+            _ROOT_OF[r["id"]] = r["name"]
+        # BFS down the tree building parent map
+        queue = _tq.deque([(r["id"], r["name"]) for r in roots])
+        while queue:
+            cid, cname = queue.popleft()
+            resp = await _s.get(f"{_BASE}/categories?parent_id={cid}", headers={"api-token": _TOKEN})
+            data = (await resp.json()).get("data", [])
+            for child in data:
+                _PARENT_MAP[child["id"]] = cid
+                _ROOT_OF[child["id"]] = cname
+                queue.append((child["id"], cname))
+
+def _root_of(cat_id) -> str | None:
+    try:
+        cid = int(cat_id)
+    except (TypeError, ValueError):
+        return None
+    while cid in _PARENT_MAP:
+        cid = _PARENT_MAP[cid]
+    return _ROOT_OF.get(cid)
+
+_ROOT_TYPE_MAP: dict[str, str] = {
+    "الألعاب": "games",
+    "التطبيقات": "apps",
+    "قسم الأرصدة": "balances",
+}
+
+def classify(svc) -> str:
+    """يرجع نوع القسم المناسب للخدمة من فئة الجذر (أفضل من اسم الفئة)."""
+    cat_id = None
+    try:
+        raw_json = getattr(svc, "raw_data", None) or "{}"
+        raw = json.loads(raw_json) if isinstance(raw_json, str) else raw_json
+        cid = raw.get("category_id")
+        if cid is not None:
+            cat_id = int(cid)
+    except Exception:
+        pass
+    if cat_id is not None:
+        root = _root_of(cat_id)
+        if root is not None:
+            if root in _ROOT_TYPE_MAP:
+                return _ROOT_TYPE_MAP[root]
+            return "cards"
+    # fallback: name-based map
+    cl = (svc.category or svc.name or "").lower() if not isinstance(svc, str) else svc.lower()
+    for keyword in (CATEGORY_MAP.get("balances") or []):
         if keyword.lower() in cl:
             return "balances"
-    for keyword in CATEGORY_MAP["cards"]:
+    for keyword in (CATEGORY_MAP.get("cards") or []):
         if keyword.lower() in cl:
             return "cards"
-    for keyword in CATEGORY_MAP["apps"]:
+    for keyword in (CATEGORY_MAP.get("apps") or []):
         if keyword.lower() in cl:
             return "apps"
-    for keyword in CATEGORY_MAP["games"]:
-        if keyword.lower() in cl:
-            return "games"
-    return "apps"  # افتراضي
+    return "cards"
 
 
 def translate_game(name: str) -> str:
@@ -153,8 +209,10 @@ async def main():
         )).scalars().all()
 
         moved = {g: 0 for g in ["games", "apps", "balances", "cards"]}
+        # فهرسة خريطة الجذر قبل التصنيف
+        await _fetch_roots()
         for svc in services:
-            cat_type = classify(svc.category or "")
+            cat_type = classify(svc)
             moved[cat_type] = moved.get(cat_type, 0) + 1
 
             # تحديد القسم الصحيح في البوت

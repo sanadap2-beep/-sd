@@ -233,6 +233,7 @@ async def main() -> None:
                         requires_link=svc.requires_link,
                         requires_player_id=svc.requires_player_id,
                         requires_quantity=svc.requires_quantity,
+                        display_type=__import__("database.models", fromlist=["ProductDisplayType"]).ProductDisplayType.PER_UNIT,
                     )
                 except Exception as e:
                     print(f"⚠️ فشل إنشاء منتج {svc.external_service_id}: {e}")
