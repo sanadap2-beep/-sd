@@ -161,6 +161,7 @@ class SMMOrderStates(StatesGroup):
 
 class GamesOrderStates(StatesGroup):
     waiting_player_id = State()
+    waiting_quantity = State()
     waiting_coupon = State()
 
 
@@ -638,3 +639,10 @@ class AdminTgReadyStates(StatesGroup):
     waiting_file = State()
     waiting_price = State()
     waiting_price_country = State()
+
+
+class AdminButtonCustomStates(StatesGroup):
+    """تعديل اسم/إيموجي الزر من لوحة إدارة الأزرار."""
+
+    waiting_label = State()
+    waiting_emoji = State()

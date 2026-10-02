@@ -115,17 +115,13 @@ async def extras_home(callback: CallbackQuery, db_user: User | None = None):
             await ExtrasSectionService.visible_entries(section=section_key)
         )
 
+    from services.button_customization_service import ButtonCustomizationService as BC
     rows = []
     for section_key, titles in EXTRAS_SECTIONS.items():
         title = titles[0] if language == "ar" else titles[1]
         count = visible_by_section.get(section_key, 0)
         rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{title} ({count})",
-                    callback_data=f"extras:section:{section_key}", style="success",
-                )
-            ]
+            [BC.apply(f"extras.{section_key}", f"{title} ({count})", f"extras:section:{section_key}", "success")]
         )
 
     rows.append([InlineKeyboardButton(text=t("back_to_main"), callback_data="menu:main")])

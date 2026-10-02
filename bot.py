@@ -110,6 +110,7 @@ from handlers.admin import (
     main_buttons as admin_main_buttons,
     store_control as admin_store_control,
     extras_control as admin_extras_control,
+    button_customization as admin_button_customization,
     agents as admin_agents,
     margins as admin_margins,
     withdrawals as admin_withdrawals,
@@ -283,6 +284,7 @@ def register_routers():
     dp.include_router(admin_main_buttons.router)
     dp.include_router(admin_store_control.router)
     dp.include_router(admin_extras_control.router)
+    dp.include_router(admin_button_customization.router)
     dp.include_router(admin_agents.router)
     dp.include_router(admin_margins.router)
     dp.include_router(admin_withdrawals.router)
@@ -761,6 +763,13 @@ async def start_scheduler() -> AsyncIOScheduler:
 async def main():
     logger.info("⏳ جاري تهيئة قاعدة البيانات...")
     await init_db()
+    # ترقيات alembic تستدعي fileConfig من alembic.ini (root=WARN) فتمسح
+    # إعداد السجلات — نعيد ضبطها هنا ليبقى INFO ظاهراً أثناء التشغيل.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        force=True,
+    )
     await FeatureService.sync_registry()
     await FeatureService.reload()
     # ترميم أسماء الدول الأجنبية (من المزود) إلى العربية + العلم الصحيح.
@@ -844,7 +853,18 @@ async def main():
 
     logger.info("🚀 البوت يعمل الآن...")
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
+        # الشبكة نحو api.telegram.org قد تكون متقطعة (Connection reset).
+        # نعيد المحاولة عدة مرات، وإن فشلت كلها نتابع للـ polling بدل أن يسقط البوت.
+        for attempt in range(1, 6):
+            try:
+                await bot.delete_webhook(drop_pending_updates=True, request_timeout=20)
+                break
+            except Exception as exc:
+                logger.warning("تعذّر حذف الـ webhook (محاولة %s/5): %s", attempt, exc)
+                if attempt >= 5:
+                    logger.warning("المتابعة إلى الـ polling بدون حذف الـ webhook.")
+                    break
+                await asyncio.sleep(3 * attempt)
         await dp.start_polling(bot)
     finally:
         scheduler.shutdown(wait=False)

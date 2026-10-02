@@ -38,7 +38,7 @@ def test_main_menu_uses_native_styles():
     assert buttons["store:home"].style == "success"
     assert buttons["menu:account"].style == "primary"
     assert buttons["menu:deposit"].style == "primary"
-    assert buttons["info:stats"].style == "primary"
+    assert buttons["info:stats"].style == "success"
     assert buttons["info:terms"].style == "danger"
 
 

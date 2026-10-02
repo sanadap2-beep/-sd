@@ -32,6 +32,34 @@ from services.settings_service import SettingsService
 from services.coupon_service import CouponService, CouponError
 from services.cashback_service import CashbackService
 from services.campaign_service import CampaignCodeError, CampaignService
+from database.models import ProviderService
+
+
+async def _target_field_label(product, session) -> str | None:
+    """التسمية العربية للحقل المخصص المطلوب (مثل «ادخل رقم الهاتف»)."""
+    try:
+        if not product.provider_service_ref_id:
+            return None
+        svc = await session.get(ProviderService, product.provider_service_ref_id)
+        if not svc or not svc.raw_data:
+            return None
+        raw = json.loads(svc.raw_data)
+        fields = raw.get("fields") if isinstance(raw.get("fields"), list) else []
+        if not fields:
+            try:
+                fields = json.loads(str(raw.get("input_type") or "[]"))
+            except Exception:
+                fields = []
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            key = str(f.get("key") or "").lower()
+            if key in ("quantity", "qty") or not f.get("required", True):
+                continue
+            return str(f.get("label") or f.get("key"))
+        return None
+    except Exception:
+        return None
 from services.feature_service import FeatureService
 from services.product_service import ProductService
 from services.promotion_service import PromotionService
@@ -524,7 +552,8 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
             # شحن الألعاب: لا يُنفَّذ الطلب عند المزود بلا Player ID.
             # هذه الشاشة كانت تقفز للتأكيد مباشرة، فيُرسل الطلب بهدف فارغ
             # (target='') ويُسحب رصيد الزبون بلا إمكانية تسليم.
-            await callback.message.answer(I18nService.t('send_player_id', language))
+            target_label = await _target_field_label(product, session)
+            await callback.message.answer(target_label or I18nService.t('send_player_id', language))
             await state.set_state(GamesOrderStates.waiting_player_id)
         elif product.requires_link:
             await callback.message.answer(I18nService.t('send_link', language))
@@ -543,7 +572,8 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     confirm_q = I18nService.t('confirm_purchase_q', language)
     if product.requires_player_id:
         head = _product_head(product, '🎮')
-        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_player_id', language))
+        target_label = await _target_field_label(product, session)
+        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + (target_label or I18nService.t('send_player_id', language)))
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         head = _product_head(product, '📈')
@@ -574,15 +604,60 @@ async def player_id_received(message: Message, state: FSMContext, session, db_us
         return
     sub_cat = product.sub_category
     context = f"{(sub_cat.name_ar if sub_cat else '')} {product.name_ar}"
-    try:
-        player_id = await PlayerIdService.validate(message.text or '', context=context)
-    except PlayerIdError as exc:
-        await message.answer(f"⚠️ {esc(exc)}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
-        return
+    target_label = await _target_field_label(product, session)
+    if target_label and not any(h in target_label.lower() for h in ("ايدي", "id", "لاعب")):
+        # حقل مخصص (مثل رقم الهاتف): التأكد من الطول/النظافة فقط
+        player_id = (message.text or "").strip()
+        if not player_id or len(player_id) > 64:
+            await message.answer(f"⚠️ أرسل قيمة صحيحة للحقل: {target_label}")
+            return
+    else:
+        try:
+            player_id = await PlayerIdService.validate(message.text or '', context=context)
+        except PlayerIdError as exc:
+            await message.answer(f"⚠️ {esc(exc)}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
+            return
     await state.update_data(target=player_id, quantity=1)
     server = await _server_from_state(session, state)
     unit_price = await _server_unit_price(session, product, server)
+    # خدمات الرصيد (والكميات عموماً) تحتاج سؤالاً إضافياً عن الكميّة عندما لا تكون ثابتة = 1
+    if product.requires_quantity and product.min_quantity > 1:
+        await state.set_state(GamesOrderStates.waiting_quantity)
+        await message.answer(
+            f"📦 أرسل الكمية المطلوبة (من {product.min_quantity} إلى {product.max_quantity}):"
+        )
+        return
     await message.answer(f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{unit_price}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+
+@router.message(GamesOrderStates.waiting_quantity)
+async def games_quantity_received(message: Message, state: FSMContext, session, db_user: User):
+    try:
+        quantity = int(message.text.strip())
+    except ValueError:
+        await message.answer(I18nService.t('ux_games_469_31', _auto_lang(locals())))
+        return
+    data = await state.get_data()
+    product_id = data.get('product_id')
+    product = await DynamicService.get_product(session, product_id)
+    if not product:
+        await message.answer(I18nService.t('ux_games_477_32', _auto_lang(locals())))
+        await state.clear()
+        return
+    if quantity < product.min_quantity:
+        await message.answer(f"{I18nService.t('ux_games_482_33', _auto_lang(locals()))}{product.min_quantity}")
+        return
+    if quantity > product.max_quantity:
+        await message.answer(f"{I18nService.t('ux_games_485_34', _auto_lang(locals()))}{product.max_quantity}")
+        return
+    server = await _server_from_state(session, state)
+    total_price = await _server_total_price(session, product, quantity, server)
+    await state.update_data(quantity=quantity, total_price=str(total_price))
+    sub_cat = product.sub_category
+    player_id = data.get('target', '—')
+    await message.answer(
+        f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{total_price}",
+        reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0),
+    )
 
 @router.message(SMMOrderStates.waiting_link)
 async def smm_link_received(message: Message, state: FSMContext, session):

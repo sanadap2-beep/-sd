@@ -41,32 +41,45 @@ def build_main_menu(
 
     t = lambda key, **kw: I18nService.t(key, language, **kw)  # noqa: E731
     balance_text = balance_display if balance_display is not None else f"${balance_usd}"
-    b = InlineKeyboardBuilder()
+    from services.button_customization_service import ButtonCustomizationService as BC
 
-    # Keep only the essential actions in the first screen.  Language and
-    # currency are available from «حسابي» to avoid crowding the home menu.
-    b.button(text=t("menu_full_store"), callback_data="store:home", style="success")
+    rows: list[list] = []
+
+    # زر «المتجر» واسع وممتد أول الشاشة — نقطة الدخول الأساسية.
+    rows.append([BC.apply("main.store", t("menu_full_store"), "store:home", "success")])
+
+    rows.append([
+        BC.apply("main.account", t("menu_account_with_balance", balance=balance_text), "menu:account", "primary"),
+        BC.apply("main.deposit", t("menu_deposit"), "menu:deposit", "primary"),
+    ])
+    rows.append([
+        BC.apply("main.referral", t("menu_referral"), "menu:referral", "primary"),
+        BC.apply("main.transfer", t("menu_transfer"), "menu:transfer", "primary"),
+    ])
+
+    row4 = []
     if completed_orders_count is not None:
-        b.button(
-            text=t("menu_completed_orders", count=completed_orders_count),
-            callback_data="info:stats", style="primary",
-        )
-    b.button(text=t("menu_account_with_balance", balance=balance_text), callback_data="menu:account", style="primary")
-    b.button(text=t("menu_deposit"), callback_data="menu:deposit", style="primary")
-    b.button(text=t("menu_transfer"), callback_data="menu:transfer", style="primary")
-    b.button(text=t("menu_referral"), callback_data="menu:referral", style="primary")
-    b.button(text=t("menu_extras"), callback_data="extras:home", style="success")
-    if show_ai:
-        b.button(text=t("menu_ai"), callback_data="ai:home", style="success")
-    if show_whatsapp:
-        b.button(text=t("menu_whatsapp"), callback_data="wa:home", style="success")
-    b.button(text=t("menu_terms"), callback_data="info:terms", style="danger")
-    b.button(text=t("menu_support"), callback_data="menu:support")
-    if show_agent:
-        b.button(text=t("menu_agent", percent=agent_percent), callback_data="agent:home", style="primary")
+        row4.append(BC.apply("main.completed_orders", t("menu_completed_orders", count=completed_orders_count), "info:stats", "success"))
+    row4.append(BC.apply("main.extras", t("menu_extras"), "extras:home", "success"))
+    rows.append(row4)
 
-    b.adjust(2)
-    return b.as_markup()
+    if show_ai or show_whatsapp:
+        row5 = []
+        if show_ai:
+            row5.append(BC.apply("main.ai", t("menu_ai"), "ai:home", "success"))
+        if show_whatsapp:
+            row5.append(BC.apply("main.whatsapp", t("menu_whatsapp"), "wa:home", "success"))
+        rows.append(row5)
+
+    if show_agent:
+        rows.append([BC.apply("main.agent", t("menu_agent", percent=agent_percent), "agent:home", "primary")])
+
+    rows.append([
+        BC.apply("main.support", t("menu_support"), "menu:support", None),
+        BC.apply("main.terms", t("menu_terms"), "info:terms", "danger"),
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def deposit_menu_kb(
@@ -85,48 +98,28 @@ def deposit_menu_kb(
     """
     t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()
+    from services.button_customization_service import ButtonCustomizationService as BC
 
     if shamcash_manual_enabled:
-        b.button(
-            text=t("deposit_method_shamcash_manual"),
-            callback_data="deposit:shamcash_manual", style="primary",
-        )
+        b.add(BC.apply("deposit.shamcash_manual", t("deposit_method_shamcash_manual"), "deposit:shamcash_manual", "primary"))
 
     if stars_enabled:
-        b.button(
-            text=t("deposit_method_stars"),
-            callback_data="deposit:stars", style="primary",
-        )
+        b.add(BC.apply("deposit.stars", t("deposit_method_stars"), "deposit:stars", "primary"))
 
     if shamcash_auto_enabled:
-        b.button(
-            text=t("deposit_method_shamcash_auto"),
-            callback_data="deposit:shamcash_auto", style="primary",
-        )
+        b.add(BC.apply("deposit.shamcash_auto", t("deposit_method_shamcash_auto"), "deposit:shamcash_auto", "primary"))
 
     if usdt_auto_enabled:
-        b.button(
-            text=t("deposit_method_usdt_auto"),
-            callback_data="deposit:usdt_auto", style="primary",
-        )
+        b.add(BC.apply("deposit.usdt_auto", t("deposit_method_usdt_auto"), "deposit:usdt_auto", "primary"))
 
     if usdt_manual_enabled:
-        b.button(
-            text=t("deposit_method_usdt_manual"),
-            callback_data="deposit:usdt_manual", style="primary",
-        )
+        b.add(BC.apply("deposit.usdt_manual", t("deposit_method_usdt_manual"), "deposit:usdt_manual", "primary"))
 
     if mobile_credit_enabled:
-        b.button(
-            text="📲 رصيد جوال",
-            callback_data="deposit:mobile_credit", style="primary",
-        )
+        b.add(BC.apply("deposit.mobile_credit", "📲 رصيد جوال", "deposit:mobile_credit", "primary"))
 
     if other_enabled:
-        b.button(
-            text=t("deposit_method_other"),
-            callback_data="deposit:other", style="primary",
-        )
+        b.add(BC.apply("deposit.other", t("deposit_method_other"), "deposit:other", "primary"))
 
     b.button(
         text=t("back_to_main"),
