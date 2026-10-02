@@ -406,7 +406,7 @@ async def _render_detail(message, session, sub_id: int) -> None:
     b.button(text="🚫 فصل الربط", callback_data="admin:wa_ops:{sub.id}:unlink")
     b.button(
         text="💵 استرداد آخر دفعة" if last_tx else "💵 لا دفعة للاسترداد",
-        callback_data=f"admin:wa_ops:{sub.id}:refund",
+        callback_data=f"admin:wa_ops:{sub.id}:refund", style="danger",
         disabled=last_tx is None,
     )
     b.button(text="🔙 القائمة", callback_data="admin:wa_users:0")

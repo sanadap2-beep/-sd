@@ -2,6 +2,7 @@
 
 يُشغَّل يدوياً:  python scripts/apply_button_styles.py
 لا يلمس أزرار التنقّل (رجوع/صفحات/القائمة الرئيسية) فتبقى بالنمط الافتراضي.
+يغطي: keyboards/ وhandlers/ وservices/ وapi/ وwa_bridge/ وbot.py.
 
 جداول التصنيف مستوردة من keyboards/style_utils.py (المصدر الوحيد).
 """
@@ -20,6 +21,24 @@ if str(ROOT) not in sys.path:
 KEYBOARDS = ROOT / "keyboards"
 
 from keyboards.style_utils import classify  # noqa: E402
+
+
+def target_files() -> list[pathlib.Path]:
+    """كل ملفات الواجهة التي تُبنى فيها أزرار إنلاين.
+
+    الترتيب ثابت (مفرز) حتى يكون ناتج الـ codemod والتدقيق قابلين
+    للتكرار. مجلد الاختبارات مستثنى — يبني أزراراً للتثبيت فقط.
+    """
+    paths: list[pathlib.Path] = []
+    paths += sorted(KEYBOARDS.glob("*.py"))
+    paths += sorted((ROOT / "handlers").rglob("*.py"))
+    paths += sorted((ROOT / "services").glob("*.py"))
+    paths += sorted((ROOT / "api").glob("*.py"))
+    paths += sorted((ROOT / "wa_bridge").glob("*.py"))
+    bot_py = ROOT / "bot.py"
+    if bot_py.exists():
+        paths.append(bot_py)
+    return [p for p in paths if p.name != "style_utils.py"]
 
 
 def _literal_callback(node: cst.BaseExpression) -> str | None:
@@ -145,14 +164,14 @@ class StyleAuditor(cst.CSTTransformer):
 def audit() -> int:
     """يعيد عدد الأزرار التي لا يطابق لونها التصنيف (0 = لا ملاحظات)."""
     total = 0
-    for path in sorted(KEYBOARDS.glob("*.py")):
+    for path in target_files():
         source = path.read_text(encoding="utf-8")
         tree = cst.parse_module(source)
         auditor = StyleAuditor()
         tree.visit(auditor)
         if auditor.mismatches:
             total += len(auditor.mismatches)
-            print(f"{path.name}:")
+            print(f"{path.relative_to(ROOT)}:")
             for callback, current, expected in auditor.mismatches:
                 print(f"  {callback!r}: الحالي={current} المتوقع={expected}")
     print(f"total mismatches: {total}")
@@ -164,7 +183,7 @@ def main() -> None:
         raise SystemExit(1 if audit() else 0)
 
     total = 0
-    for path in sorted(KEYBOARDS.glob("*.py")):
+    for path in target_files():
         source = path.read_text(encoding="utf-8")
         tree = cst.parse_module(source)
         transformer = StyleAdder()
@@ -172,7 +191,7 @@ def main() -> None:
         if transformer.changed:
             path.write_text(new_tree.code, encoding="utf-8")
             total += transformer.changed
-            print(f"{path.name}: {transformer.changed} buttons styled")
+            print(f"{path.relative_to(ROOT)}: {transformer.changed} buttons styled")
     print(f"total: {total}")
 
 

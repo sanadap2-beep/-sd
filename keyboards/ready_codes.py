@@ -7,7 +7,7 @@ def ready_codes_list_kb(items, language: str = "ar") -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for item in items:
         price = "مجاني" if item.price_usd == 0 else f"${item.price_usd}"
-        b.button(text=f"{item.name_ar} - {price}", callback_data=f"readycode:view:{item.id}")
+        b.button(text=f"{item.name_ar} - {price}", callback_data=f"readycode:view:{item.id}", style="success")
     b.button(text="🔙 رجوع", callback_data="store:home")
     b.adjust(1)
     return b.as_markup()

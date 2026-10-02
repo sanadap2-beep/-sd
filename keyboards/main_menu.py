@@ -61,11 +61,13 @@ def build_main_menu(
     if show_whatsapp:
         b.button(text=t("menu_whatsapp"), callback_data="wa:home", style="success")
     b.button(text=t("menu_terms"), callback_data="info:terms", style="danger")
-    b.button(text=t("menu_support"), callback_data="menu:support")
+    b.button(text=t("menu_support"), callback_data="menu:support", style="primary")
     if show_agent:
         b.button(text=t("menu_agent", percent=agent_percent), callback_data="agent:home", style="primary")
 
-    b.adjust(2)
+    # تصميم حديث: زر «بطل» بعرض كامل للمتجر أولاً، ثم أزواج مرتّبة —
+    # نفس لغة بوتات السوق الحديثة (زر رئيسي بارز + شبكة ثنائية).
+    b.adjust(1, 2)
     return b.as_markup()
 
 

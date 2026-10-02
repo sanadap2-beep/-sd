@@ -41,7 +41,7 @@ def ai_section_kb(section_id: int, has_session: bool, language: str = "ar") -> I
     if has_session:
         b.button(text=t("ai_continue_session"), callback_data=f"ai:continue:{section_id}")
     b.button(text=t("ai_my_sessions"), callback_data=f"ai:history:{section_id}")
-    b.button(text=t("ai_back"), callback_data="ai:home")
+    b.button(text=t("ai_back"), callback_data="ai:home", style="success")
     b.adjust(1)
     return b.as_markup()
 

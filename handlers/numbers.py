@@ -320,7 +320,7 @@ async def number_server_picked(callback: CallbackQuery, session, db_user=None):
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [InlineKeyboardButton(text="🖥 تغيير السيرفر", callback_data=f"num_server:{service_code}", style="success")],
-                    [InlineKeyboardButton(text="📱 كل خدمات الأرقام", callback_data="num_hub")],
+                    [InlineKeyboardButton(text="📱 كل خدمات الأرقام", callback_data="num_hub", style="success")],
                     [InlineKeyboardButton(text="🏠 القائمة الرئيسية", callback_data="back_to_main")],
                 ]
             ),

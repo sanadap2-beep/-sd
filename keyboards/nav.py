@@ -35,12 +35,12 @@ def number_failure_kb(
     if server_id:
         b.button(
             text="🖥 تغيير السيرفر",
-            callback_data=f"num_server:{service_code}",
+            callback_data=f"num_server:{service_code}", style="success",
         )
     else:
         b.button(
             text="📱 كل الخدمات",
-            callback_data="num_hub",
+            callback_data="num_hub", style="success",
         )
     b.button(text="🏠 القائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)

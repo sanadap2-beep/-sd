@@ -243,7 +243,10 @@ def test_main_menu_is_compact_and_moves_language_currency_to_account():
     rows = keyboard.inline_keyboard
     buttons = [button for row in rows for button in row]
 
-    assert [len(row) for row in rows] == [2, 2, 2, 2]
+    # التصميم الحديث: زر «بطل» بعرض كامل للمتجر أولاً ثم أزواج ثنائية
+    # (لغة بوتات السوق الحديثة)، وآخر زر مفرد يأخذ عرضاً كاملاً.
+    assert [len(row) for row in rows] == [1, 2, 2, 2, 1]
+    assert rows[0][0].callback_data == "store:home"
     assert [button.callback_data for button in buttons] == [
         "store:home",
         "menu:account",

@@ -178,7 +178,7 @@ def ask_sync_now_kb(provider_id: int, partner: bool = False) -> InlineKeyboardMa
     if partner:
         b.button(
             text="📥 سحب قسم بنسبة ربح",
-            callback_data=f"pk:h:{provider_id}",
+            callback_data=f"pk:h:{provider_id}", style="success",
         )
         b.button(
             text="📋 فتح المزود",
@@ -227,7 +227,7 @@ def provider_detail_kb(
     )
     b.button(
         text="📥 سحب قسم بنسبة ربح",
-        callback_data=f"pk:h:{provider.id}",
+        callback_data=f"pk:h:{provider.id}", style="success",
     )
     b.button(
         text="📋 عرض الخدمات",

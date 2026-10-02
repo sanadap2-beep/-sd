@@ -34,8 +34,8 @@ router.callback_query.filter(IsAdmin())
 def _types_kb(provider_id: int):
     b = InlineKeyboardBuilder()
     for key, emoji, label in PartnerCatalogService.type_rows():
-        b.button(text=f"{emoji} {label}", callback_data=f"pk:k:{provider_id}:{key}:0")
-    b.button(text="📋 كل الأنواع", callback_data=f"pk:k:{provider_id}:all:0")
+        b.button(text=f"{emoji} {label}", callback_data=f"pk:k:{provider_id}:{key}:0", style="success")
+    b.button(text="📋 كل الأنواع", callback_data=f"pk:k:{provider_id}:all:0", style="success")
     b.button(text="🔙 المزود", callback_data=f"admin:aprov_view:{provider_id}")
     b.adjust(1)
     return b.as_markup()
@@ -48,7 +48,7 @@ def _groups_kb(provider_id: int, type_key: str, groups, page: int):
     for token, emoji, label, items in chunk:
         b.button(
             text=f"{emoji} {label} ({len(items)})",
-            callback_data=f"pk:kd:{provider_id}:{type_key}:{token}",
+            callback_data=f"pk:kd:{provider_id}:{type_key}:{token}", style="success",
         )
     nav = 0
     if page > 0:
@@ -71,11 +71,11 @@ def _group_detail_kb(provider_id: int, type_key: str, token: str):
     b = InlineKeyboardBuilder()
     b.button(
         text="📥 سحب القسم كامل بنسبة ربح",
-        callback_data=f"pk:kp:{provider_id}:{type_key}:{token}",
+        callback_data=f"pk:kp:{provider_id}:{type_key}:{token}", style="success",
     )
     b.button(
         text="👁 استعراض الخدمات واحدة واحدة",
-        callback_data=f"pk:kl:{provider_id}:{type_key}:{token}:0",
+        callback_data=f"pk:kl:{provider_id}:{type_key}:{token}:0", style="success",
     )
     b.button(text="🔙 أقسام الصديق", callback_data=f"pk:k:{provider_id}:{type_key}:0")
     b.adjust(1)
@@ -88,7 +88,7 @@ def _list_kb(provider_id: int, type_key: str, token: str, services, page: int, t
         name = (svc.name or "خدمة")[:36]
         b.button(
             text=f"#{svc.external_id} · {svc.rate}$ · {name}",
-            callback_data=f"pk:v:{provider_id}:{svc.external_id}",
+            callback_data=f"pk:v:{provider_id}:{svc.external_id}", style="success",
         )
     nav = 0
     last = max(0, (total - 1) // SERVICES_PER_PAGE) if total else 0
@@ -116,7 +116,7 @@ def _list_kb(provider_id: int, type_key: str, token: str, services, page: int, t
 
 def _detail_kb(provider_id: int, service_id: str, type_key: str):
     b = InlineKeyboardBuilder()
-    b.button(text="📂 وضعها في قسم عندي", callback_data=f"pk:pub:{provider_id}:{service_id}")
+    b.button(text="📂 وضعها في قسم عندي", callback_data=f"pk:pub:{provider_id}:{service_id}", style="success")
     b.button(text="🔙 القائمة", callback_data=f"pk:k:{provider_id}:{type_key}:0")
     b.adjust(1)
     return b.as_markup()

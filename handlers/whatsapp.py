@@ -171,8 +171,8 @@ def _menu_kb(
     rows.append(
         [
             InlineKeyboardButton(
-                text=_esc("wa_back_home", language), callback_data="wa:home"
-            )
+                text=_esc("wa_back_home", language), callback_data="wa:home", 
+            style="success")
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -241,7 +241,7 @@ def _result_kb(
         for button in btn:
             b.button(text=button.text, url=button.url)
     b.button(text=_esc("wa_open_menu", language), callback_data="wa:menu", style="primary")
-    b.button(text=_esc("wa_back_home", language), callback_data="wa:home")
+    b.button(text=_esc("wa_back_home", language), callback_data="wa:home", style="success")
     b.adjust(2 if extra else 1)
     return b.as_markup()
 
@@ -483,7 +483,7 @@ async def wa_phone_received(
     )
     b = InlineKeyboardBuilder()
     b.button(text=t("wa_check_link"), callback_data="wa:check_link", style="primary")
-    b.button(text=t("wa_back_home"), callback_data="wa:home")
+    b.button(text=t("wa_back_home"), callback_data="wa:home", style="success")
     b.adjust(2)
     await message.answer(text, reply_markup=b.as_markup())
 
@@ -667,7 +667,7 @@ async def wa_action(callback: CallbackQuery, session, state: FSMContext, db_user
         await state.update_data(wa_token=token, wa_index=index)
         prompt = str(item.get("prompt") or _esc("wa_input_prompt", language))
         b = InlineKeyboardBuilder()
-        b.button(text=_esc("wa_cancel_input", language), callback_data="wa:cancel_input")
+        b.button(text=_esc("wa_cancel_input", language), callback_data="wa:cancel_input", style="danger")
         await _edit_or_answer(
             callback.message,
             f"✍️ {prompt}\n\n{_esc('wa_input_hint', language)}",
@@ -724,7 +724,7 @@ async def _dispatch_result(
                     [
                         InlineKeyboardButton(
                             text=_esc("wa_cancel_input", language),
-                            callback_data="wa:cancel_input",
+                            callback_data="wa:cancel_input", style="danger",
                         )
                     ]
                 ]
@@ -827,7 +827,7 @@ def _home_kb(language: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=_esc("wa_check_link", language), callback_data="wa:check_link")
     b.button(text=_esc("wa_open_menu", language), callback_data="wa:menu", style="primary")
-    b.button(text=_esc("wa_back_home", language), callback_data="wa:home")
+    b.button(text=_esc("wa_back_home", language), callback_data="wa:home", style="success")
     b.adjust(1)
     return b.as_markup()
 
@@ -839,6 +839,6 @@ def _menu_entry_kb(language: str) -> InlineKeyboardMarkup:
         callback_data="wa:menu",
         style="primary",
     )
-    b.button(text=_esc("wa_back_home", language), callback_data="wa:home")
+    b.button(text=_esc("wa_back_home", language), callback_data="wa:home", style="success")
     b.adjust(1)
     return b.as_markup()

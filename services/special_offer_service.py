@@ -227,8 +227,8 @@ class SpecialOfferService:
                 f"✅ تم تنفيذ العرض الخاص بنجاح!\n\n📦 {offer.name}\n🆔 الطلب #{order.id}\n\n"
                 "قيّم العرض:",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔥 العرض ممتاز وتمديده", callback_data=f"special:vote_extend:{order.id}")],
-                    [InlineKeyboardButton(text="✅ جيد ونريد عروض جديدة", callback_data="special:home")],
+                    [InlineKeyboardButton(text="🔥 العرض ممتاز وتمديده", callback_data=f"special:vote_extend:{order.id}", style="success")],
+                    [InlineKeyboardButton(text="✅ جيد ونريد عروض جديدة", callback_data="special:home", style="success")],
                 ]),
                 notification_type="order",
                 priority="high",

@@ -6,9 +6,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def support_menu_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="📝 فتح تذكرة دعم", callback_data="support:new")
-    builder.button(text="🤖 مساعدة فورية", callback_data="support:ai")
-    builder.button(text="📋 تذاكري", callback_data="support:list")
+    builder.button(text="📝 فتح تذكرة دعم", callback_data="support:new", style="primary")
+    builder.button(text="🤖 مساعدة فورية", callback_data="support:ai", style="primary")
+    builder.button(text="📋 تذاكري", callback_data="support:list", style="primary")
     builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_main")
     builder.adjust(1)
     return builder.as_markup()
@@ -16,7 +16,7 @@ def support_menu_kb() -> InlineKeyboardMarkup:
 
 def support_cancel_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ إلغاء", callback_data="menu:support")
+    builder.button(text="❌ إلغاء", callback_data="menu:support", style="primary")
     return builder.as_markup()
 
 
@@ -26,9 +26,9 @@ def support_tickets_kb(tickets) -> InlineKeyboardMarkup:
     for ticket in tickets:
         builder.button(
             text=f"🎫 #{ticket.id} · {ticket.subject[:24]}",
-            callback_data=f"support:ticket:{ticket.id}",
+            callback_data=f"support:ticket:{ticket.id}", style="primary",
         )
-    builder.button(text="📝 تذكرة جديدة", callback_data="support:new")
+    builder.button(text="📝 تذكرة جديدة", callback_data="support:new", style="primary")
     builder.button(text="🔙 الدعم الفني", callback_data="menu:support")
     builder.adjust(1)
     return builder.as_markup()
@@ -37,7 +37,7 @@ def support_tickets_kb(tickets) -> InlineKeyboardMarkup:
 def support_ticket_view_kb() -> InlineKeyboardMarkup:
     """أزرار تفاصيل تذكرة المستخدم."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="📋 كل تذاكري", callback_data="support:list")
+    builder.button(text="📋 كل تذاكري", callback_data="support:list", style="primary")
     builder.button(text="🔙 الدعم الفني", callback_data="menu:support")
     builder.adjust(1)
     return builder.as_markup()

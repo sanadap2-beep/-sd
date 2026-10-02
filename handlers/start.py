@@ -183,7 +183,7 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
                     reply_markup=InlineKeyboardMarkup(
                         inline_keyboard=[
                             [InlineKeyboardButton(text="🛒 شراء الآن", callback_data=f"prod:{product.id}", style="success")],
-                            [InlineKeyboardButton(text="🟢 🛍 المتجر", callback_data="store:home", style="success")],
+                            [InlineKeyboardButton(text="🛍️ المتجر", callback_data="store:home", style="success")],
                         ]
                     ),
                 )

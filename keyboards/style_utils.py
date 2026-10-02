@@ -118,6 +118,8 @@ PRIMARY_PATTERNS = tuple(
         r"checkout",
         r"buy",
         r"confirm",
+        r"^menu:support",
+        r"^support",
     )
 )
 
@@ -147,6 +149,12 @@ SUCCESS_PATTERNS = tuple(
         # «preset» = زر إنشاء بقوالب جاهزة، وليس حذفاً (قريب من "reset").
         r"preset",
         r"^admin:main$",
+        r"^wa:home$",
+        r"^ai:home$",
+        r"^extras",
+        r"^feat_home",
+        r"^readycode",
+        r"^pk:",
     )
 )
 
