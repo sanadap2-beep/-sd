@@ -6,6 +6,11 @@ os.environ.setdefault("BOT_USERNAME", "x")
 os.environ.setdefault("ADMIN_IDS", "1")
 os.environ.setdefault("ADMIN_NOTIFY_CHAT_ID", "-1")
 os.environ.setdefault("DATABASE_URL", os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./bot_database.db"))
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 os.environ.setdefault("INVENTORY_ENCRYPTION_KEY", "dev")
 from sqlalchemy import select, update
 from database.seed import init_db
