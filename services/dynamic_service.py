@@ -433,6 +433,9 @@ class DynamicService:
         display_type: ProductDisplayType | None = None,
         sort_order: int = 0,
         is_auto_published: bool = False,
+        custom_input_label: str | None = None,
+        custom_input_placeholder: str | None = None,
+        custom_description: str | None = None,
     ) -> Product:
         if display_type is None:
             display_type = (
@@ -468,6 +471,9 @@ class DynamicService:
             sort_order=sort_order,
             status=ProductStatus.ACTIVE,
             is_auto_published=is_auto_published,
+            custom_input_label=custom_input_label,
+            custom_input_placeholder=custom_input_placeholder,
+            custom_description=custom_description,
         )
         session.add(product)
         await session.commit()

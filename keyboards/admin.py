@@ -584,7 +584,7 @@ def admin_topup_gifts_kb(requests) -> InlineKeyboardMarkup:
     for req in requests:
         status_icon = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(req.status, "•")
         b.button(
-            text=f"{status_icon} #{req.id} — {req.operator} {req.amount_usd}$ → {req.recipient_number}",
+            text=f"{status_icon} #{req.id} — {req.operator} {req.quantity} × {req.amount_usd}$ → {req.recipient_number}",
             callback_data=f"admin:topup_view:{req.id}", style="primary",
         )
     b.button(text="🔙 رجوع", callback_data="admin:main")

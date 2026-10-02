@@ -1051,6 +1051,9 @@ class Product(Base):
     estimated_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_input_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    custom_input_placeholder: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     price_usd: Mapped[Decimal] = mapped_column(MONEY)
     cost_price_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
@@ -2788,6 +2791,7 @@ class TopupGiftRequest(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     operator: Mapped[str] = mapped_column(String(32))  # mtn / syriatel
     recipient_number: Mapped[str] = mapped_column(String(32))
+    quantity: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("1"))
     amount_usd: Mapped[Decimal] = mapped_column(MONEY)
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending/approved/rejected

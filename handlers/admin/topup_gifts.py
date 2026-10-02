@@ -24,7 +24,7 @@ router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
 
 STATUS_LABELS = {"pending": "⏳ بانتظار المراجعة", "approved": "✅ مقبول", "rejected": "❌ مرفوض"}
-OPERATOR_LABELS = {"mtn": "MTN", "syriatel": "سيريتل"}
+OPERATOR_LABELS = {"mtn": "MTN", "syriatel": "سيرياتل"}
 
 
 def _operator_name(op: str) -> str:
@@ -99,6 +99,7 @@ async def topup_view(callback: CallbackQuery, session):
         f"👤 المستخدم: <code>{user.telegram_id if user else request.user_id}</code> "
         f"(@{user.username if user else '-'})\n"
         f"📡 المشغّل: <b>{_operator_name(request.operator)}</b>\n"
+        f"📦 الكمية: <b>{request.quantity}</b>\n"
         f"💵 المبلغ: <b>{request.amount_usd}$</b>\n"
         f"📱 رقم المستلم: <code>{request.recipient_number}</code>\n"
         f"💬 ملاحظة: {note}\n"
@@ -131,6 +132,7 @@ async def topup_approve(callback: CallbackQuery, session, db_user, bot):
             user.telegram_id,
             f"✅ <b>تم تنفيذ طلب الشحن!</b>\n\n"
             f"📡 المشغّل: <b>{_operator_name(request.operator)}</b>\n"
+            f"📦 الكمية: <b>{request.quantity}</b>\n"
             f"💵 المبلغ: <b>{request.amount_usd}$</b>\n"
             f"📱 رقم المستلم: <code>{request.recipient_number}</code>\n\n"
             "شكراً لاستخدامك البوت.",
@@ -189,6 +191,7 @@ async def topup_reject_reason_received(
         await NotificationService(bot).notify_user(
             user.telegram_id,
             f"❌ <b>تم رفض طلب الشحن</b>\n\n"
+            f"📦 الكمية: <b>{request.quantity}</b>\n"
             f"📱 رقم المستلم: <code>{request.recipient_number}</code>\n"
             f"📝 السبب: {reason}\n\n"
             "يمكنك المحاولة مجدداً من القائمة.",

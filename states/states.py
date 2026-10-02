@@ -297,6 +297,9 @@ class AdminProductStates(StatesGroup):
     waiting_edit_value = State()
     confirming_price_change = State()
     confirming_delete = State()
+    waiting_custom_input_label = State()
+    waiting_custom_input_placeholder = State()
+    waiting_custom_description = State()
 
 
 class AdminProductRouteStates(StatesGroup):
@@ -605,10 +608,10 @@ class MobileCreditDepositStates(StatesGroup):
 
 
 class TopupGiftStates(StatesGroup):
-    """«اشحن لأهلك»: المشغل ثم المبلغ ثم رقم المستلم."""
+    """«اشحن لأهلك»: المشغل ثم الكمية ثم رقم المستلم."""
 
     waiting_operator = State()
-    waiting_amount = State()
+    waiting_quantity = State()
     waiting_recipient = State()
     waiting_note = State()
 

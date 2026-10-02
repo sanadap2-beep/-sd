@@ -445,6 +445,55 @@ async def prod_estimated_time_received(message: Message, state: FSMContext):
         await state.update_data(estimated_time=None)
     else:
         await state.update_data(estimated_time=text[:64])
+    await _ask_custom_fields(message, state)
+
+
+async def _ask_custom_fields(message: Message, state: FSMContext):
+    await message.answer(
+        "✏️ أرسل <b>اسم الحقل المخصص</b> الذي سيظهر للمستخدم:\n"
+        "(مثال: رابط الفيديو، رقم الهاتف، اسم المستخدم)\n\n"
+        "أو أرسل <b>تخطي</b> لاستخدام الاسم الافتراضي."
+    )
+    await state.set_state(AdminProductStates.waiting_custom_input_label)
+
+
+@router.message(AdminProductStates.waiting_custom_input_label)
+async def prod_custom_input_label_received(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text or text in ("تخطي", "skip", "-", "0"):
+        await state.update_data(custom_input_label=None)
+    else:
+        await state.update_data(custom_input_label=text[:128])
+    await message.answer(
+        "✏️ أرسل <b>نص توضيحي</b> يظهر داخل حقل الإدخال:\n"
+        "(مثال: أرسل رابط الفيديو هنا)\n\n"
+        "أو أرسل <b>تخطي</b> لتركه فارغاً."
+    )
+    await state.set_state(AdminProductStates.waiting_custom_input_placeholder)
+
+
+@router.message(AdminProductStates.waiting_custom_input_placeholder)
+async def prod_custom_input_placeholder_received(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text or text in ("تخطي", "skip", "-", "0"):
+        await state.update_data(custom_input_placeholder=None)
+    else:
+        await state.update_data(custom_input_placeholder=text[:255])
+    await message.answer(
+        "📝 أرسل <b>وصف مخصص</b> للمنتج (يظهر في صفحة التفاصيل):\n"
+        "(مثال: متابعون حقيقيون، سرعة عالية، ضمان 30 يوم)\n\n"
+        "أو أرسل <b>تخطي</b> لاستخدام الوصف الافتراضي."
+    )
+    await state.set_state(AdminProductStates.waiting_custom_description)
+
+
+@router.message(AdminProductStates.waiting_custom_description)
+async def prod_custom_description_received(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text or text in ("تخطي", "skip", "-", "0"):
+        await state.update_data(custom_description=None)
+    else:
+        await state.update_data(custom_description=text[:500])
     await _save_product(message, state)
 
 
@@ -480,6 +529,9 @@ async def _save_product(message, state, callback=None):
                 if data.get("requires_quantity")
                 else ProductDisplayType.FIXED_TOTAL
             ),
+            custom_input_label=data.get("custom_input_label"),
+            custom_input_placeholder=data.get("custom_input_placeholder"),
+            custom_description=data.get("custom_description"),
         )
 
     target = callback.message if callback else message
