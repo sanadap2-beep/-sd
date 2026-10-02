@@ -900,6 +900,9 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
     order_status = UnifiedOrderStatus.PENDING
     status_message = 'بانتظار تنفيذ الإدارة' if fulfillment == ProductFulfillmentType.MANUAL.value else 'بانتظار التنفيذ'
     instant_raw = None
+    # يُهيّأ قبل تفريعات التنفيذ حتى لا يبقى غير معرّف في المسارات
+    # اليدوية/غير-API (انحدار: UnboundLocalError عند إنشاء الطلب اليدوي).
+    used_route = None
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         pass
     elif product.api_provider_id and product.provider_service_id:

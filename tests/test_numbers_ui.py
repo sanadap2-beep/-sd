@@ -45,8 +45,8 @@ def test_price_kb_layout_two_per_row():
     assert rows[0][0].callback_data == "num_country:wa:101"
     assert rows[0][1].callback_data == "num_country:wa:102"
     assert rows[1][0].callback_data == "num_country:wa:103"
-    assert rows[11][0].callback_data == "num_country:wa:122"
-    assert rows[11][1].callback_data == "num_country:wa:123"
+    assert rows[11][0].callback_data == "num_country:wa:123"
+    assert rows[11][1].callback_data == "num_country:wa:124"
     # الصف 12: 25 فردي → زر واحد فقط
     assert len(rows[12]) == 1
     assert rows[12][0].callback_data == "num_country:wa:125"

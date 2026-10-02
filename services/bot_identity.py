@@ -103,24 +103,28 @@ def tg_ready_start_link(username: str, country_key: str | None = None) -> str:
     return f"https://t.me/{clean}?start={payload}"
 
 
-def number_buy_start_link(username: str, service_code: str, country_id: int) -> str:
+def number_buy_start_link(username: str, service_code: str, country_ref) -> str:
     """Build a buy deep link for the live availability channel.
 
     Telegram's ``start`` payload is limited to 64 bytes, so the country
-    travels as its integer id (codes can exceed the limit). Old links
-    carrying codes still resolve via fallback.
+    travels as its integer id when available (codes can exceed the limit).
+    When no internal id exists the (short) provider code is used instead —
+    old links carrying codes still resolve via the /start fallback.
     """
     clean = normalize_bot_username(username)
     if not clean:
         return ""
     service = re.sub(r"[^A-Za-z0-9_\-]", "_", str(service_code or "")).strip("_")
     try:
-        country = str(int(country_id))
+        country = str(int(country_ref))
     except (TypeError, ValueError):
-        return ""
+        country = re.sub(r"[^A-Za-z0-9_\-]", "_", str(country_ref or "")).strip("_")
     if not service or not country:
         return ""
-    return f"https://t.me/{clean}?start=buy_{service}__{country}"
+    payload = f"buy_{service}__{country}"
+    if len(payload.encode()) > 64:
+        return ""
+    return f"https://t.me/{clean}?start={payload}"
 
 
 def referral_share_url(link: str, share_text: str = "") -> str:

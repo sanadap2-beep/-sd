@@ -157,7 +157,7 @@ def countries_price_kb(
         # نختصر الاسم الطويل حتى لا يُقص السعر مع العرض بصفين
         if len(name) > 18:
             name = name[:17] + "…"
-        ref = entry.cid if entry.cid else entry.code
+        ref = getattr(entry, "cid", None) or entry.code
         b.button(
             text=f"{entry.flag} {name} — {price_str}$",
             callback_data=f"num_country:{service_code}:{ref}{suffix}", style="success",

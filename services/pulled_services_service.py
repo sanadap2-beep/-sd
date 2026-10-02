@@ -589,10 +589,11 @@ class PulledServicesService:
         # إصلاح قسم الرشق: نحفظ الهامش الضمني المستخلص من
         # (سعر البيع مقابل التكلفة) حتى يصبح الهامش مطبقاً وظاهراً
         # وقابلاً للتعديل، ولا يبقى المنتج بلا هامش يُحتسب عليه.
-        # margin_manual=True لأن السعر اختيار صريح من الأدمن وله الأولوية
-        # على هامش القسم/العالمي عند عرض السعر النهائي.
+        # يبقى margin_manual=False عمداً: المنتج المسحوب يتبع هرم الهوامش
+        # (قسم فرعي ← قسم ← عالمي) ويتحكم الأدمن بهامش قسمه، ولا يُقفل
+        # السعر إلا حين يجعل الأدمن هامش المنتج يدوياً بنفسه.
         await MarginService.attach_implicit_margin(product)
-        product.margin_manual = True
+        product.margin_manual = False
         await session.commit()
         return product
 
