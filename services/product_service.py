@@ -673,6 +673,7 @@ class ProductService:
         query_text: str,
         limit: int = 20,
         active_only: bool = True,
+        category_id: int | None = None,
     ) -> list[Product]:
         """يبحث في المنتجات بالاسم أو الوصف."""
         if not query_text or not query_text.strip():
@@ -693,6 +694,11 @@ class ProductService:
 
         if active_only:
             query = query.where(Product.status == ProductStatus.ACTIVE)
+
+        if category_id:
+            query = query.join(SubCategory, Product.sub_category_id == SubCategory.id).where(
+                SubCategory.category_id == category_id
+            )
 
         query = query.limit(limit)
 

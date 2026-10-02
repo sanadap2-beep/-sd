@@ -37,6 +37,8 @@ from database.models import ProviderService
 
 async def _target_field_label(product, session) -> str | None:
     """التسمية العربية للحقل المخصص المطلوب (مثل «ادخل رقم الهاتف»)."""
+    if product.custom_input_label:
+        return product.custom_input_label
     try:
         if not product.provider_service_ref_id:
             return None
@@ -175,13 +177,28 @@ async def search_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(I18nService.t('ux_games_93_1', _auto_lang(locals())), reply_markup=back_to_main_kb())
     await state.set_state(ProductSearchStates.waiting_query)
 
+
+@router.callback_query(F.data.startswith('cat_search:'))
+async def category_search_start(callback: CallbackQuery, state: FSMContext):
+    category_id = int(callback.data.split(':')[1])
+    await state.update_data(search_category_id=category_id)
+    await callback.answer()
+    await callback.message.edit_text(I18nService.t('ux_games_93_1', _auto_lang(locals())), reply_markup=back_to_main_kb())
+    await state.set_state(ProductSearchStates.waiting_query)
+
+
 @router.message(ProductSearchStates.waiting_query)
 async def search_query_received(message: Message, state: FSMContext, session):
     query_text = (message.text or '').strip()
     if len(query_text) < 2:
         await message.answer(I18nService.t('ux_games_107_2', _auto_lang(locals())))
         return
-    products = await ProductService.search_products(session, query_text, limit=20, active_only=True)
+    data = await state.get_data()
+    category_id = data.get('search_category_id')
+    if category_id:
+        products = await ProductService.search_products(session, query_text, limit=20, active_only=True, category_id=category_id)
+    else:
+        products = await ProductService.search_products(session, query_text, limit=20, active_only=True)
     await state.clear()
     if not products:
         await message.answer(f"{I18nService.t('ux_games_119_3', _auto_lang(locals()))}{esc(query_text)}</b>.", reply_markup=back_to_main_kb())
@@ -512,7 +529,7 @@ def _product_head(product, icon: str) -> str:
     أسماء الخدمات المسحوبة من المزود مليئة بـ ``<`` و``&`` (مثل
     ``Followers < 1h & HQ``)؛ بدون تهريب ترفض تيليجرام الرسالة كلها.
     """
-    desc = (getattr(product, "description", None) or "").strip()
+    desc = (getattr(product, "custom_description", None) or getattr(product, "description", None) or "").strip()
     desc_line = f"\n<i>{esc(desc)}</i>" if desc else ""
     return f"{icon} <b>{esc(product.name_ar)}</b>{desc_line}"
 
@@ -570,18 +587,28 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         await state.update_data(server_id=server.id)
     price_label = I18nService.t('price', language)
     confirm_q = I18nService.t('confirm_purchase_q', language)
+    custom_placeholder = product.custom_input_placeholder or ""
     if product.requires_player_id:
         head = _product_head(product, '🎮')
         target_label = await _target_field_label(product, session)
-        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + (target_label or I18nService.t('send_player_id', language)))
+        prompt = f"{target_label or I18nService.t('send_player_id', language)}"
+        if custom_placeholder:
+            prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
+        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt)
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         head = _product_head(product, '📈')
         if product.requires_quantity:
-            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + I18nService.t('send_link', language))
+            prompt = I18nService.t('send_link', language)
+            if custom_placeholder:
+                prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
+            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + prompt)
             await state.set_state(SMMOrderStates.waiting_link)
         else:
-            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + I18nService.t('send_link', language))
+            prompt = I18nService.t('send_link', language)
+            if custom_placeholder:
+                prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
+            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt)
             await state.update_data(quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:

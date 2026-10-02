@@ -25,7 +25,34 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="topup_gift")
 
-OPERATOR_LABELS = {"mtn": "MTN", "syriatel": "سيريتل"}
+OPERATOR_LABELS = {"mtn": "MTN", "syriatel": "سيرياتل"}
+
+OPERATOR_QUANTITIES: dict[str, list[Decimal]] = {
+    "syriatel": [
+        Decimal("1.92"), Decimal("2.88"), Decimal("3.84"), Decimal("4.80"),
+        Decimal("5.76"), Decimal("9.61"), Decimal("20.19"), Decimal("23.07"),
+        Decimal("24.03"), Decimal("25.96"), Decimal("30.78"), Decimal("40.38"),
+        Decimal("45.19"), Decimal("48.07"), Decimal("52.88"), Decimal("62.5"),
+        Decimal("68.26"), Decimal("72.11"), Decimal("77.88"), Decimal("81.73"),
+        Decimal("86.53"), Decimal("96.15"), Decimal("100.96"), Decimal("105.76"),
+        Decimal("115.38"), Decimal("125"), Decimal("125.00"), Decimal("130.76"),
+        Decimal("144.23"), Decimal("160.57"), Decimal("163.46"), Decimal("173.07"),
+        Decimal("183.65"), Decimal("192.30"), Decimal("211.53"), Decimal("240.38"),
+        Decimal("288.46"), Decimal("317.30"), Decimal("370.19"), Decimal("432.69"),
+        Decimal("480.76"), Decimal("576.92"),
+    ],
+    "mtn": [
+        Decimal("10"), Decimal("12"), Decimal("15"), Decimal("20"), Decimal("25"),
+        Decimal("30"), Decimal("35"), Decimal("40"), Decimal("50"), Decimal("60"),
+        Decimal("70"), Decimal("85"), Decimal("90"), Decimal("100"), Decimal("110"),
+        Decimal("150"), Decimal("170"), Decimal("190"), Decimal("200"), Decimal("230"),
+        Decimal("260"), Decimal("280"), Decimal("300"), Decimal("320"), Decimal("340"),
+        Decimal("360"), Decimal("400"), Decimal("420"), Decimal("440"), Decimal("460"),
+        Decimal("480"), Decimal("500"), Decimal("550"), Decimal("600"),
+    ],
+}
+
+UNIT_PRICE = Decimal("0.25")
 
 
 async def _enabled() -> bool:
@@ -43,6 +70,17 @@ def _operator_kb(enabled_ops: list[str]) -> InlineKeyboardMarkup:
         b.button(text=OPERATOR_LABELS.get(op, op), callback_data=f"topup:op:{op}", style="primary")
     b.button(text="🔙 رجوع", callback_data="extras:home")
     b.adjust(1)
+    return b.as_markup()
+
+
+def _quantity_kb(operator: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    quantities = OPERATOR_QUANTITIES.get(operator, [])
+    for qty in quantities:
+        label = f"{qty.normalize():f}" if qty == qty.to_integral() else f"{qty}f"
+        b.button(text=label, callback_data=f"topup:qty:{operator}:{qty}", style="success")
+    b.button(text="🔙 رجوع", callback_data="extras:topup_gift")
+    b.adjust(3)
     return b.as_markup()
 
 
@@ -100,17 +138,56 @@ async def topup_operator_selected(callback: CallbackQuery, state: FSMContext):
         return
     await callback.answer()
     await state.update_data(operator=operator)
-    min_amount = await FeatureService.config_decimal("mobile_topup_gift", "min_amount_usd", 1)
-    max_amount = await FeatureService.config_int("mobile_topup_gift", "max_amount_usd", 100)
+    quantities = OPERATOR_QUANTITIES.get(operator, [])
+    if quantities:
+        await callback.message.edit_text(
+            f"🎁 <b>اشحن لأهلك — {OPERATOR_LABELS.get(operator, operator)}</b>\n\n"
+            f"اختر <b>الكمية</b> التي تريد شحنها:\n"
+            f"(سعر الوحدة: {UNIT_PRICE}$ لكل كمية)",
+            reply_markup=_quantity_kb(operator),
+        )
+        await state.set_state(TopupGiftStates.waiting_quantity)
+    else:
+        min_amount = await FeatureService.config_decimal("mobile_topup_gift", "min_amount_usd", 1)
+        max_amount = await FeatureService.config_int("mobile_topup_gift", "max_amount_usd", 100)
+        await callback.message.edit_text(
+            f"🎁 <b>اشحن لأهلك — {OPERATOR_LABELS.get(operator, operator)}</b>\n\n"
+            f"أرسل <b>المبلغ بالدولار</b> الذي تريد شحنه:\n"
+            f"(من {min_amount:.0f}$ إلى {max_amount}$)",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع", callback_data="extras:topup_gift")]]
+            ),
+        )
+        await state.set_state(TopupGiftStates.waiting_amount)
+
+
+@router.callback_query(F.data.startswith("topup:qty:"))
+async def topup_quantity_selected(callback: CallbackQuery, state: FSMContext):
+    if not await _enabled():
+        await callback.answer("⏳ غير متاحة حالياً.", show_alert=True)
+        return
+    parts = (callback.data or "").split(":")
+    if len(parts) != 4:
+        await callback.answer("⚠️ بيانات غير صالحة.", show_alert=True)
+        return
+    operator = parts[2]
+    try:
+        quantity = Decimal(parts[3])
+    except (InvalidOperation, ValueError):
+        await callback.answer("⚠️ كمية غير صالحة.", show_alert=True)
+        return
+
+    await callback.answer()
+    await state.update_data(operator=operator, quantity=str(quantity))
+    amount_usd = (quantity * UNIT_PRICE).quantize(Decimal("0.01"))
+    await state.update_data(amount_usd=str(amount_usd))
+    await state.set_state(TopupGiftStates.waiting_recipient)
     await callback.message.edit_text(
-        f"🎁 <b>اشحن لأهلك — {OPERATOR_LABELS.get(operator, operator)}</b>\n\n"
-        f"أرسل <b>المبلغ بالدولار</b> الذي تريد شحنه:\n"
-        f"(من {min_amount:.0f}$ إلى {max_amount}$)",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 رجوع", callback_data="extras:topup_gift")]]
-        ),
+        f"📦 الكمية: <b>{quantity}</b>\n"
+        f"💵 المبلغ: <b>{amount_usd}$</b>\n\n"
+        "📱 الآن أرسل <b>رقم جوال المستلم</b> في الوطن:\n"
+        "(مثال: 0933556677)",
     )
-    await state.set_state(TopupGiftStates.waiting_amount)
 
 
 @router.message(TopupGiftStates.waiting_amount)
@@ -184,6 +261,7 @@ async def _submit_topup_request(target, state: FSMContext, session, user_id: int
     data = await state.get_data()
     operator = data.get("operator", "")
     amount_usd = Decimal(data.get("amount_usd", "0"))
+    quantity = Decimal(data.get("quantity", "1"))
     recipient_number = data.get("recipient_number", "")
     note = data.get("note", "") or ""
 
@@ -191,6 +269,7 @@ async def _submit_topup_request(target, state: FSMContext, session, user_id: int
         user_id=user_id,
         operator=operator,
         recipient_number=recipient_number,
+        quantity=quantity,
         amount_usd=amount_usd,
         note=note or None,
         status="pending",
@@ -203,6 +282,7 @@ async def _submit_topup_request(target, state: FSMContext, session, user_id: int
         "🎁 <b>طلب «اشحن لأهلك» جديد</b>\n\n"
         f"🆔 رقم الطلب: #{request.id}\n"
         f"📡 المشغّل: <b>{OPERATOR_LABELS.get(operator, operator)}</b>\n"
+        f"📦 الكمية: <b>{quantity}</b>\n"
         f"💵 المبلغ: <b>{amount_usd}$</b>\n"
         f"📱 رقم المستلم: <code>{recipient_number}</code>\n"
     )
@@ -222,6 +302,7 @@ async def _submit_topup_request(target, state: FSMContext, session, user_id: int
     await target.answer(
         "✅ تم إرسال طلب الشحن بنجاح!\n\n"
         f"📡 المشغّل: <b>{OPERATOR_LABELS.get(operator, operator)}</b>\n"
+        f"📦 الكمية: <b>{quantity}</b>\n"
         f"💵 المبلغ: <b>{amount_usd}$</b>\n"
         f"📱 رقم المستلم: <code>{recipient_number}</code>\n\n"
         "⏳ بانتظار موافقة الإدارة وسيُشحن خلال وقت قصير.\n"
