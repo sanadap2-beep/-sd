@@ -74,6 +74,15 @@ class SyncResult:
         )
 
 
+def _is_hyper_store_provider(provider) -> bool:
+    """True إذا كان المزود من إنتاج Hyper Store (engine في custom_config)."""
+    try:
+        raw = json.loads(getattr(provider, "custom_config", "") or "{}") if isinstance(getattr(provider, "custom_config", None), str) else (getattr(provider, "custom_config", None) or {})
+        return str(raw.get("engine") or "").lower() in ("hyper_store", "hyper4store", "external_store", "external_store_api")
+    except Exception:
+        return False
+
+
 class ProviderSyncService:
     """خدمة تزامن الخدمات من المزودين."""
 
@@ -259,7 +268,7 @@ class ProviderSyncService:
                             service_type=service.service_type,
                             rate=service.rate,
                             rate_usd=rate_usd,
-                            price_type=(ProviderPriceType.PER_1000),
+                            price_type=(ProviderPriceType.PER_ITEM if _is_hyper_store_provider(provider) else ProviderPriceType.PER_1000),
                             min_quantity=service.min_quantity,
                             max_quantity=service.max_quantity,
                             description=service.description,

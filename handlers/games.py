@@ -14,7 +14,7 @@ from decimal import Decimal
 from aiogram import Router, F
 from aiogram.filters import Filter, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType, StoreServer, ApiProvider
@@ -33,6 +33,20 @@ from services.coupon_service import CouponService, CouponError
 from services.cashback_service import CashbackService
 from services.campaign_service import CampaignCodeError, CampaignService
 from database.models import ProviderService
+
+
+async def _is_hyper_store_product(product, session) -> bool:
+    """True إذا كان المنتج مربوطاً بمزود Hyper Store."""
+    try:
+        if not product.api_provider_id:
+            return False
+        provider = await session.get(ApiProvider, product.api_provider_id)
+        if not provider:
+            return False
+        raw = json.loads(provider.custom_config or "{}")
+        return raw.get("engine") in ("hyper_store", "hyper4store", "external_store")
+    except Exception:
+        return False
 
 
 async def _target_field_label(product, session) -> str | None:
@@ -327,6 +341,8 @@ async def _server_total_price(session, product, quantity: int, server: StoreServ
             total = unit
     elif value == "fixed_total":
         total = unit
+    elif value == "per_unit":
+        total = unit * Decimal(str(quantity))
     else:
         # PER_1000 — السعر هو لكمية 1000.
         total = unit * Decimal(str(quantity)) / Decimal("1000")
@@ -420,23 +436,56 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar", serv
 @router.callback_query(F.data.startswith('cat:'))
 async def category_selected(callback: CallbackQuery, session, state: FSMContext = None):
     category_id = int(callback.data.split(':')[1])
+    return await _render_category_page(callback, session, category_id, page=1)
+
+
+async def _render_category_page(callback: CallbackQuery, session, category_id: int, page: int = 1):
     category = await DynamicService.get_category(session, category_id)
     if not category or not category.is_active:
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
-    if state is not None:
-        await state.update_data(server_id=None)
-    await callback.answer()
-    # المستوى الأول فقط (تطبيقات قسم الرشق مثلًا)؛ الأقسام الداخلية تظهر
-    # عند فتح التطبيق نفسه عبر subcat:.
     language = _auto_lang(locals())
-    # شرح القسم (إن ضبطه الأدمن) يظهر للزبون أعلى الشاشة — ضمن رأس مُهرَّب.
     header = f"{esc(category.emoji)} {catalog_header(category.name_ar, category.description)}"
     sub_cats = await DynamicService.get_active_root_sub_categories(session, category_id)
     if not sub_cats:
         await callback.message.edit_text(f"{header}{I18nService.t('ux_games_246_13', language)}", reply_markup=back_to_main_kb())
         return
-    await callback.message.edit_text(f"{header}{I18nService.t('ux_games_252_14', language)}", reply_markup=sub_categories_kb(category_id, sub_cats))
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    page_size = 10
+    total = len(sub_cats)
+    start = (page - 1) * page_size
+    end = min(start + page_size, total)
+    page_cats = sub_cats[start:end]
+    rows: list[list] = []
+    row: list = []
+    for _i, sub in enumerate(page_cats, start=1):
+        row.append(InlineKeyboardButton(text=sub.name_ar, callback_data=f"subcat:{sub.id}", style="success"))
+        if _i % 2 == 0:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    nav_row: list = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="« «", callback_data=f"cat_page:{category_id}:{page-1}", style="primary"))
+    nav_row.append(InlineKeyboardButton(text="🔎 بحث", callback_data=f"cat_search:{category_id}", style="primary"))
+    if end < total:
+        nav_row.append(InlineKeyboardButton(text="» »", callback_data=f"cat_page:{category_id}:{page+1}", style="primary"))
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="🔙 رجوع للقائمة", callback_data="back_to_main")])
+    text = f"{header}{I18nService.t('ux_games_252_14', language)}"
+    if page > 1:
+        text += f"\n📄 الصفحة {page} من {(total - 1)//page_size + 1}"
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('cat_page:'))
+async def category_page(callback: CallbackQuery, session, state: FSMContext = None):
+    _, cat_id_str, page_str = callback.data.split(':', 2)
+    if state is not None:
+        await state.update_data(server_id=None)
+    return await _render_category_page(callback, session, int(cat_id_str), int(page_str))
 
 @router.callback_query(F.data.startswith('subcat:'))
 async def sub_category_selected(callback: CallbackQuery, session, db_user=None, state: FSMContext = None):
@@ -558,6 +607,56 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     # والقيم كلها ديناميكية من المزود وقاعدة البيانات.
     if product.provider_service_ref_id and product.fulfillment_type == ProductFulfillmentType.API:
         from services.smm_price_service import service_details, format_details_kb, live_sell_price
+        # إذا كان المنتج من Hyper Store قسمّ ألعاب/تطبيقات/أرصدة/بطاقات — نعرض تفاصيل نظيفة
+        is_hyper = await _is_hyper_store_product(product, session)
+        if is_hyper:
+            live_price = await live_sell_price(product, session)
+            back_cb = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
+            head_icon = "🎮" if product.requires_player_id or (sub_cat and any(g in sub_cat.name_ar.lower() for g in ("pubg", "ببجي", "بوبجي", "لعبة", "game"))) else ("📱" if product.requires_link else "📦")
+            head = _product_head(product, head_icon)
+            from services.smm_price_service import format_details_kb
+            service = await session.get(
+                __import__("database.models", fromlist=["ProviderService"]).ProviderService,
+                product.provider_service_ref_id,
+            )
+            if service and service.raw_data:
+                import json as _json
+                raw = _json.loads(service.raw_data) if isinstance(service.raw_data, str) else (service.raw_data or {})
+                fields = raw.get("fields", []) if isinstance(raw.get("fields"), list) else []
+                fields_str = ", ".join(
+                    f.get('label', '') for f in fields if isinstance(f, dict) and f.get('key') != 'quantity'
+                )
+                qty_info = ""
+                for f in fields:
+                    if isinstance(f, dict) and f.get('key') == 'quantity':
+                        adv = f.get('advanced', {})
+                        if adv:
+                            qty_info = f" (من {adv.get('min', '1')} إلى {adv.get('max', '1000')})"
+                        break
+            else:
+                fields_str = ""
+                qty_info = ""
+            details_text = head
+            if fields_str:
+                details_text += f"\n\n🔑 <b>المطلوب:</b> {fields_str}"
+            if product.requires_quantity:
+                details_text += f"\n\n🔢 <b>الكمية:</b>{qty_info}"
+            price_line = f"\n\n💰 <b>السعر:</b> ${live_price:.4f}" if live_price else ""
+            details_text += price_line
+            b_kb = InlineKeyboardBuilder()
+            b_kb.button(text="🔙 رجوع", callback_data=back_cb)
+            await callback.message.edit_text(details_text, reply_markup=b_kb.as_markup())
+            await state.update_data(product_id=product_id, price_override=str(live_price))
+            # prompt for the required field
+            if product.requires_player_id:
+                target_label = await _target_field_label(product, session)
+                await callback.message.answer(target_label or I18nService.t('send_player_id', language))
+                await state.set_state(GamesOrderStates.waiting_player_id)
+            elif product.requires_link:
+                await callback.message.answer(I18nService.t('send_link', language))
+                await state.set_state(SMMOrderStates.waiting_link)
+            return
+
         det = await service_details(product, session)
         live_price = await live_sell_price(product, session)
         back_callback = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"

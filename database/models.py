@@ -203,6 +203,7 @@ class ProductDisplayType(str, enum.Enum):
     PER_1000 = "per_1000"
     PER_MIN_QUANTITY = "per_min_quantity"
     FIXED_TOTAL = "fixed_total"
+    PER_UNIT = "per_unit"
 
 
 class AutoInvoiceMethod(str, enum.Enum):
