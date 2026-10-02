@@ -377,6 +377,14 @@ async def init_db() -> None:
                         "ALTER TABLE products ADD COLUMN fulfillment_type VARCHAR(16) DEFAULT 'API'"
                     )
                 )
+            for name, definition in (
+                ("custom_input_label", "VARCHAR(128)"),
+                ("custom_input_placeholder", "VARCHAR(255)"),
+                ("custom_description", "VARCHAR(500)"),
+            ):
+                if name not in product_columns:
+                    await conn.execute(text(f"ALTER TABLE products ADD COLUMN {name} {definition}"))
+
 
             order_columns = await conn.run_sync(
                 lambda sync_conn: {
