@@ -75,6 +75,7 @@ ADMIN_TABS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("🛍 التحكم بالمتجر", "admin:store_control"),
             ("🧩 التحكم بخدمات الأخرى", "admin:extras_control"),
             ("🎛 أزرار الواجهة", "admin:main_buttons"),
+            ("🎨 إدارة الأزرار والإيموجي", "admin:buttons_custom"),
             ("📊 جودة مزودي الأرقام", "admin:number_provider_quality"),
             ("📡 مباشر البوت", "admin:live_feed"),
             ("👨‍💼 إدارة الأدمنية", "admin:multi_admin"),
@@ -91,7 +92,8 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     b.button(text="🆕 آخر التحديثات والإضافات", callback_data="admin:changelog")
     b.button(text="📘 شرح البوت", callback_data="admin:guide")
     for key, (title, _items) in ADMIN_TABS.items():
-        b.button(text=title, callback_data=f"admin:tab:{key}")
+        from services.button_customization_service import ButtonCustomizationService as BC
+        b.add(BC.apply(f"admin.tab.{key}", title, f"admin:tab:{key}", None))
     if settings.ADMIN_WEBAPP_URL:
         b.button(
             text="🌐 لوحة الويب",
@@ -113,10 +115,8 @@ def admin_tab_kb(tab: str) -> InlineKeyboardMarkup:
     _title, items = ADMIN_TABS.get(tab, ADMIN_TABS["finance"])
     for label, callback_data in items:
         _style = style_for_callback(callback_data, label)
-        if _style:
-            b.button(text=label, callback_data=callback_data, style=_style)
-        else:
-            b.button(text=label, callback_data=callback_data)
+        from services.button_customization_service import ButtonCustomizationService as BC
+        b.add(BC.apply(f"admin.item.{callback_data}", label, callback_data, _style))
     b.button(text="🔙 لوحة الإدارة", callback_data="admin:main")
     b.adjust(2, 2, 2, 2, 2, 2, 2, 1)
     return b.as_markup()

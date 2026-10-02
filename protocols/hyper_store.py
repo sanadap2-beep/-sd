@@ -274,17 +274,47 @@ class HyperStoreProtocol(BaseProtocol):
             return None
         rate = _as_decimal(item.get("price", item.get("rate", 0))) or Decimal("0")
         input_type = str(item.get("input_type") or "").lower()
-        field_keys = _field_keys(item)
+        raw_fields = item.get("fields") if isinstance(item.get("fields"), list) else []
+        if not raw_fields:
+            try:
+                parsed = json.loads(str(item.get("input_type") or "[]"))
+                raw_fields = parsed if isinstance(parsed, list) else []
+            except Exception:
+                raw_fields = []
+        field_keys: list[str] = (
+            [str(f.get("key")) for f in raw_fields if isinstance(f, dict) and f.get("key")]
+            if raw_fields
+            else _field_keys(item)
+        )
         field_lowers = [k.lower() for k in field_keys]
+
+        # الحقل المطلوب الذي ليس quantity (لاعب/هاتف/رابط/أي حقل مخصص)
+        target_fields = []
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            key = str(f.get("key") or "").lower()
+            if key in ("quantity", "qty"):
+                continue
+            if f.get("required", True):
+                target_fields.append(f)
 
         requires_link = any(h in input_type for h in LINK_FIELD_HINTS) or any(
             any(h in fk for h in LINK_FIELD_HINTS) for fk in field_lowers
         )
-        requires_player_id = any(
-            any(h in fk for h in PLAYER_FIELD_HINTS) for fk in field_lowers
+        # الخدمة تحتاج رابطاً حقّه (link) عندما يكون أول حقل هدف رابطاً؛
+        # غير ذلك كل حقل هدف آخر (رقم هاتف/آي دي/وغيره)يُعامَل كـ Player ID.
+        first_target_key = (
+            str(target_fields[0].get("key")).lower() if target_fields else ""
+        )
+        requires_player_id = bool(target_fields) and not any(
+            h in first_target_key for h in LINK_FIELD_HINTS
         )
         name = str(
             item.get("name") or item.get("name_ar") or item.get("title") or f"خدمة {external_id}"
+        )
+        service_type = (
+            "id_quantity" if requires_player_id else ("link_quantity" if requires_link else "quantity")
         )
         return ProtocolService(
             external_id=str(external_id),
@@ -294,7 +324,7 @@ class HyperStoreProtocol(BaseProtocol):
                 if item.get("category")
                 else (str(item["category_name"]) if item.get("category_name") else None)
             ),
-            service_type=input_type or None,
+            service_type=service_type,
             rate=rate,
             min_quantity=_as_int(item.get("min", item.get("min_quantity", 1)), 1),
             max_quantity=_as_int(item.get("max", item.get("max_quantity", 1000000)), 1000000),
@@ -309,20 +339,32 @@ class HyperStoreProtocol(BaseProtocol):
 
     # ─────────── الطلبات ───────────
 
-    def _target_field_name(self, product: dict, requires_player_id: bool) -> str:
-        """اسم حقل الهدف حسب حقول المنتج (رابط/بلايدير/عموم)."""
+    def _target_field_name(self, product: dict, requires_player_id: bool = False) -> str | None:
+        """الاسم الفعلي للحقل المطلوب الذي ليس quantity (لاعب/هاتف/رابط)."""
+        raw_fields = product.get("fields") if isinstance(product.get("fields"), list) else []
+        if not raw_fields:
+            try:
+                parsed = json.loads(str(product.get("input_type") or "[]"))
+                raw_fields = parsed if isinstance(parsed, list) else []
+            except Exception:
+                raw_fields = []
+        for f in raw_fields:
+            if not isinstance(f, dict):
+                continue
+            key = str(f.get("key") or "")
+            if key.lower() in ("quantity", "qty"):
+                continue
+            if f.get("required", True):
+                return key
         field_keys = _field_keys(product)
-        if requires_player_id:
-            for key in field_keys:
-                if any(h in key.lower() for h in PLAYER_FIELD_HINTS):
-                    return key
-            return "playerId"
         for key in field_keys:
+            if key.lower() in ("quantity", "qty"):
+                continue
+            if requires_player_id and any(h in key.lower() for h in PLAYER_FIELD_HINTS):
+                return key
             if any(h in key.lower() for h in LINK_FIELD_HINTS):
                 return key
-        if field_keys:
-            return field_keys[0]
-        return "link"
+        return field_keys[0] if field_keys and field_keys[0].lower() not in ("quantity", "qty") else None
 
     async def place_order(
         self,
@@ -337,12 +379,9 @@ class HyperStoreProtocol(BaseProtocol):
         payload["order_uuid"] = order_uuid
 
         if target:
-            field_keys = _field_keys(product)
-            is_player = any(
-                any(h in k.lower() for h in PLAYER_FIELD_HINTS) for k in field_keys
-            )
-            field_name = self._target_field_name(product, is_player)
-            payload[field_name] = target
+            field_name = self._target_field_name(product)
+            if field_name:
+                payload[field_name] = target
 
         if extra_params:
             for key, value in extra_params.items():

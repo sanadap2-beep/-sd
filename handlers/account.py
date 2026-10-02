@@ -27,18 +27,20 @@ def _auto_lang(scope=None) -> str:
         user = getattr(callback, "from_user", None)
     return getattr(user, "language_code", "ar") or "ar"
 
-def _account_kb(language: str='ar') -> InlineKeyboardBuilder:
+def _account_kb(language: str='ar'):
     t = lambda key: I18nService.t(key, language)
-    kb = InlineKeyboardBuilder()
-    kb.button(text=t('acct_number_orders'), callback_data='my_num_orders:0', style="primary")
-    kb.button(text=t('acct_other_orders'), callback_data='my_uni_orders:0', style="primary")
-    kb.button(text=t('acct_transactions'), callback_data='my_transactions:0', style="primary")
-    kb.button(text=t('acct_watches'), callback_data='my_watches', style="primary")
-    kb.button(text=t('acct_currency'), callback_data='menu:currency')
-    kb.button(text=t('acct_language'), callback_data='menu:language')
-    kb.button(text=t('back_to_main'), callback_data='back_to_main')
-    kb.adjust(2, 2, 2, 1)
-    return kb
+    from services.button_customization_service import ButtonCustomizationService as BC
+    from aiogram.types import InlineKeyboardMarkup
+    rows = [
+        [BC.apply("account.number_orders", t('acct_number_orders'), 'my_num_orders:0', "primary"),
+         BC.apply("account.other_orders", t('acct_other_orders'), 'my_uni_orders:0', "primary")],
+        [BC.apply("account.transactions", t('acct_transactions'), 'my_transactions:0', "primary"),
+         BC.apply("account.watches", t('acct_watches'), 'my_watches', "primary")],
+        [BC.apply("account.currency", t('acct_currency'), 'menu:currency', None),
+         BC.apply("account.language", t('acct_language'), 'menu:language', None)],
+        [BC.apply("account.back", t('back_to_main'), 'back_to_main', None)],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def _label(mapping: dict, value, language: str):
     """يرجع نص الحالة/النوع بلغة المستخدم (قوائم ar/en)."""
@@ -80,7 +82,7 @@ async def _send_account(message: Message, session, db_user: User):
     result = await session.execute(select(func.count(User.id)).where(User.referrer_id == db_user.id))
     referrals_count = result.scalar_one()
     total_cashback = await CashbackService.get_user_total_cashback(session, db_user.id)
-    kb = _account_kb(language)
+    kb_markup = _account_kb(language)
     balance_display = await CurrencyService.format_dual(db_user.balance, db_user, session)
     balance_syp_note = await CurrencyService.syp_note(db_user.balance, db_user, session)
     balance_line = balance_display + balance_syp_note
@@ -106,14 +108,14 @@ async def _send_account(message: Message, session, db_user: User):
     except Exception:
         pass
 
-    await message.answer(vip_line + t('account_card', user_id=db_user.telegram_id, balance=balance_line, spent=spent_display, orders=realized_orders, cashback=cashback_display, points=db_user.loyalty_points, referrals=referrals_count, joined=db_user.joined_at.strftime('%Y-%m-%d')), reply_markup=kb.as_markup())
+    await message.answer(vip_line + t('account_card', user_id=db_user.telegram_id, balance=balance_line, spent=spent_display, orders=realized_orders, cashback=cashback_display, points=db_user.loyalty_points, referrals=referrals_count, joined=db_user.joined_at.strftime('%Y-%m-%d')), reply_markup=kb_markup)
 
 @router.callback_query(F.data == 'my_watches')
 async def my_watches(callback: CallbackQuery, session, db_user: User):
     watches = await WatchService.list_user_watches(session, db_user.id)
     await callback.answer()
     if not watches:
-        await callback.message.edit_text(I18nService.t('ux_account_146_1', _auto_lang(locals())), reply_markup=_account_kb().as_markup())
+        await callback.message.edit_text(I18nService.t('ux_account_146_1', _auto_lang(locals())), reply_markup=_account_kb())
         return
     lines = ['🔔 <b>تنبيهاتي</b>\n', 'سنخبرك عند انخفاض السعر أو عودة المخزون:']
     kb = InlineKeyboardBuilder()

@@ -243,26 +243,26 @@ def test_main_menu_is_compact_and_moves_language_currency_to_account():
     rows = keyboard.inline_keyboard
     buttons = [button for row in rows for button in row]
 
-    assert [len(row) for row in rows] == [2, 2, 2, 2]
+    assert [len(row) for row in rows] == [1, 2, 2, 1, 2]
     assert [button.callback_data for button in buttons] == [
         "store:home",
         "menu:account",
         "menu:deposit",
-        "menu:transfer",
         "menu:referral",
+        "menu:transfer",
         "extras:home",
-        "info:terms",
         "menu:support",
+        "info:terms",
     ]
     assert [button.text for button in buttons] == [
         I18nService.t("menu_full_store", "en"),
         I18nService.t("menu_account_with_balance", "en", balance="$12.50"),
         I18nService.t("menu_deposit", "en"),
-        I18nService.t("menu_transfer", "en"),
         I18nService.t("menu_referral", "en"),
+        I18nService.t("menu_transfer", "en"),
         I18nService.t("menu_extras", "en"),
-        I18nService.t("menu_terms", "en"),
         I18nService.t("menu_support", "en"),
+        I18nService.t("menu_terms", "en"),
     ]
     assert "menu:language" not in [button.callback_data for button in buttons]
     assert "menu:currency" not in [button.callback_data for button in buttons]

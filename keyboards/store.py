@@ -32,6 +32,11 @@ def _main_menu_label(language: str = "ar") -> str:
     return "🏠 القائمة الرئيسية" if I18nService.normalize_language(language) == "ar" else "🏠 Main menu"
 
 
+def _chunk(builder, buttons: list, size: int = 2) -> None:
+    for i in range(0, len(buttons), size):
+        builder.row(*buttons[i:i + size])
+
+
 def store_home_kb(
     number_services=None,
     categories=None,
@@ -51,30 +56,63 @@ def store_home_kb(
     """
     b = InlineKeyboardBuilder()
 
+    from services.button_customization_service import ButtonCustomizationService as BC
+
+    def _bc(action: str, default_label: str, style=None, web_app=None, url=None):
+        mapping = {
+            "num_hub": "store.numbers",
+            "webapp": "store.webapp",
+            "menu:search": "store.search",
+            "menu:cart": "store.cart",
+            "menu:product_request": "store.product_request",
+        }
+        if action.startswith("store:section:"):
+            mapping[action] = f"store.{action.rsplit(':', 1)[-1]}"
+        key = mapping.get(action)
+        if not key:
+            btn = InlineKeyboardButton(text=default_label, callback_data=None if web_app or url else action,
+                                       style=style, web_app=web_app, url=url)
+            return btn
+        return BC.apply(key, default_label, None if web_app or url else action, style, url=url, web_app=web_app)
+
     if entries is not None:
+        section_rows: list[list] = []
+        category_rows: list[list] = []
+        url_rows: list[list] = []
+        other_rows: list[list] = []
+        num_hub_btn = None
+        webapp_btn = None
+
         for entry in entries:
+            default_label = entry.label or I18nService.t("menu_numbers", language)
             if entry.action == "num_hub":
-                b.button(
-                    text=entry.label or I18nService.t("menu_numbers", language),
-                    callback_data="num_hub", style="success",
-                )
+                num_hub_btn = _bc("num_hub", default_label, "success")
             elif entry.action == "webapp":
                 if webapp_url:
-                    b.button(
-                        text=entry.label or I18nService.t("store_webapp", language),
-                        web_app=WebAppInfo(url=webapp_url),
-                    )
+                    webapp_btn = _bc("webapp", default_label or I18nService.t("store_webapp", language), "success",
+                                     web_app=WebAppInfo(url=webapp_url))
             elif entry.is_url:
-                b.button(text=entry.label, url=entry.action)
+                url_rows.append(_bc(entry.action, default_label, None, url=entry.action))
+            elif entry.action.startswith("cat:"):
+                category_rows.append(_bc(entry.action, default_label, "success"))
+            elif entry.action.startswith("store:section:"):
+                section_rows.append(_bc(entry.action, default_label, "success"))
             else:
-                _style = style_for_callback(entry.action, entry.label or "")
-                if _style:
-                    b.button(text=entry.label, callback_data=entry.action, style=_style)
-                else:
-                    b.button(text=entry.label, callback_data=entry.action)
-        b.button(text="📦 التطبيقات والأكواد الجاهزة", callback_data="readycode:list", style="success")
-        b.button(text=_main_menu_label(language), callback_data="back_to_main")
-        b.adjust(2)
+                _style = style_for_callback(entry.action, default_label or "")
+                other_rows.append(_bc(entry.action, default_label, _style))
+
+        # التصميم الجديد: زر رئيسي عريض ← أقسام 2×2 ← منتجات/فئات 2×2 ← أدوات
+        if num_hub_btn is not None:
+            b.row(num_hub_btn)
+        _chunk(b, section_rows, size=2)
+        _chunk(b, category_rows, size=2)
+        _chunk(b, other_rows if other_rows else [], size=2)
+        for btn in url_rows:
+            b.row(btn)
+        b.row(InlineKeyboardButton(text="📦 التطبيقات والأكواد الجاهزة", callback_data="readycode:list", style="success"))
+        if webapp_btn is not None:
+            b.row(webapp_btn)
+        b.row(InlineKeyboardButton(text=_main_menu_label(language), callback_data="back_to_main"))
         return b.as_markup()
 
     # ── التخطيط القديم (توافق مع الاستدعاءات السابقة) ──
@@ -99,19 +137,13 @@ def store_home_kb(
         )
 
     for key in SECTION_LABELS:
-        b.button(text=section_label(key, language), callback_data=f"store:section:{key}", style="success")
+        b.add(_bc(f"store:section:{key}", section_label(key, language), "success"))
 
-    b.button(text=I18nService.t("store_search", language), callback_data="menu:search", style="success")
-    b.button(text=I18nService.t("store_cart", language), callback_data="menu:cart", style="primary")
-    b.button(
-        text=I18nService.t("store_product_request", language),
-        callback_data="menu:product_request", style="success",
-    )
+    b.add(_bc("menu:search", I18nService.t("store_search", language), "success"))
+    b.add(_bc("menu:cart", I18nService.t("store_cart", language), "primary"))
+    b.add(_bc("menu:product_request", I18nService.t("store_product_request", language), "success"))
     if webapp_url:
-        b.button(
-            text=I18nService.t("store_webapp", language),
-            web_app=WebAppInfo(url=webapp_url),
-        )
+        b.add(_bc("webapp", I18nService.t("store_webapp", language), None, web_app=WebAppInfo(url=webapp_url)))
     b.button(text=_main_menu_label(language), callback_data="back_to_main")
     b.adjust(2)
     return b.as_markup()

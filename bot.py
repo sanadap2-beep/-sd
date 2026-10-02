@@ -110,6 +110,7 @@ from handlers.admin import (
     main_buttons as admin_main_buttons,
     store_control as admin_store_control,
     extras_control as admin_extras_control,
+    button_customization as admin_button_customization,
     agents as admin_agents,
     margins as admin_margins,
     withdrawals as admin_withdrawals,
@@ -284,6 +285,7 @@ def register_routers():
     dp.include_router(admin_main_buttons.router)
     dp.include_router(admin_store_control.router)
     dp.include_router(admin_extras_control.router)
+    dp.include_router(admin_button_customization.router)
     dp.include_router(admin_agents.router)
     dp.include_router(admin_margins.router)
     dp.include_router(admin_withdrawals.router)
