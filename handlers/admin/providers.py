@@ -2,6 +2,8 @@
 عرض معلومات مزودي الأرقام المبرمجين مسبقاً + فحص تشخيصي حي.
 """
 
+import logging
+
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
@@ -75,6 +77,19 @@ async def providers_info(callback: CallbackQuery, session):
         text += "\n"
 
     text += f"🚨 حد التنبيه: {threshold}$"
+
+    # 🩺 صحة الأرصدة: تنبيه مبكر + مدة الصمود قبل أن يتوقف البيع
+    try:
+        from services.provider_health_service import ProviderHealthService
+
+        rows = await ProviderHealthService.snapshot(session)
+        block = ProviderHealthService.render_block(rows)
+        if block:
+            text += f"\n🩺 <b>صحة الأرصدة</b>\n{block}"
+        else:
+            text += "\n🩺 <b>صحة الأرصدة:</b> كل المزودين فوق حد التنبيه 👍"
+    except Exception:
+        logger.exception("تعذّر بناء قسم صحة الأرصدة")
 
     configured = [p.value for p in provider_manager.get_available_providers()]
     await callback.message.edit_text(

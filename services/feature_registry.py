@@ -827,6 +827,42 @@ FEATURES: tuple[FeatureSpec, ...] = (
         delay_hours=6,
         check_interval_minutes=60,
     ),
+    _spec(
+        "dormant_users",
+        "إيقاظ العملاء النائمين",
+        "Dormant Customer Re-engagement",
+        "النمو",
+        "تذكير «اشتقنا لك» لمرة واحدة لكل من انقطع عن الشراء مدة "
+        "(افتراضياً ٣٠ يوماً)، مع فترة تهدئة قبل إعادته.",
+        True,
+        inactive_days=30,
+        cooldown_days=30,
+        max_per_run=40,
+        check_interval_hours=24,
+    ),
+    _spec(
+        "welcome_coupon",
+        "كوبون ترحيبي لأول إيداع",
+        "First-Deposit Welcome Coupon",
+        "النمو",
+        "كوبون خصم شخصي يُنشأ تلقائياً عند أول إيداع مقبول للمستخدم "
+        "(بحد أدنى للإيداع، نسبة خصم، ومدة صلاحية قابلة للضبط).",
+        True,
+        min_deposit_usd=5,
+        discount_percent=5,
+        valid_days=7,
+        min_order_usd=0,
+    ),
+    _spec(
+        "provider_health_watch",
+        "تنبيه مبكر لأرصدة المزودين",
+        "Provider Balance Early Warning",
+        "النمو",
+        "يحسب «مدة الصمود» لكل مزود من معدل استهلاكه وينبّه الأدمن قبل "
+        "أن ينفد الرصيد بدل التنبيه بعد توقف البيع.",
+        True,
+        check_interval_hours=6,
+    ),
     # ─────────── الإضافات الثلاث الهدية (على مستوى البوت كامل) ───────────
     _spec(
         "bot_cockpit",

@@ -275,6 +275,10 @@ class User(Base):
 
     joined_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # آخر تذكير أُرسل للمستخدم النائم («اشتقنا لك») — يمنع تكرار الرسالة.
+    dormant_reminder_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
 
     referrer: Mapped["User"] = relationship(remote_side=[id], backref="referrals")
 

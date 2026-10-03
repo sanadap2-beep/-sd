@@ -137,6 +137,8 @@ from tasks.order_monitor import (
 )
 from tasks.unified_order_monitor import check_unified_orders
 from tasks.cart_reminder import cart_reminder_cycle
+from tasks.dormant_users import dormant_users_cycle
+from tasks.provider_health import provider_health_cycle
 from tasks.invoice_monitor import check_pending_invoices
 from tasks.watch_job import check_product_watches
 from tasks.backup_job import daily_backup
@@ -752,6 +754,30 @@ async def start_scheduler() -> AsyncIOScheduler:
         minutes=max(
             30,
             await FeatureService.config_int("cart_reminder", "check_interval_minutes", 60),
+        ),
+        args=[bot],
+    )
+
+    # العملاء النائمون: تذكير «اشتقنا لك» مرة واحدة لكل مستخدم غائب.
+    scheduler.add_job(
+        dormant_users_cycle,
+        "interval",
+        hours=max(
+            1,
+            await FeatureService.config_int("dormant_users", "check_interval_hours", 24),
+        ),
+        args=[bot],
+    )
+
+    # صحة أرصدة المزودين: تنبيه مبكر + مدة الصمود قبل توقف البيع.
+    scheduler.add_job(
+        provider_health_cycle,
+        "interval",
+        hours=max(
+            1,
+            await FeatureService.config_int(
+                "provider_health_watch", "check_interval_hours", 6
+            ),
         ),
         args=[bot],
     )
