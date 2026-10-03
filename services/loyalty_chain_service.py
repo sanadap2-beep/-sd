@@ -17,7 +17,7 @@ from decimal import Decimal
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import func, select
 
-from database.models import UnifiedOrder, UnifiedOrderStatus, User
+from database.models import Coupon, LoyaltyEvent, UnifiedOrder, UnifiedOrderStatus, User
 from services.coupon_service import CouponService
 from services.feature_service import FeatureService
 from services.html_guard import esc
@@ -84,6 +84,140 @@ class LoyaltyChainService:
             if await CouponService.get_coupon_by_code(session, code) is None:
                 return code
         return f"LOY{int(user_id) % 10000:04d}{percent}{secrets.token_hex(3).upper()}"
+
+    @classmethod
+    async def progress(cls, session, user_id: int) -> dict | None:
+        """تقدّم المستخدم نحو العتبة القادمة هذا الشهر (للعرض في شاشة الولاء)."""
+        if not await cls.enabled():
+            return None
+        tiers = await cls.tiers()
+        now = datetime.utcnow()
+        month_start = cls._month_start(now)
+        month = cls.month_key(now)
+        orders = await cls.monthly_orders(session, user_id, month_start)
+
+        keys = [f"loyalty_chain:{user_id}:{month}:{threshold}" for threshold, _ in tiers]
+        found = set(
+            (
+                await session.execute(
+                    select(LoyaltyEvent.event_key).where(LoyaltyEvent.event_key.in_(keys))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        earned = [(t, p) for t, p in tiers if f"loyalty_chain:{user_id}:{month}:{t}" in found]
+        next_tier = next(((t, p) for t, p in tiers if orders < t), None)
+
+        coupons = (
+            (
+                await session.execute(
+                    select(Coupon)
+                    .where(
+                        Coupon.created_by == user_id,
+                        Coupon.code.like("LOY%"),
+                        Coupon.is_active.is_(True),
+                    )
+                    .order_by(Coupon.id.desc())
+                    .limit(5)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        active = [c for c in coupons if c.expires_at is None or c.expires_at > now]
+        return {
+            "orders": orders,
+            "month": month,
+            "tiers": tiers,
+            "earned": earned,
+            "current_percent": earned[-1][1] if earned else 0,
+            "next_tier": next_tier,
+            "remaining": (next_tier[0] - orders) if next_tier else 0,
+            "coupons": active,
+        }
+
+    @staticmethod
+    def render_progress(data: dict | None, language: str | None = None) -> str:
+        """سلسلة الولاء كما يراها الزبون: أين هو، وباقي كم."""
+        if not data:
+            return ""
+        ar = not str(language or "").startswith("en")
+        orders = int(data.get("orders") or 0)
+        tiers = data.get("tiers") or []
+        earned = data.get("earned") or []
+        percent = int(data.get("current_percent") or 0)
+
+        lines = [
+            "",
+            "🔥 <b>سلسلة الولاء</b> (هذا الشهر)"
+            if ar
+            else "🔥 <b>Loyalty streak</b> (this month)",
+        ]
+        if ar:
+            lines.append(f"🎯 طلباتك المكتملة: <b>{orders}</b>")
+        else:
+            lines.append(f"🎯 Completed orders: <b>{orders}</b>")
+
+        # شريط تقدّم بالعتبات
+        if tiers:
+            top = tiers[-1][0]
+            filled = min(len(earned), len(tiers))
+            goal = f"0 ← {top}"
+            lines.append("▰" * filled + "▱" * (len(tiers) - filled) + f"  ({goal})")
+
+        next_tier = data.get("next_tier")
+        if next_tier:
+            threshold, next_percent = next_tier
+            remaining = int(data.get("remaining") or 0)
+            if ar:
+                lines.append(
+                    f"⏳ باقي <b>{remaining}</b> "
+                    f"{'طلب' if remaining == 1 else 'طلبات'} وتفتح لك "
+                    f"<b>{next_percent}٪</b> خصم."
+                )
+            else:
+                lines.append(
+                    f"⏳ <b>{remaining}</b> more order(s) unlock "
+                    f"<b>{next_percent}%</b> off."
+                )
+        else:
+            if ar:
+                lines.append("👑 وصلت أعلى عتبة هذا الشهر — أحسنت!")
+            else:
+                lines.append("👑 You hit the top tier this month — amazing!")
+
+        if percent:
+            if ar:
+                lines.append(f"🎖 أعلى خصم حققته هذا الشهر: <b>{percent}٪</b>")
+            else:
+                lines.append(f"🎖 Best discount unlocked: <b>{percent}%</b>")
+
+        coupons = data.get("coupons") or []
+        if coupons:
+            coupon = coupons[0]
+            value = coupon.discount_value
+            suffix = "٪" if str(coupon.discount_type) == "percent" else "$"
+            until = (
+                coupon.expires_at.strftime("%d/%m")
+                if coupon.expires_at is not None
+                else "—"
+            )
+            if ar:
+                lines.append(
+                    f"🎁 كوبونك الجاهز: <code>{esc(coupon.code)}</code> "
+                    f"({value}{suffix}) حتى {until}"
+                )
+            else:
+                lines.append(
+                    f"🎁 Your coupon: <code>{esc(coupon.code)}</code> "
+                    f"({value}{suffix}) until {until}"
+                )
+        elif not orders and ar:
+            lines.append("✨ أول ٣ طلبات في الشهر تفتح لك خصم ٥٪.")
+        elif not orders:
+            lines.append("✨ Your first 3 orders this month unlock 5% off.")
+        return "\n".join(lines)
 
     @staticmethod
     def compose_message(language: str, code: str, percent: int, orders: int, days: int) -> str:

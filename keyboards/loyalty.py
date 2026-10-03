@@ -8,6 +8,7 @@ def loyalty_kb(
     points: int,
     can_claim: bool,
     min_redeem: int,
+    show_shop: bool = False,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if can_claim:
@@ -21,6 +22,11 @@ def loyalty_kb(
                 text=f"💵 استبدال {amount} نقطة",
                 callback_data=f"loyalty:redeem:{amount}", style="primary",
             )
+    if show_shop:
+        builder.button(
+            text="🛍 أكمل السلسلة",
+            callback_data="store:home", style="success",
+        )
     builder.button(
         text="🔄 تحديث",
         callback_data="menu:loyalty", style="primary",
