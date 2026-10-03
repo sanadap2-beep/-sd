@@ -263,8 +263,27 @@ async def test_store_home_screen_renders_the_five_sections():
     assert "📱 شحن البرامج" in texts
     assert "💳 شحن الرصيد" in texts
     assert "✨ الاشتراكات الرقمية" in texts
-    # زر الأرقام داخل المتجر يعود إلى المتجر نفسه.
-    assert "num_hub:store" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_store_page_has_no_numbers_section_by_default():
+    """الأرقام قسم مستقل في الشاشة الأولى فقط — ولا يظهر داخل المتجر."""
+    from keyboards.store import store_home_kb
+    from services.store_section_service import StoreSectionService
+
+    async with async_session_maker() as session:
+        smm, _games = await _seed_categories(session)
+        entries = await StoreSectionService.list_entries(include_inactive=True)
+
+    page = StoreSectionService.build_page_entries(entries, [smm])
+    callbacks = _callbacks(store_home_kb(entries=page, language="ar"))
+
+    assert "num_hub" not in callbacks
+    assert "num_hub:store" not in callbacks
+    # ولا يوجد مفتاح «numbers» أصلاً بين أقسام المتجر المدمجة.
+    from services.store_section_service import BUILTIN_KEYS
+
+    assert "numbers" not in BUILTIN_KEYS
 
 
 @pytest.mark.asyncio

@@ -28,11 +28,11 @@
   "menu_currency": "💱 Currency",
   "menu_challenges": "🎯 Challenges",
   "menu_support": "🛠 Contact support",
-  "store_choose_service": "Choose a number service or product category:",
+  "store_choose_service": "Choose the section you want to buy from:",
   "store_numbers_count": "📞 Number services: <b>{count}</b>",
-  "store_games_count": "🎮 Games: <b>{count}</b>",
-  "store_smm_count": "📈 Social media: <b>{count}</b>",
-  "store_apps_count": "📦 Apps & subscriptions: <b>{count}</b>",
+  "store_games_count": "🎮 Game top-up: <b>{count}</b>",
+  "store_smm_count": "🚀 Boosting: <b>{count}</b>",
+  "store_apps_count": "📱 App top-up: <b>{count}</b>",
   "store_total_count": "🛒 Total products: <b>{count}</b>",
   "store_no_products": "No products are available here right now.",
   "store_products_hint": "Tap a product to view details, buy it, or add it to your cart.",
@@ -462,5 +462,7 @@
   "numbers_hub_desc": "Pick the number type you need: WhatsApp/Telegram numbers, or ready Telegram numbers delivered instantly.",
   "numbers_tg_ready": "⚡ Ready Telegram numbers",
   "numbers_packages": "📦 Ready number bundles",
-  "market_profile_created_button": "🏪 Open user market"
+  "market_profile_created_button": "🏪 Open user market",
+  "store_balances_count": "💳 Balance top-up: <b>{count}</b>",
+  "store_subscriptions_count": "✨ Digital subscriptions: <b>{count}</b>"
 }

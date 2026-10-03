@@ -23,7 +23,6 @@ from services.feature_service import FeatureService
 from services.i18n_service import I18nService
 from services.store_discovery_service import StoreDiscoveryService
 from services.dynamic_service import DynamicService
-from providers.countries import get_active_number_services
 
 router = Router(name="store")
 
@@ -37,7 +36,6 @@ async def store_home(callback: CallbackQuery, session, db_user, state: FSMContex
         await callback.answer(I18nService.t("not_available", language), show_alert=True)
         return
 
-    number_services = await get_active_number_services(session)
     categories = await DynamicService.get_active_categories(session)
     overview = await StoreDiscoveryService.overview(session)
     counts = overview["type_counts"]
@@ -45,10 +43,11 @@ async def store_home(callback: CallbackQuery, session, db_user, state: FSMContex
         I18nService.t("menu_full_store", language),
         "",
         I18nService.t("store_choose_service", language),
-        I18nService.t("store_numbers_count", language, count=len(number_services)),
-        I18nService.t("store_games_count", language, count=counts.get("games", 0)),
         I18nService.t("store_smm_count", language, count=counts.get("smm", 0)),
+        I18nService.t("store_games_count", language, count=counts.get("games", 0)),
         I18nService.t("store_apps_count", language, count=counts.get("apps", 0)),
+        I18nService.t("store_balances_count", language, count=counts.get("balances", 0)),
+        I18nService.t("store_subscriptions_count", language, count=counts.get("subscriptions", 0)),
         I18nService.t("store_total_count", language, count=overview["total_products"]),
     ]
     # الأزرار تُبنى من التحكم المركزي بالأدمن: أي زر يُطفأ من

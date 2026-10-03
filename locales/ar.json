@@ -28,11 +28,11 @@
   "menu_currency": "💱 العملة",
   "menu_challenges": "🎯 التحديات",
   "menu_support": "🛠 التواصل مع الدعم",
-  "store_choose_service": "اختر خدمة الأرقام أو قسم المنتجات الذي تريده:",
+  "store_choose_service": "اختر القسم الذي تريد الشراء منه:",
   "store_numbers_count": "📞 خدمات الأرقام: <b>{count}</b>",
-  "store_games_count": "🎮 ألعاب: <b>{count}</b>",
-  "store_smm_count": "📈 سوشيال ميديا: <b>{count}</b>",
-  "store_apps_count": "📦 تطبيقات واشتراكات: <b>{count}</b>",
+  "store_games_count": "🎮 شحن الألعاب: <b>{count}</b>",
+  "store_smm_count": "🚀 الرشق: <b>{count}</b>",
+  "store_apps_count": "📱 شحن البرامج: <b>{count}</b>",
   "store_total_count": "🛒 إجمالي المنتجات: <b>{count}</b>",
   "store_no_products": "لا توجد منتجات متاحة هنا حالياً.",
   "store_products_hint": "اضغط على المنتج لعرض التفاصيل والشراء أو إضافته للسلة.",
@@ -462,5 +462,7 @@
   "numbers_hub_desc": "اختر نوع الرقم المطلوب: أرقام واتساب وتليجرام، أو أرقام تليجرام جاهزة للاستلام الفوري.",
   "numbers_tg_ready": "⚡ أرقام تليجرام جاهزة",
   "numbers_packages": "📦 باقات أرقام جاهزة",
-  "market_profile_created_button": "🏪 فتح سوق المستخدمين"
+  "market_profile_created_button": "🏪 فتح سوق المستخدمين",
+  "store_balances_count": "💳 شحن الرصيد: <b>{count}</b>",
+  "store_subscriptions_count": "✨ الاشتراكات الرقمية: <b>{count}</b>"
 }
