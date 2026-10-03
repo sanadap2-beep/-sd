@@ -234,7 +234,24 @@ async def search_query_received(message: Message, state: FSMContext, session):
         products = await ProductService.search_products(session, query_text, limit=20, active_only=True)
     await state.clear()
     if not products:
-        await message.answer(f"{I18nService.t('ux_games_119_3', _auto_lang(locals()))}{esc(query_text)}</b>.", reply_markup=back_to_main_kb())
+        # «لا نتائج» بلا بديل = زبون يخرج خالي الوفاض؛ نقترح الأقرب فوراً.
+        suggestions = await ProductService.suggest_products(session, query_text, limit=5)
+        if suggestions:
+            await message.answer(
+                f"🔍 لم نجد نتائج ل«{esc(query_text)}» — هل تقصد أحد هذه؟",
+                reply_markup=product_search_results_kb(suggestions),
+            )
+            return
+        await message.answer(
+            f"{I18nService.t('ux_games_119_3', _auto_lang(locals()))}{esc(query_text)}</b>.\n\n"
+            "يمكنك طلب المنتج وسنوفره لك.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="➕ اطلب منتج غير موجود", callback_data="menu:product_request", style="primary")],
+                    [InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="back_to_main")],
+                ]
+            ),
+        )
         return
     await message.answer(f"{I18nService.t('ux_games_125_4', _auto_lang(locals()))}{esc(query_text)}{I18nService.t('ux_games_125_5', _auto_lang(locals()))}{len(products)}{I18nService.t('ux_games_125_6', _auto_lang(locals()))}", reply_markup=product_search_results_kb(products))
 

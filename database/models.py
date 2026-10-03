@@ -1140,6 +1140,11 @@ class CartItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, onupdate=func.now(), server_default=func.now()
     )
+    # آخر تذكير أُرسل لصاحب السلة عن هذا العنصر. يُعاد التذكير فقط إن
+    # تغيّرت السلة بعد التذكير (updated_at أحدث) — تذكير واحد لكل سلة.
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
 
     product: Mapped["Product"] = relationship(back_populates="cart_items")
 

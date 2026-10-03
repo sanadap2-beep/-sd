@@ -136,6 +136,7 @@ from tasks.order_monitor import (
     cleanup_balance_locks,
 )
 from tasks.unified_order_monitor import check_unified_orders
+from tasks.cart_reminder import cart_reminder_cycle
 from tasks.invoice_monitor import check_pending_invoices
 from tasks.watch_job import check_product_watches
 from tasks.backup_job import daily_backup
@@ -742,6 +743,17 @@ async def start_scheduler() -> AsyncIOScheduler:
         weekly_challenge_cycle,
         "interval",
         hours=1,
+    )
+
+    # تذكير السلة المتروكة: دورة كل ساعة، والمهلة داخل الخدمة (افتراضياً ٦ ساعات).
+    scheduler.add_job(
+        cart_reminder_cycle,
+        "interval",
+        minutes=max(
+            30,
+            await FeatureService.config_int("cart_reminder", "check_interval_minutes", 60),
+        ),
+        args=[bot],
     )
 
     # auto_failover: تلاشي عدادات الفشل تدريجياً حسب إعداد الميزة.

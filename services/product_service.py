@@ -667,29 +667,93 @@ class ProductService:
             product.total_sold = (product.total_sold or 0) + quantity
             await session.commit()
 
+    # تطبيع النص العربي: «آيفون» = «ايفون» = «أيفون»، و«ببچي» = «ببجي».
+    _AR_REPLACEMENTS = {
+        "أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", "ٲ": "ا",
+        "ى": "ي", "ئ": "ي", "ؤ": "و", "ة": "ه",
+        "ڤ": "ف", "ک": "ك", "گ": "ك", "چ": "ج",
+        "ً": "", "ٌ": "", "ٍ": "", "َ": "", "ُ": "",
+        "ِ": "", "ّ": "", "ْ": "", "ٰ": "", "ـ": "", "": "",
+    }
+
+    @classmethod
+    def normalize(cls, text: str) -> str:
+        """يطبّع نص البحث: توحيد الهمزات والتاء المربوطة وحذف التشكيل."""
+        out: list[str] = []
+        for char in str(text or "").lower().strip():
+            out.append(cls._AR_REPLACEMENTS.get(char, char))
+        return "".join(out).strip()
+
     @staticmethod
+    def _search_tokens(query_text: str) -> list[str]:
+        """كلمات البحث (بعد التطبيع) — بحد أقصى 4 كلمات."""
+        normalized = ProductService.normalize(query_text)
+        tokens = [token for token in normalized.split() if len(token) > 1]
+        if not tokens and normalized:
+            tokens = [normalized]
+        return tokens[:4]
+
+    @classmethod
+    def _relevance(cls, product: Product, normalized_query: str, tokens: list[str]) -> float:
+        """ترتيب بالصلة: التطابق التام أولاً ثم بداية الاسم ثم احتواؤه."""
+        name = cls.normalize(getattr(product, "name_ar", "") or "")
+        score = 0.0
+        if name == normalized_query:
+            score += 100
+        elif name.startswith(normalized_query):
+            score += 50
+        elif normalized_query in name:
+            score += 25
+        for token in tokens:
+            if token in name:
+                score += 6
+            elif token in cls.normalize(getattr(product, "description", "") or ""):
+                score += 1
+        if getattr(product, "is_featured", False):
+            score += 4
+        # المنتج الأكثر مبيعاً يتقدّم عند تساوي الصلة
+        score += min(float(getattr(product, "total_sold", 0) or 0), 50.0) / 20.0
+        return score
+
+    @classmethod
     async def search_products(
+        cls,
         session,
         query_text: str,
         limit: int = 20,
         active_only: bool = True,
         category_id: int | None = None,
     ) -> list[Product]:
-        """يبحث في المنتجات بالاسم أو الوصف."""
+        """يبحث في المنتجات بالاسم أو الوصف، مرتّباً بالصلة.
+
+        - تطابق الكلمات كلها (AND) بدل عبارة واحدة: «شحن ببجي 60» يجد
+          المنتج وإن لم تكن العبارة متجاورة في الاسم.
+        - تطبيع عربي: الهمزات والتاء المربوطة والتشكيل لا تُفسد البحث.
+        - الترتيب: تطابق تام ← بداية الاسم ← احتواء ← المميّز ← الأكثر مبيعاً.
+        """
         if not query_text or not query_text.strip():
             return []
 
-        search_pattern = f"%{query_text.strip()}%"
+        raw = query_text.strip()
+        normalized_query = cls.normalize(raw)
+        tokens = cls._search_tokens(raw)
+        if not tokens:
+            return []
+
+        conditions = []
+        for token in tokens:
+            pattern = f"%{token}%"
+            conditions.append(
+                or_(
+                    Product.name_ar.ilike(pattern),
+                    Product.description.ilike(pattern),
+                )
+            )
 
         query = (
             select(Product)
             .options(selectinload(Product.sub_category))
-            .where(
-                or_(
-                    Product.name_ar.ilike(search_pattern),
-                    Product.description.ilike(search_pattern),
-                )
-            )
+            .where(and_(*conditions))
         )
 
         if active_only:
@@ -700,7 +764,71 @@ class ProductService:
                 SubCategory.category_id == category_id
             )
 
-        query = query.limit(limit)
+        # نجلب مرشّحين أكثر ثم نرتب في بايثون (الترتيب بالصلة لا يُكتب بـ SQL بسهولة).
+        candidates = list(
+            (await session.execute(query.limit(max(limit * 5, 50)))).scalars().all()
+        )
+        # التطبيع يتعامل مع الهمزات التي تعجز عنها LIKE في بعض قواعد البيانات
+        if not candidates and normalized_query != raw:
+            loose = []
+            for product in (
+                (await session.execute(select(Product).where(Product.status == ProductStatus.ACTIVE).limit(500)))
+                .scalars()
+                .all()
+            ):
+                if normalized_query in cls.normalize(product.name_ar or ""):
+                    loose.append(product)
+            candidates = loose
 
-        result = await session.execute(query)
-        return list(result.scalars().all())
+        ranked = sorted(
+            candidates,
+            key=lambda product: cls._relevance(product, normalized_query, tokens),
+            reverse=True,
+        )
+        return ranked[:limit]
+
+    @classmethod
+    async def suggest_products(
+        cls,
+        session,
+        query_text: str,
+        limit: int = 5,
+    ) -> list[Product]:
+        """اقتراحات قريبة عند عدم وجود نتائج («هل تقصد…؟»)."""
+        import difflib
+
+        normalized_query = cls.normalize(query_text)
+        if not normalized_query:
+            return []
+
+        products = list(
+            (
+                await session.execute(
+                    select(Product)
+                    .options(selectinload(Product.sub_category))
+                    .where(Product.status == ProductStatus.ACTIVE)
+                    .order_by(Product.total_sold.desc(), Product.id)
+                    .limit(200)
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        if not products:
+            return []
+
+        names = [cls.normalize(product.name_ar or "") for product in products]
+        matches = difflib.get_close_matches(normalized_query, names, n=limit, cutoff=0.5)
+        picked = []
+        seen: set[str] = set()
+        for match in matches:
+            for product, name in zip(products, names):
+                if name == match and name not in seen:
+                    picked.append(product)
+                    seen.add(name)
+                    break
+        if picked:
+            return picked
+        # لا شيء قريب: رشّح الأكثر مبيعاً بدل شاشة «لا نتائج» يابسة
+        return products[:limit]
