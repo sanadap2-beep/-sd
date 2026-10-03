@@ -28,6 +28,13 @@ def _auto_lang(scope=None) -> str:
         user = getattr(callback, "from_user", None)
     return getattr(user, "language_code", "ar") or "ar"
 
+def _merge_kb(top, bottom):
+    """يلصق لوحة تحت أخرى (فلاتر + مخارج الشاشة الفارغة)."""
+    from aiogram.types import InlineKeyboardMarkup as _Markup
+
+    return _Markup(inline_keyboard=[*top.inline_keyboard, *bottom.inline_keyboard])
+
+
 def _account_kb(language: str='ar'):
     t = lambda key: I18nService.t(key, language)
     from services.button_customization_service import ButtonCustomizationService as BC
@@ -130,25 +137,87 @@ async def my_watches(callback: CallbackQuery, session, db_user: User):
     await callback.message.edit_text('\n'.join(lines), reply_markup=kb.as_markup())
 
 
+# ══════════════ مرشّحات الطلبات حسب الحالة ══════════════
+# «عندي ٣٠ طلب، وين اللي ما خلص؟» — بدل التنقيب في الصفحات، فلاتر جاهزة.
+UNIFIED_FILTERS: dict[str, tuple[str, tuple]] = {
+    "all": ("📋 الكل", None),
+    "active": ("⏳ قيد التنفيذ", (UnifiedOrderStatus.PENDING, UnifiedOrderStatus.PROCESSING)),
+    "completed": ("✅ مكتمل", (UnifiedOrderStatus.COMPLETED,)),
+    "closed": ("↩️ ملغى/مسترجع", (UnifiedOrderStatus.FAILED, UnifiedOrderStatus.REFUNDED)),
+}
+NUMBER_FILTERS: dict[str, tuple[str, tuple]] = {
+    "all": ("📋 الكل", None),
+    "active": ("⏳ بانتظار الكود", (OrderStatus.PENDING,)),
+    "completed": ("✅ مكتمل", (OrderStatus.CODE_RECEIVED, OrderStatus.COMPLETED)),
+    "closed": ("↩️ منتهي/مسترجع", (OrderStatus.EXPIRED, OrderStatus.CANCELLED, OrderStatus.REFUNDED)),
+}
+
+
+def _parse_orders_page(data: str) -> tuple[int, str]:
+    """يقرأ (رقم الصفحة، المرشّح) من callback_data."""
+    parts = data.split(":")
+    page = 0
+    try:
+        page = int(parts[1])
+    except (IndexError, ValueError):
+        page = 0
+    status_filter = parts[2] if len(parts) > 2 and parts[2] in UNIFIED_FILTERS else "all"
+    return max(0, page), status_filter
+
+
+def _add_filter_row(kb: InlineKeyboardBuilder, prefix: str, current: str, labels: dict) -> None:
+    """صفّ الفلاتر: الزرّ الحالي موسوم بـ ✓."""
+    for key, (label, _statuses) in labels.items():
+        text = f"✓ {label}" if key == current else label
+        kb.button(
+            text=text,
+            callback_data=f"{prefix}:0:{key}",
+            style="success" if key == current else None,
+        )
+
+
 @router.callback_query(F.data.startswith('my_num_orders:'))
 async def my_number_orders(callback: CallbackQuery, session, db_user: User):
-    page = int(callback.data.split(':')[1])
+    page, status_filter = _parse_orders_page(callback.data)
+    if status_filter not in NUMBER_FILTERS:
+        status_filter = "all"
+    _label_text, statuses = NUMBER_FILTERS[status_filter]
     per_page = 5
-    result = await session.execute(select(NumberOrder).where(NumberOrder.user_id == db_user.id).order_by(desc(NumberOrder.purchased_at)).limit(per_page).offset(page * per_page))
+    where = [NumberOrder.user_id == db_user.id]
+    if statuses:
+        where.append(NumberOrder.status.in_(statuses))
+    result = await session.execute(select(NumberOrder).where(*where).order_by(desc(NumberOrder.purchased_at)).limit(per_page).offset(page * per_page))
     orders = result.scalars().all()
-    total_result = await session.execute(select(func.count(NumberOrder.id)).where(NumberOrder.user_id == db_user.id))
+    total_result = await session.execute(select(func.count(NumberOrder.id)).where(*where))
     total = total_result.scalar_one()
     total_pages = max(1, (total + per_page - 1) // per_page)
+    suffix = f":{status_filter}"
     if not orders and page == 0:
+        kb = InlineKeyboardBuilder()
+        _add_filter_row(kb, "my_num_orders", status_filter, NUMBER_FILTERS)
+        kb.adjust(2)
+        empty_text = (
+            I18nService.t('ux_account_189_2', _auto_lang(locals()))
+            if status_filter == "all"
+            else "📭 لا توجد طلبات أرقام بهذه الحالة."
+        )
         await callback.message.edit_text(
-            I18nService.t('ux_account_189_2', _auto_lang(locals())),
-            reply_markup=empty_state_kb(language=db_user.language_code, back_callback='num_hub', back_label='📞 اطلب رقم الآن'),
+            empty_text,
+            reply_markup=_merge_kb(
+                kb.as_markup(),
+                empty_state_kb(
+                    language=db_user.language_code,
+                    back_callback="num_hub",
+                    back_label="📞 اطلب رقم الآن",
+                ),
+            ),
         )
         await callback.answer()
         return
     lines = [f'📋 <b>طلبات الأرقام ({page + 1}/{total_pages})</b>\n']
-    row_widths: list[int] = []
     kb = InlineKeyboardBuilder()
+    _add_filter_row(kb, "my_num_orders", status_filter, NUMBER_FILTERS)
+    row_widths: list[int] = [4]
     for o in orders:
         status_label = _label(ORDER_STATUS_LABELS, o.status, db_user.language_code)
         line = (
@@ -169,36 +238,51 @@ async def my_number_orders(callback: CallbackQuery, session, db_user: User):
         kb.button(text='🔁 أرقام مشابهة', callback_data=f'num_svc:{o.service}', style="primary")
         row_widths.append(3 if o.status == OrderStatus.PENDING else 2)
     if page > 0:
-        kb.button(text='◀️ السابق', callback_data=f'my_num_orders:{page - 1}')
+        kb.button(text='◀️ السابق', callback_data=f'my_num_orders:{page - 1}{suffix}')
     if page < total_pages - 1:
-        kb.button(text='التالي ▶️', callback_data=f'my_num_orders:{page + 1}')
+        kb.button(text='التالي ▶️', callback_data=f'my_num_orders:{page + 1}{suffix}')
     kb.button(text='🔙 رجوع لحسابي', callback_data='menu:account')
-    kb.adjust(*(row_widths or [2]), 2, 1)
+    row_widths.append(2)
+    kb.adjust(*row_widths, 1)
     await callback.message.edit_text('\n'.join(lines), reply_markup=kb.as_markup())
     await callback.answer()
 
 @router.callback_query(F.data.startswith('my_uni_orders:'))
 async def my_unified_orders(callback: CallbackQuery, session, db_user: User):
-    page = int(callback.data.split(':')[1])
+    page, status_filter = _parse_orders_page(callback.data)
+    _label_text, statuses = UNIFIED_FILTERS[status_filter]
     per_page = 5
-    result = await session.execute(select(UnifiedOrder).options(selectinload(UnifiedOrder.product)).where(UnifiedOrder.user_id == db_user.id).order_by(desc(UnifiedOrder.created_at)).limit(per_page).offset(page * per_page))
+    where = [UnifiedOrder.user_id == db_user.id]
+    if statuses:
+        where.append(UnifiedOrder.status.in_(statuses))
+    result = await session.execute(select(UnifiedOrder).options(selectinload(UnifiedOrder.product)).where(*where).order_by(desc(UnifiedOrder.created_at)).limit(per_page).offset(page * per_page))
     orders = result.scalars().all()
-    total_result = await session.execute(select(func.count(UnifiedOrder.id)).where(UnifiedOrder.user_id == db_user.id))
+    total_result = await session.execute(select(func.count(UnifiedOrder.id)).where(*where))
     total = total_result.scalar_one()
     total_pages = max(1, (total + per_page - 1) // per_page)
+    suffix = f":{status_filter}"
     if not orders and page == 0:
+        kb = InlineKeyboardBuilder()
+        _add_filter_row(kb, "my_uni_orders", status_filter, UNIFIED_FILTERS)
+        kb.adjust(2)
+        empty_text = (
+            I18nService.t('ux_account_250_3', _auto_lang(locals()))
+            if status_filter == "all"
+            else "📭 لا توجد طلبات بهذه الحالة."
+        )
         await callback.message.edit_text(
-            I18nService.t('ux_account_250_3', _auto_lang(locals())),
-            reply_markup=empty_state_kb(language=db_user.language_code, back_callback='store:home'),
+            empty_text,
+            reply_markup=_merge_kb(
+                kb.as_markup(),
+                empty_state_kb(language=db_user.language_code, back_callback='store:home'),
+            ),
         )
         await callback.answer()
         return
     lines = [f'🛒 <b>طلبات أخرى ({page + 1}/{total_pages})</b>\n']
     for o in orders:
         status_label = _label(UNIFIED_STATUS_LABELS, o.status, db_user.language_code)
-        product_name = '—'
-        if o.product:
-            product_name = o.product.name_ar
+        product_name = o.product.name_ar if o.product else '—'
         line = (
             f"\n🆔 #{o.id}\n"
             f"📦 المنتج: {escape(str(product_name))}\n"
@@ -209,16 +293,17 @@ async def my_unified_orders(callback: CallbackQuery, session, db_user: User):
             line += f'\n🎯 الهدف: <code>{escape(str(o.target))}</code>'
         lines.append(line)
     kb = InlineKeyboardBuilder()
+    _add_filter_row(kb, "my_uni_orders", status_filter, UNIFIED_FILTERS)
     for order in orders:
         kb.button(text=f'🔎 تفاصيل #{order.id}', callback_data=f'my_uni_order:{order.id}', style="primary")
         kb.button(text='🔁 إعادة الطلب', callback_data=f'repeat_order:{order.id}', style="success")
     if page > 0:
-        kb.button(text='◀️ السابق', callback_data=f'my_uni_orders:{page - 1}')
+        kb.button(text='◀️ السابق', callback_data=f'my_uni_orders:{page - 1}{suffix}')
     if page < total_pages - 1:
-        kb.button(text='التالي ▶️', callback_data=f'my_uni_orders:{page + 1}')
+        kb.button(text='التالي ▶️', callback_data=f'my_uni_orders:{page + 1}{suffix}')
     kb.button(text='🔙 رجوع لحسابي', callback_data='menu:account')
-    # صفّ لكل طلب (تفاصيل + إعادة) ثم صف التنقل ثم صف الرجوع
-    kb.adjust(*([2] * max(1, len(orders))), 2, 1)
+    # صفّ الفلاتر (2×2) ثم صفّ لكل طلب (تفاصيل + إعادة) ثم التنقل ثم الرجوع
+    kb.adjust(2, 2, *([2] * max(1, len(orders))), 2, 1)
     await callback.message.edit_text('\n'.join(lines), reply_markup=kb.as_markup())
     await callback.answer()
 

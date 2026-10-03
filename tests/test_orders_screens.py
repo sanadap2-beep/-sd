@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from database.engine import async_session_maker
+from sqlalchemy import select
 from database.models import (
     ApiProvider,
     ApiProviderType,
@@ -389,3 +390,151 @@ async def test_main_menu_header_shows_pending_orders_hint():
         db_user = await session.get(User, user_id)
         with_hint = await _main_header(session, db_user)
     assert "قيد التنفيذ" in with_hint and "2" in with_hint
+
+
+@pytest.mark.asyncio
+async def test_orders_filters_narrow_the_list():
+    """الفلتر يصفّي الطلبات ويبقى ظاهراً (الزرّ الحالي موسوم بـ ✓)."""
+    from handlers.account import my_unified_orders
+
+    user_id = await _make_user(5700008, "filtered")
+    async with async_session_maker() as session:
+        user = await session.get(User, user_id)
+        for status in (
+            UnifiedOrderStatus.PROCESSING,
+            UnifiedOrderStatus.COMPLETED,
+            UnifiedOrderStatus.FAILED,
+        ):
+            session.add(
+                UnifiedOrder(
+                    user_id=user.id,
+                    price_usd=Decimal("1.00"),
+                    quantity=1,
+                    status=status,
+                    created_at=datetime(2026, 10, 3, 16, 5),
+                )
+            )
+        await session.commit()
+
+    callback = _FakeCallback("my_uni_orders:0")
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await my_unified_orders(callback, session, db_user)
+    all_rows = callback.message.edits[-1][0]
+    assert all_rows.count("🆔 #") == 3
+
+    callback = _FakeCallback("my_uni_orders:0:completed")
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await my_unified_orders(callback, session, db_user)
+    text, markup = callback.message.edits[-1]
+    assert text.count("🆔 #") == 1
+    assert "مكتمل" in text
+    labels = [b.text for row in markup.inline_keyboard for b in row]
+    assert any(label.startswith("✓") and "مكتمل" in label for label in labels)
+    buttons = _buttons(markup)
+    assert "my_uni_orders:0:all" in buttons
+
+
+@pytest.mark.asyncio
+async def test_empty_filter_shows_filters_and_a_way_out():
+    """فلتر بلا نتائج: رسالة واضحة + الفلاتر + مخرج (لا شاشة ميتة)."""
+    from handlers.account import my_number_orders
+
+    user_id = await _make_user(5700009, "empty_filter")
+    async with async_session_maker() as session:
+        user = await session.get(User, user_id)
+        session.add(
+            NumberOrder(
+                user_id=user.id,
+                provider=ProviderName.FIVESIM,
+                provider_order_id="p-3",
+                service="wa",
+                country_code="le",
+                phone_number="+96170000077",
+                price_provider_usd=Decimal("0.10"),
+                price_sell_usd=Decimal("0.35"),
+                status=OrderStatus.COMPLETED,
+                purchased_at=datetime(2026, 10, 3, 16, 5),
+            )
+        )
+        await session.commit()
+
+    callback = _FakeCallback("my_num_orders:0:active")
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await my_number_orders(callback, session, db_user)
+
+    text, markup = callback.message.edits[-1]
+    assert "بهذه الحالة" in text
+    buttons = _buttons(markup)
+    assert "my_num_orders:0:all" in buttons and "back_to_main" in buttons
+
+
+# ══════════════ الأكثر مبيعاً ══════════════
+
+
+@pytest.mark.asyncio
+async def test_bestsellers_only_counts_products_actually_sold():
+    """«الأكثر مبيعاً» يعرض المبيع فعلاً مرتّباً — ويتراجع لقائمة عامة إن لم يُبع شيء."""
+    from services.store_discovery_service import StoreDiscoveryService
+
+    async with async_session_maker() as session:
+        cat = Category(name_ar="ألعاب", emoji="🎮", type=CategoryType.GAMES)
+        session.add(cat)
+        await session.flush()
+        sub = SubCategory(category_id=cat.id, name_ar="شحن", emoji="🔫")
+        session.add(sub)
+        await session.flush()
+        for name, sold in (("لم يُبع", 0), ("الأول", 5), ("الثاني", 2)):
+            session.add(
+                Product(
+                    sub_category_id=sub.id,
+                    name_ar=name,
+                    price_usd=Decimal("1.00"),
+                    cost_price_usd=Decimal("0.50"),
+                    status=ProductStatus.ACTIVE,
+                    total_sold=sold,
+                )
+            )
+        await session.commit()
+
+        top = await StoreDiscoveryService.products(session, "bestsellers")
+    assert [p.name_ar for p in top] == ["الأول", "الثاني"]
+
+    async with async_session_maker() as session:
+        for product in (
+            await session.execute(select(Product))
+        ).scalars().all():
+            product.total_sold = 0
+        await session.commit()
+        fallback = await StoreDiscoveryService.products(session, "bestsellers")
+    assert fallback, "متجر جديد بلا مبيعات يجب ألا يعرض صفحة فارغة"
+
+
+# ══════════════ إشعار الاكتمال ══════════════
+
+
+@pytest.mark.asyncio
+async def test_completion_notification_offers_review_and_orders(monkeypatch):
+    """إشعار «تم تنفيذ طلبك» يعرض زر التقييم وطلباتي بدل رسالة ميتة."""
+    from services.notification_service import NotificationService
+
+    captured: dict = {}
+
+    async def fake_notify_user(self, telegram_id, text, reply_markup=None, **kwargs):
+        captured["reply_markup"] = reply_markup
+        captured["telegram_id"] = telegram_id
+        return True
+
+    monkeypatch.setattr(NotificationService, "notify_user", fake_notify_user)
+
+    service = NotificationService(object())
+    await service.notify_order_completed(555, "منتج", "نص", order_id=7, product_id=3)
+    buttons = [b.callback_data for row in captured["reply_markup"].inline_keyboard for b in row]
+    assert "review:start:7" in buttons
+    assert "my_uni_orders:0" in buttons
+
+    captured.clear()
+    await service.notify_order_completed(555, "منتج", "نص")
+    assert captured["reply_markup"] is None

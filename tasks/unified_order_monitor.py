@@ -191,6 +191,9 @@ async def _handle_completed(session, order, user, product_name, notifier):
         result_text=(
             f"✅ تم تنفيذ طلبك بنجاح!\n🆔 رقم الطلب: #{order.id}{extra}"
         ),
+        # تقييم المنتج من الإشعار نفسه بدل رحلة البحث عن الطلب
+        order_id=order.id,
+        product_id=order.product_id,
     )
 
     from services.smm_catalog import button_label as _smm_label

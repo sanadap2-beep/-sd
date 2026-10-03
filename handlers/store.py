@@ -104,6 +104,8 @@ async def store_section(callback: CallbackQuery, session, db_user, state: FSMCon
         return
 
     lines = [section_label(section, language), ""]
+    ranked = section == "bestsellers"
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     for index, product in enumerate(products, start=1):
         price = await CurrencyService.format_dual(product.price_usd, db_user, session)
         category = product.sub_category.category if product.sub_category else None
@@ -120,9 +122,15 @@ async def store_section(callback: CallbackQuery, session, db_user, state: FSMCon
             stock_label = "Stock" if language == "en" else "مخزون"
             badges.append(f"⚡ {stock_label}: {stock}")
         badge_text = " ".join(badges)
+        # ترتيب الأكثر مبيعاً: وسام للثلاثة الأوائل + عدد مرات البيع
+        marker = medals.get(index, f"{index}.") if ranked else f"{index}."
+        sold_note = ""
+        if ranked:
+            sold_label = "sales" if language == "en" else "عملية بيع"
+            sold_note = f" · 🔥 {int(product.total_sold or 0)} {sold_label}"
         lines.append(
-            f"{index}. <b>{escape(product.name_ar)}</b> {badge_text}\n"
-            f"   {category.emoji if category else '📦'} {escape(sub)} · {price}"
+            f"{marker} <b>{escape(product.name_ar)}</b> {badge_text}\n"
+            f"   {category.emoji if category else '📦'} {escape(sub)} · {price}{sold_note}"
         )
 
     lines.append(f"\n{I18nService.t('store_products_hint', language)}")

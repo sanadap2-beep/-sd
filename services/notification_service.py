@@ -682,10 +682,37 @@ class NotificationService:
         user_telegram_id: int,
         product_name: str,
         result_text: str,
+        order_id: int | None = None,
+        product_id: int | None = None,
     ) -> None:
+        """إشعار الاكتمال — مع زر تقييم المنتج وزر متابعة الطلبات."""
+        markup = None
+        if order_id is not None:
+            rows = []
+            if product_id is not None:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            text="⭐ قيّم هذا المنتج",
+                            callback_data=f"review:start:{order_id}",
+                            style="primary",
+                        )
+                    ]
+                )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="📋 طلباتي",
+                        callback_data="my_uni_orders:0",
+                        style="success",
+                    )
+                ]
+            )
+            markup = InlineKeyboardMarkup(inline_keyboard=rows)
         await self.notify_user(
             telegram_id=user_telegram_id,
             text=(f"✅ <b>تم تنفيذ طلبك بنجاح!</b>\n\n🛒 المنتج: {product_name}\n\n{result_text}"),
+            reply_markup=markup,
         )
 
     async def notify_order_failed(
