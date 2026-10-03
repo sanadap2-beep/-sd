@@ -4,7 +4,7 @@
   "insufficient_balance": "⚠️ Your balance is insufficient.",
   "support_hours": "⏰ Response time: within 24 hours",
   "language_updated": "✅ Language updated.",
-  "main_menu_header": "🏠 <b>Main menu</b>\n\n💰 Your balance: <b>{balance}</b>\n\nChoose the service you want:",
+  "main_menu_header": "✨ <b>Main menu</b> ⚡️\n\n⚡ Fast & secure top-ups for every service\n💳 Multiple easy payment methods\n🚀 Orders executed as fast as possible\n🛡 Reliable service with ready support\n\n💰 Your balance: <b>{balance}</b>\n────────────────\nChoose the service you want from the menu below 👇",
   "subscribe_first": "👋 Welcome!\n\n⚠️ Please join the following channels first to continue:",
   "subscription_verified": "✅ Your subscription has been verified!",
   "subscription_still_missing": "❌ You are still not subscribed to all required channels.",

@@ -252,7 +252,7 @@ async def migrate(rate: Decimal, from_rub: bool) -> None:
                 "min_deposit_shamcash_usd": "0.5",
                 "min_deposit_usdt_usd": "2",
                 "min_deposit_stars_usd": "1",
-                "welcome_message": "👋 أهلاً بك في البوت!",
+                "welcome_message": "✨ <b>أهلاً بك {name} في بوت LUX STORE</b> ⚡️\n<i>متجرك الرقمي للألعاب، الأرقام، الرشق والاشتراكات</i>\n\n⚡ شحن سريع وآمن لجميع الخدمات\n💳 طرق دفع متعددة وسهلة\n🚀 تنفيذ طلباتك بأسرع وقت ممكن\n🛡 خدمة موثوقة ودعم جاهز لمساعدتك\n\n────────────────\nاختر الخدمة التي تريدها من القائمة بالأسفل 👇",
                 "order_timeout_minutes": "5",
                 "default_profit_margin_percent": "50",
                 "referral_bonus_usd": "0.015",

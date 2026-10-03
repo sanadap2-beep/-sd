@@ -52,6 +52,7 @@ from services.settings_service import SettingsService
 from services.price_lock_service import PriceLockService
 from services.agent_service import AgentService
 from services.balance_service import BalanceService, InsufficientBalanceError
+from services.order_confirmation_service import OrderConfirmationService
 from services.bulk_number_service import BulkError, BulkNumberService
 from services.feature_service import FeatureService
 from services.notification_service import NotificationService
@@ -886,14 +887,16 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
         )
         return
 
-    text = (
-        f"✅ <b>تم تنفيذ دفعة الأرقام</b>\n\n"
-        f"🔢 المطلوب: <b>{result['requested']}</b>\n"
-        f"✅ تم الشراء: <b>{result['succeeded']}</b>\n"
-        f"❌ فشل: <b>{result['failed']}</b>\n"
-        f"💰 الصافي المخصوم: <b>{result['net_charged_usd']}$</b>\n"
-        f"↩️ المسترجع لرصيدك: <b>{result['refunded_usd']}$</b>\n\n"
-        "سيتم إرسال الأكواد فور وصولها."
+    text = OrderConfirmationService.bulk_numbers(
+        requested=result['requested'],
+        succeeded=result['succeeded'],
+        failed=result['failed'],
+        net_charged_usd=result['net_charged_usd'],
+        refunded_usd=result['refunded_usd'],
+        service_name=service.name_ar,
+        country_name=country.name_ar,
+        flag=getattr(country, "flag", None) or "🌍",
+        language=getattr(db_user, "language_code", "ar") or "ar",
     )
     await callback.message.answer(text, reply_markup=after_number_order_kb())
 
@@ -1130,11 +1133,25 @@ async def confirm_buy(
     except Exception:
         logger.exception("فشل تحديث تقدم التحدي الأسبوعي")
 
+    try:
+        from services.balance_service import BalanceService as _BS
+
+        _balance_after = await _BS.get_balance(session, db_user.id)
+    except Exception:  # noqa: BLE001
+        _balance_after = None
     status_msg = await callback.message.answer(
-        f"✅ <b>تم شراء الرقم بنجاح!</b>\n\n"
-        f"📱 الرقم: <code>{buy_result.phone_number}</code>\n"
-        f"⏳ بانتظار الكود... الوقت المتبقي: {timeout_minutes}:00\n\n"
-        "سيتم تحديث هذه الرسالة تلقائياً عند وصول الكود.",
+        OrderConfirmationService.number(
+            order=order,
+            phone_number=buy_result.phone_number,
+            service_name=service.name_ar,
+            country_name=country.name_ar,
+            flag=getattr(country, "flag", None) or "🌍",
+            price_usd=sell_price,
+            balance_after=_balance_after,
+            timeout_minutes=timeout_minutes,
+            language=getattr(db_user, "language_code", "ar") or "ar",
+            emoji=getattr(service, "emoji", None) or "📞",
+        ),
         reply_markup=order_actions_kb(order.id),
     )
     order.status_chat_id = status_msg.chat.id

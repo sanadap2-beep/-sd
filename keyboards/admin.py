@@ -1202,13 +1202,25 @@ def admin_settings_kb() -> InlineKeyboardMarkup:
     b.button(text="🚨 حد التحويل الكبير", callback_data="admin:set_large_tx")
     b.button(text="⏳ مهلة انتظار الكود", callback_data="admin:set_order_timeout", style="primary")
     b.button(text="📝 رسالة الترحيب", callback_data="admin:set_welcome")
+    b.button(text="🏷 هوية المتجر والشاشة الأولى", callback_data="admin:branding", style="primary")
     b.button(text="💰 نسبة الكاشباك", callback_data="admin:set_cashback")
     b.button(text="💎 نسبة الإحالة", callback_data="admin:set_referral_percent", style="primary")
     b.button(text="⏱ Rate Limit", callback_data="admin:set_rate_limit")
     b.button(text="📢 قناة الإشعارات العامة", callback_data="admin:set_public_channel")
     b.button(text="💾 قناة البكاب", callback_data="admin:set_backup_channel")
     b.button(text="🔙 رجوع", callback_data="admin:main")
-    b.adjust(1, 2, 2, 2, 2, 2, 2, 1)
+    b.adjust(1, 2, 2, 2, 2, 2, 2, 2, 1)
+    return b.as_markup()
+
+
+def admin_branding_kb() -> InlineKeyboardMarkup:
+    """أزرار تخصيص هوية المتجر والشاشة الأولى."""
+    b = InlineKeyboardBuilder()
+    b.button(text="🏷 اسم المتجر", callback_data="admin:set_store_name", style="primary")
+    b.button(text="📝 وصف المتجر", callback_data="admin:set_store_tagline", style="primary")
+    b.button(text="✨ ميزات الشاشة الأولى", callback_data="admin:set_menu_features", style="primary")
+    b.button(text="🔙 الإعدادات", callback_data="admin:settings")
+    b.adjust(2, 1, 1)
     return b.as_markup()
 
 

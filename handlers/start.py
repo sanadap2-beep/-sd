@@ -2,6 +2,7 @@
 أوامر البداية والقائمة الرئيسية، ومعالجة روابط الشراء السريعة القادمة من القناة العامة.
 """
 
+import logging
 from decimal import Decimal
 from html import escape
 
@@ -10,8 +11,11 @@ from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
+logger = logging.getLogger(__name__)
+
 from keyboards.main_menu import build_main_menu
 from keyboards.common import check_subscription_kb
+from services.branding_service import BrandingService
 from services.referral_guard_service import ReferralGuardService
 from keyboards.numbers import confirm_purchase_kb
 from providers.countries import get_number_service_by_code
@@ -94,13 +98,20 @@ async def _completed_orders_count(session) -> int:
 
 
 async def _main_header(session, db_user) -> str:
-    """رأس القائمة الرئيسية مع عرض الرصيد بالدولار وما يعادله بالعملة المحلية."""
+    """رأس القائمة الرئيسية: هوية المتجر + الميزات + الرصيد بعملته المحلية."""
     balance_text = await CurrencyService.format_dual(db_user.balance, db_user, session)
-    return I18nService.t(
-        "main_menu_header",
-        db_user.language_code,
-        balance=balance_text,
-    )
+    try:
+        return await BrandingService.main_menu_header(
+            balance_text,
+            getattr(db_user, "language_code", "ar") or "ar",
+        )
+    except Exception:  # noqa: BLE001 — لا تُسقط الشاشة الأولى بسبب نص تجميلي
+        logger.exception("تعذر بناء رأس القائمة الرئيسية، استخدام النص الافتراضي")
+        return I18nService.t(
+            "main_menu_header",
+            db_user.language_code,
+            balance=balance_text,
+        )
 
 
 async def _alternatives_kb(session, service, missing_code: str):

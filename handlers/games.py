@@ -25,6 +25,7 @@ from services.dynamic_service import DynamicService
 from services.player_id_service import PlayerIdError, PlayerIdService
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.notification_service import NotificationService
+from services.order_confirmation_service import OrderConfirmationService
 from services.gamification_service import GamificationService
 from services.inventory_service import InventoryError, InventoryService
 from services.loyalty_service import LoyaltyService
@@ -1058,10 +1059,30 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         cashback = await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
         await LoyaltyService.award_purchase_points(session, db_user.id, 'unified_orders', order.id, final_price)
         await GamificationService.progress_event(session, db_user.id, 'purchase')
-        delivery_note = ''
+        delivery_note = None
         if metadata and metadata.get('note'):
-            delivery_note = f"\n📝 ملاحظة: {esc(metadata['note'])}"
-        await callback.message.answer(f"{I18nService.t('ux_games_899_54', _auto_lang(locals()))}{esc(product.name_ar)}{I18nService.t('ux_games_899_55', _auto_lang(locals()))}{order.id}{I18nService.t('ux_games_899_56', _auto_lang(locals()))}{final_price}{I18nService.t('ux_games_899_57', _auto_lang(locals()))}{esc(delivered_value)}</code>{delivery_note}{I18nService.t('ux_games_899_58', _auto_lang(locals()))}")
+            delivery_note = f"📝 ملاحظة: {metadata['note']}"
+        try:
+            balance_after = await BalanceService.get_balance(session, db_user.id)
+        except Exception:  # noqa: BLE001
+            balance_after = None
+        inventory_text = await OrderConfirmationService.unified(
+            order=order,
+            product=product,
+            user=db_user,
+            target=target,
+            quantity=quantity,
+            price_usd=final_price,
+            cashback_usd=cashback or None,
+            status='مكتمل — تم التسليم فوراً من المخزون',
+            delivery_html=f"<code>{esc(delivered_value)}</code>" if delivered_value else None,
+            note=delivery_note,
+            balance_after=balance_after,
+            language=_glang(db_user),
+            title='تم تسليم طلبك فوراً',
+            emoji='🎉',
+        )
+        await callback.message.answer(inventory_text, reply_markup=back_to_main_kb())
         await notifier.notify_admin(f'📦 <b>تم تسليم منتج من المخزون</b>\n\n🆔 الطلب: #{order.id}\n👤 المستخدم: {db_user.telegram_id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$', notification_type="order")
         upsells = await UpsellService.recommend(session, product.id)
         if upsells:
@@ -1199,12 +1220,24 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                 await DynamicService.increment_product_sold(session, product.id, quantity)
                 await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
                 await LoyaltyService.award_purchase_points(session, db_user.id, 'unified_orders', order.id, final_price)
+                try:
+                    _bal_after = await BalanceService.get_balance(session, db_user.id)
+                except Exception:  # noqa: BLE001
+                    _bal_after = None
                 await callback.message.answer(
-                    f"✅ <b>تم شراء {esc(product.name_ar)}</b>\n\n"
-                    f"🆔 رقم الطلب: #{order.id}\n"
-                    f"💰 المبلغ: {final_price}$\n\n"
-                    "🕐 <b>سيصلك الكود/الحساب خلال دقائق</b> — "
-                    "أُشعرت الإدارة بتسليم طلبك وستصلك رسالة فور وصوله.",
+                    await OrderConfirmationService.unified(
+                        order=order,
+                        product=product,
+                        user=db_user,
+                        target=target,
+                        quantity=quantity,
+                        price_usd=final_price,
+                        status='بانتظار تنفيذ الإدارة (رصيد المزود غير كافٍ)',
+                        note='🕐 سيصلك الكود/الحساب خلال دقائق — أُشعرت الإدارة بتسليم طلبك، وستصلك رسالة فور وصول بيانات الخدمة.',
+                        balance_after=_bal_after,
+                        language=_glang(db_user),
+                        title='تم إنشاء طلبك بنجاح',
+                    ),
                     reply_markup=back_to_main_kb(),
                 )
                 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -1251,30 +1284,39 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         await PromotionService.mark_used(session, promotion.id)
     await DynamicService.increment_product_sold(session, product.id, quantity)
     cashback = await CashbackService.apply_cashback(session, db_user.id, order.id, 'unified_orders', final_price)
-    result_text = f'✅ <b>تم إرسال طلبك بنجاح!</b>\n\n🆔 رقم الطلب: #{order.id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$\n'
-    if discount > 0:
-        label = 'العرض' if promotion else 'الكوبون'
-        result_text += f'🎁 {label}: -{discount}$\n'
-    if cashback > 0:
-        result_text += f'🎁 كاشباك: {cashback}$\n'
-    if target:
-        result_text += f'🎯 الهدف: <code>{esc(target)}</code>\n'
-    if quantity > 1:
-        result_text += f'📊 الكمية: {quantity}\n'
-    result_text += f'\n📊 الحالة: {status_message}'
+    delivery_html = None
     if instant_raw:
         from services.digital_delivery import format_delivery_html
 
-        delivery_html = format_delivery_html(instant_raw)
-        if delivery_html:
-            result_text += f'\n\n🎁 <b>تم التسليم فوراً — بياناتك:</b>{delivery_html}'
-    else:
-        if fulfillment == ProductFulfillmentType.MANUAL.value:
-            result_text += (
-                '\n\n🕐 <b>هذا منتج يدوي</b> — ستُنفذ الإدارة طلبك '
-                'خارج البوت وستصلك رسالة فور اكتمال التنفيذ أو الاسترجاع.'
-            )
-        result_text += '\nستصلك إشعارات بتحديث حالة طلبك.'
+        delivery_html = format_delivery_html(instant_raw) or None
+    manual_note = None
+    if not delivery_html and fulfillment == ProductFulfillmentType.MANUAL.value:
+        manual_note = (
+            '🕐 هذا منتج يدوي: ستُنفذه الإدارة خارج البوت '
+            'وستصلك رسالة فور اكتمال التنفيذ أو الاسترجاع.'
+        )
+    try:
+        balance_after = await BalanceService.get_balance(session, db_user.id)
+    except Exception:  # noqa: BLE001
+        balance_after = None
+    result_text = await OrderConfirmationService.unified(
+        order=order,
+        product=product,
+        user=db_user,
+        target=target,
+        quantity=quantity,
+        price_usd=final_price,
+        discount_usd=discount if discount > 0 else None,
+        discount_label='العرض' if promotion else 'الكوبون',
+        cashback_usd=cashback or None,
+        status=status_message,
+        delivery_html=delivery_html,
+        note=manual_note,
+        balance_after=balance_after,
+        language=_glang(db_user),
+        title='تم تسليم طلبك فوراً' if delivery_html else 'تم إنشاء طلبك بنجاح',
+        emoji='🎉' if delivery_html else '✅',
+    )
     await callback.message.answer(result_text, reply_markup=back_to_main_kb())
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup

@@ -418,6 +418,12 @@ class AdminWelcomeStates(StatesGroup):
     waiting_message = State()
 
 
+class AdminBrandingStates(StatesGroup):
+    waiting_store_name = State()
+    waiting_store_tagline = State()
+    waiting_menu_features = State()
+
+
 class AdminSettingsStates(StatesGroup):
     waiting_value = State()
 
