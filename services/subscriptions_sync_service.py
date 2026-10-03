@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 FEATURE_KEY = "subscriptions_auto_sync"
 
 DEFAULT_SUB_CATEGORY_EMOJI = "🔐"
+DEFAULT_CATEGORY_NAME = "قسم الاشتراكات الرقمية"
 DEFAULT_MARGIN_PERCENT = Decimal("23")
 
 
@@ -97,13 +98,22 @@ class SubscriptionsSyncService:
     @staticmethod
     async def _ensure_category(session) -> Category:
         result = await session.execute(
-            select(Category).where(Category.type == CategoryType.SUBSCRIPTIONS)
+            select(Category)
+            .where(Category.type == CategoryType.SUBSCRIPTIONS)
+            .order_by(Category.sort_order, Category.id)
         )
-        category = result.scalar_one_or_none()
-        if category is not None:
-            return category
+        categories = list(result.scalars().all())
+        if categories:
+            # أكثر من قسم يحمل نوع «اشتراكات» (AI/VPN/الشاشات/الرقمية):
+            # scalar_one_or_none كان يرمي MultipleResultsFound ويوقف
+            # المزامنة كلها. نختار قسم الاشتراكات الرقمية المعروف، وإلا
+            # أقدم قسم من هذا النوع.
+            return next(
+                (c for c in categories if c.name_ar == DEFAULT_CATEGORY_NAME),
+                categories[0],
+            )
         category = Category(
-            name_ar="قسم الاشتراكات الرقمية",
+            name_ar=DEFAULT_CATEGORY_NAME,
             emoji=DEFAULT_SUB_CATEGORY_EMOJI,
             type=CategoryType.SUBSCRIPTIONS,
             is_active=True,
