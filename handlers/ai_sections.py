@@ -19,6 +19,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from database.models import AiSession, User
+from keyboards.common import empty_state_kb
 from keyboards.ai_sections import (
     ai_error_kb,
     ai_hist_view_kb,
@@ -78,7 +79,10 @@ async def _show_home(callback: CallbackQuery, session):
     language = _lang(callback.from_user)
     sections = await AiSectionService.list_enabled(session)
     if not sections:
-        await callback.message.edit_text(I18nService.t("ai_no_sections", language))
+        await callback.message.edit_text(
+            I18nService.t("ai_no_sections", language),
+            reply_markup=empty_state_kb(language, back_callback="store:home", search=False),
+        )
         await callback.answer()
         return
     await callback.message.edit_text(

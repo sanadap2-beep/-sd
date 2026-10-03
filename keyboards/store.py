@@ -182,6 +182,12 @@ def store_empty_section_kb(language: str = "ar") -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text=I18nService.t("store_search", language),
+                    callback_data="menu:search", style="success",
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text=I18nService.t("store_back", language),
                     callback_data="store:home", style="success",
                 )

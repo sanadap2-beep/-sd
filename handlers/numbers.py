@@ -56,6 +56,7 @@ from services.order_confirmation_service import OrderConfirmationService
 from services.bulk_number_service import BulkError, BulkNumberService
 from services.feature_service import FeatureService
 from services.notification_service import NotificationService
+from keyboards.common import empty_state_kb
 from keyboards.numbers import (
     bulk_confirm_kb,
     bulk_quantity_kb,
@@ -581,14 +582,20 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
         await callback.answer("الباقات الجاهزة غير مفعّلة حالياً.", show_alert=True)
         return
     if not await FeatureService.enabled("bulk_numbers"):
-        await callback.message.edit_text("📦 الباقات الجاهزة تتطلب تفعيل ميزة الشراء بالجملة.")
+        await callback.message.edit_text(
+            "📦 الباقات الجاهزة تتطلب تفعيل ميزة الشراء بالجملة.",
+            reply_markup=empty_state_kb(db_user.language_code, back_callback="num_hub", back_label="📞 اطلب رقم", search=False),
+        )
         await callback.answer()
         return
 
     services = [svc for svc in await get_active_number_services(session) if svc.is_active]
     countries = [c for c in await get_active_countries(session) if c.is_active]
     if not services or not countries:
-        await callback.message.edit_text("📦 لا توجد باقات أرقام مفعّلة حالياً.")
+        await callback.message.edit_text(
+            "📦 لا توجد باقات أرقام مفعّلة حالياً.",
+            reply_markup=empty_state_kb(db_user.language_code, back_callback="num_hub", back_label="📞 اطلب رقم", search=False),
+        )
         await callback.answer()
         return
 

@@ -282,12 +282,25 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
 async def back_to_main(callback: CallbackQuery, session, db_user):
     """زر الرجوع للقائمة الرئيسية."""
     await callback.answer()
+    await _render_main_menu(callback, session, db_user)
+
+
+async def _render_main_menu(target, session, db_user) -> None:
+    """رسم الشاشة الرئيسية (رسالة الحالية أو رسالة جديدة عند الفشل)."""
     menu_kb = await _build_menu(session, db_user)
     header = await _main_header(session, db_user)
     try:
-        await callback.message.edit_text(header, reply_markup=menu_kb)
+        await target.message.edit_text(header, reply_markup=menu_kb)
     except Exception:
-        await callback.message.answer(header, reply_markup=menu_kb)
+        await target.message.answer(header, reply_markup=menu_kb)
+
+
+@router.callback_query(F.data == "flow:cancel")
+async def flow_cancel(callback: CallbackQuery, session, db_user, state: FSMContext):
+    """إلغاء عملية جارية (إدخال معرّف/رابط/مبلغ) والرجوع للقائمة الرئيسية."""
+    await state.clear()
+    await callback.answer("❌ تم إلغاء العملية.")
+    await _render_main_menu(callback, session, db_user)
 
 
 async def _try_pay_referral_bonus(session, user, bot):

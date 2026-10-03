@@ -17,6 +17,7 @@ from services.inventory_service import InventoryError, InventoryService
 from services.receipt_service import ReceiptService
 from services.watch_service import WatchService
 from keyboards.games import product_confirm_kb
+from keyboards.common import empty_state_kb
 router = Router(name='account')
 
 
@@ -127,6 +128,7 @@ async def my_watches(callback: CallbackQuery, session, db_user: User):
     kb.adjust(1)
     await callback.message.edit_text('\n'.join(lines), reply_markup=kb.as_markup())
 
+
 @router.callback_query(F.data.startswith('my_num_orders:'))
 async def my_number_orders(callback: CallbackQuery, session, db_user: User):
     page = int(callback.data.split(':')[1])
@@ -137,25 +139,35 @@ async def my_number_orders(callback: CallbackQuery, session, db_user: User):
     total = total_result.scalar_one()
     total_pages = max(1, (total + per_page - 1) // per_page)
     if not orders and page == 0:
-        await callback.message.edit_text(I18nService.t('ux_account_189_2', _auto_lang(locals())))
+        await callback.message.edit_text(
+            I18nService.t('ux_account_189_2', _auto_lang(locals())),
+            reply_markup=empty_state_kb(language=db_user.language_code, back_callback='num_hub', back_label='📞 اطلب رقم الآن'),
+        )
         await callback.answer()
         return
     lines = [f'📋 <b>طلبات الأرقام ({page + 1}/{total_pages})</b>\n']
+    kb = InlineKeyboardBuilder()
     for o in orders:
         status_label = _label(ORDER_STATUS_LABELS, o.status, db_user.language_code)
-        line = f"\n📱 <code>{o.phone_number}</code>\n📲 الخدمة: {o.service}\nالحالة: {status_label} | السعر: {o.price_sell_usd}$\nالتاريخ: {o.purchased_at.strftime('%Y-%m-%d %H:%M')}"
+        line = (
+            f"\n📱 <code>{escape(str(o.phone_number))}</code>\n"
+            f"📲 الخدمة: {escape(str(o.service))}\n"
+            f"📊 الحالة: {status_label} | 💰 <b>{o.price_sell_usd}$</b>\n"
+            f"📅 {o.purchased_at.strftime('%Y-%m-%d %H:%M')}"
+        )
         if o.sms_code:
-            line += f'\n🔑 الكود: <code>{o.sms_code}</code>'
+            line += f'\n🔑 الكود: <code>{escape(str(o.sms_code))}</code>'
         if o.extra_codes:
-            line += f'\n🔑 أكواد إضافية: <code>{o.extra_codes}</code>'
+            line += f'\n🔑 أكواد إضافية: <code>{escape(str(o.extra_codes))}</code>'
         lines.append(line)
-    kb = InlineKeyboardBuilder()
+        kb.button(text=f'🧾 إيصال #{o.id}', callback_data=f'receipt:number:{o.id}')
+        kb.button(text='🔁 أرقام مشابهة', callback_data=f'num_svc:{o.service}', style="primary")
     if page > 0:
         kb.button(text='◀️ السابق', callback_data=f'my_num_orders:{page - 1}')
     if page < total_pages - 1:
         kb.button(text='التالي ▶️', callback_data=f'my_num_orders:{page + 1}')
     kb.button(text='🔙 رجوع لحسابي', callback_data='menu:account')
-    kb.adjust(2, 1)
+    kb.adjust(*([2] * max(1, len(orders))), 2, 1)
     await callback.message.edit_text('\n'.join(lines), reply_markup=kb.as_markup())
     await callback.answer()
 
@@ -169,7 +181,10 @@ async def my_unified_orders(callback: CallbackQuery, session, db_user: User):
     total = total_result.scalar_one()
     total_pages = max(1, (total + per_page - 1) // per_page)
     if not orders and page == 0:
-        await callback.message.edit_text(I18nService.t('ux_account_250_3', _auto_lang(locals())))
+        await callback.message.edit_text(
+            I18nService.t('ux_account_250_3', _auto_lang(locals())),
+            reply_markup=empty_state_kb(language=db_user.language_code, back_callback='store:home'),
+        )
         await callback.answer()
         return
     lines = [f'🛒 <b>طلبات أخرى ({page + 1}/{total_pages})</b>\n']
@@ -239,6 +254,20 @@ async def unified_receipt(callback: CallbackQuery, session, db_user: User):
     await callback.answer()
     await callback.message.answer(ReceiptService.unified_text(order, db_user, order.product))
 
+
+@router.callback_query(F.data.startswith('receipt:number:'))
+async def number_order_receipt(callback: CallbackQuery, session, db_user: User):
+    """إيصال طلب الرقم (كان ReceiptService.number_text بلا أي زر يستخدمه)."""
+    order_id = int(callback.data.split(':')[2])
+    result = await session.execute(select(NumberOrder).where(NumberOrder.id == order_id, NumberOrder.user_id == db_user.id))
+    order = result.scalar_one_or_none()
+    if order is None:
+        await callback.answer(I18nService.t('ux_account_309_4', _auto_lang(locals())), show_alert=True)
+        return
+    await callback.answer()
+    await callback.message.answer(ReceiptService.number_text(order, db_user))
+
+
 @router.callback_query(F.data.startswith('repeat_order:'))
 async def repeat_order(callback: CallbackQuery, session, db_user: User, state: FSMContext):
     order_id = int(callback.data.split(':')[1])
@@ -263,7 +292,12 @@ async def my_transactions(callback: CallbackQuery, session, db_user: User):
     total = total_result.scalar_one()
     total_pages = max(1, (total + per_page - 1) // per_page)
     if not transactions and page == 0:
-        await callback.message.edit_text(I18nService.t('ux_account_450_11', _auto_lang(locals())))
+        await callback.message.edit_text(
+            I18nService.t('ux_account_450_11', _auto_lang(locals())),
+            reply_markup=empty_state_kb(
+                language=db_user.language_code, back_callback='menu:account', back_label='🔙 رجوع لحسابي', search=False,
+            ),
+        )
         await callback.answer()
         return
     lines = [f'📊 <b>سجل المعاملات ({page + 1}/{total_pages})</b>\n']

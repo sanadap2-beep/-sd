@@ -88,6 +88,7 @@ from services.watch_service import WatchService
 from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
+from keyboards.common import flow_cancel_kb
 from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb, store_servers_kb
 from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 logger = logging.getLogger(__name__)
@@ -368,15 +369,6 @@ async def _server_total_price(session, product, quantity: int, server: StoreServ
 
 
 async def _show_subcategory(target, session, sub_cat, language: str = "ar", server: StoreServer | None = None, state: FSMContext | None = None):
-    """Render a subcategory.
-
-    - إذا كان القسم تطبيقاً يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات)
-      تعرض الأقسام الداخلية أولاً (ميزة أقسام الرشق الداخلية).
-    - وإلا تعرض منتجات القسم مباشرة.
-    ``target`` is a Message or CallbackQuery. Products are loaded with an
-    explicit query so AsyncSession never tries a lazy ``sub_cat.products``
-    IO (MissingGreenlet).
-    """
     """Render a subcategory.
 
     - إذا كان القسم تطبيقاً يحوي أقساماً داخلية (متابعون/لايكات/مشاهدات)
@@ -711,7 +703,7 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         prompt = f"{target_label or I18nService.t('send_player_id', language)}"
         if custom_placeholder:
             prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
-        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt)
+        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt, reply_markup=flow_cancel_kb(language))
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
         head = _product_head(product, '📈')
@@ -719,13 +711,13 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
             prompt = I18nService.t('send_link', language)
             if custom_placeholder:
                 prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
-            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + prompt)
+            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + prompt, reply_markup=flow_cancel_kb(language))
             await state.set_state(SMMOrderStates.waiting_link)
         else:
             prompt = I18nService.t('send_link', language)
             if custom_placeholder:
                 prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
-            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt)
+            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt, reply_markup=flow_cancel_kb(language))
             await state.update_data(quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:

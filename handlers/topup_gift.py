@@ -19,6 +19,7 @@ from services.feature_service import FeatureService
 from services.notification_service import NotificationService
 from states.states import TopupGiftStates
 from keyboards.admin import admin_topup_gift_decision_kb
+from keyboards.common import flow_cancel_kb
 from keyboards.main_menu import back_to_main_kb
 
 logger = logging.getLogger(__name__)
@@ -187,6 +188,7 @@ async def topup_quantity_selected(callback: CallbackQuery, state: FSMContext):
         f"💵 المبلغ: <b>{amount_usd}$</b>\n\n"
         "📱 الآن أرسل <b>رقم جوال المستلم</b> في الوطن:\n"
         "(مثال: 0933556677)",
+        reply_markup=flow_cancel_kb(),
     )
 
 

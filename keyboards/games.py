@@ -38,7 +38,7 @@ def sub_categories_kb(
     b.button(
         text="🔎 بحث",
         callback_data=f"cat_search:{category_id}",
-        style="primary",
+        style="success",
     )
     b.button(
         text="🔙 رجوع للقائمة",

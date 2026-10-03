@@ -376,7 +376,7 @@ def order_actions_kb(order_id: int) -> InlineKeyboardMarkup:
     )
     b.button(
         text="🔄 شراء رقم آخر",
-        callback_data="num_hub",
+        callback_data="num_hub", style="success",
     )
     b.button(
         text="🏠 القائمة الرئيسية",
@@ -399,7 +399,7 @@ def code_received_kb(order_id: int) -> InlineKeyboardMarkup:
     )
     b.button(
         text="🔄 شراء رقم آخر",
-        callback_data="num_hub",
+        callback_data="num_hub", style="success",
     )
     b.button(
         text="🏠 القائمة الرئيسية",

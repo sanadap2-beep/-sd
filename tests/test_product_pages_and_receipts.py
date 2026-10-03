@@ -25,6 +25,7 @@ from database.models import (
     InventoryItemStatus,
     Product,
     ProductFulfillmentType,
+    NumberOrder,
     ProductStatus,
     SubCategory,
 )
@@ -258,3 +259,215 @@ async def test_cart_checkout_builds_unified_summary():
 
     text = callback.message.edits[0] if callback.message.edits else ""
     assert "السلة" in text  # لم يرمِ NameError/UnboundLocalError
+
+
+# ══════════════════ شاشات «طلباتي» ══════════════════
+
+
+class _FakeMessage:
+    def __init__(self):
+        self.edits: list[tuple] = []
+        self.answers: list[str] = []
+        self.markups = []
+
+    async def edit_text(self, text, **kwargs):
+        self.edits.append((text, kwargs.get("reply_markup")))
+        self.markups.append(kwargs.get("reply_markup"))
+        return None
+
+    async def answer(self, text, **kwargs):
+        self.answers.append(text)
+        return None
+
+
+class _FakeCallback:
+    def __init__(self, data: str):
+        self.data = data
+        self.message = _FakeMessage()
+        self.alerts: list[str] = []
+
+    async def answer(self, text=None, **kwargs):
+        if kwargs.get("show_alert"):
+            self.alerts.append(text or "")
+        return None
+
+
+@pytest.mark.asyncio
+async def test_empty_orders_screens_are_not_dead_ends():
+    """شاشة «لا يوجد طلبات» كانت تُرسل بلا أي زر: رسالة ميتة بلا مخرج."""
+    from database.models import User
+
+    from handlers.account import my_number_orders, my_unified_orders
+
+    async with async_session_maker() as session:
+        user = User(telegram_id=5600010, username="empty_orders", balance=Decimal("0"))
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+    for handler, data in (
+        (my_number_orders, "my_num_orders:0"),
+        (my_unified_orders, "my_uni_orders:0"),
+    ):
+        callback = _FakeCallback(data)
+        async with async_session_maker() as session:
+            db_user = await session.get(User, user_id)
+            await handler(callback, session, db_user)
+        markup = callback.message.markups[-1]
+        data_all = [b.callback_data for row in markup.inline_keyboard for b in row]
+        assert data_all, "الشاشة الفارغة بلا أزرار"
+        assert "back_to_main" in data_all
+
+
+@pytest.mark.asyncio
+async def test_number_orders_list_has_receipt_and_repeat_buttons():
+    """كل طلب رقم يعرض إيصاله وزر أرقام مشابهة، وبطاقة أوضح."""
+    from database.models import OrderStatus, ProviderName, User
+
+    from handlers.account import my_number_orders
+
+    async with async_session_maker() as session:
+        user = User(telegram_id=5600011, username="num_orders", balance=Decimal("0"))
+        session.add(user)
+        await session.flush()
+        session.add(
+            NumberOrder(
+                user_id=user.id,
+                provider=ProviderName.FIVESIM,
+                provider_order_id="prov-1",
+                service="wa",
+                country_code="le",
+                phone_number="+96170000001",
+                price_provider_usd=Decimal("0.10"),
+                price_sell_usd=Decimal("0.35"),
+                status=OrderStatus.PENDING,
+                purchased_at=datetime(2026, 10, 3, 16, 5),
+            )
+        )
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+    callback = _FakeCallback("my_num_orders:0")
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await my_number_orders(callback, session, db_user)
+
+    text = callback.message.edits[-1][0]
+    assert "+96170000001" in text and "📊 الحالة" in text and "0.35" in text
+    cbs = [b.callback_data for row in callback.message.markups[-1].inline_keyboard for b in row]
+    assert any(c.startswith("receipt:number:") for c in cbs)
+    assert "num_svc:wa" in cbs
+
+
+@pytest.mark.asyncio
+async def test_number_order_receipt_handler_renders_receipt():
+    """زر الإيصال على طلب الرقم كان غائباً تماماً."""
+    from database.models import OrderStatus, ProviderName, User
+
+    from handlers.account import number_order_receipt
+
+    async with async_session_maker() as session:
+        user = User(telegram_id=5600012, username="num_receipt", balance=Decimal("0"))
+        session.add(user)
+        await session.flush()
+        order = NumberOrder(
+            user_id=user.id,
+            provider=ProviderName.FIVESIM,
+            provider_order_id="prov-2",
+            service="tg",
+            country_code="le",
+            phone_number="+96170000002",
+            price_provider_usd=Decimal("0.10"),
+            price_sell_usd=Decimal("0.40"),
+            status=OrderStatus.COMPLETED,
+            sms_code="99881",
+            purchased_at=datetime(2026, 10, 3, 16, 5),
+        )
+        session.add(order)
+        await session.commit()
+        await session.refresh(order)
+        order_id, user_id = order.id, user.id
+
+    callback = _FakeCallback(f"receipt:number:{order_id}")
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await number_order_receipt(callback, session, db_user)
+    assert callback.message.answers and "+96170000002" in callback.message.answers[-1]
+
+    # طلب لا يملكه المستخدم → تنبيه فقط
+    other = _FakeCallback("receipt:number:999999")
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await number_order_receipt(other, session, db_user)
+    assert other.alerts and not other.message.answers
+
+
+def test_empty_state_kb_offers_search_and_main_menu():
+    from keyboards.common import empty_state_kb
+    from keyboards.store import store_empty_section_kb
+
+    kb = empty_state_kb("ar")
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert cbs == ["menu:search", "store:home", "back_to_main"]
+
+    kb2 = store_empty_section_kb("ar")
+    cbs2 = [b.callback_data for row in kb2.inline_keyboard for b in row]
+    assert "menu:search" in cbs2 and "store:home" in cbs2 and "back_to_main" in cbs2
+
+
+@pytest.mark.asyncio
+async def test_flow_cancel_clears_state_and_renders_menu():
+    """زر الإلغاء في شاشات الإدخال: ينهي الحالة ويرجع للقائمة (لا رسالة ميتة)."""
+    from database.models import User
+
+    from handlers.start import flow_cancel
+    from keyboards.common import flow_cancel_kb
+
+    kb = flow_cancel_kb("ar")
+    assert kb.inline_keyboard[0][0].callback_data == "flow:cancel"
+
+    class FakeState:
+        def __init__(self):
+            self.cleared = False
+
+        async def clear(self):
+            self.cleared = True
+
+    async with async_session_maker() as session:
+        user = User(telegram_id=5600013, username="cancel_flow", balance=Decimal("0"))
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = user.id
+
+    class FakeMessage:
+        def __init__(self):
+            self.edits = []
+
+        async def edit_text(self, text, **kwargs):
+            self.edits.append((text, kwargs.get("reply_markup")))
+            return None
+
+        async def answer(self, text, **kwargs):
+            self.edits.append((text, kwargs.get("reply_markup")))
+            return None
+
+    class FakeCallback:
+        def __init__(self):
+            self.message = FakeMessage()
+            self.answered = False
+
+        async def answer(self, *args, **kwargs):
+            self.answered = True
+            return None
+
+    state = FakeState()
+    callback = FakeCallback()
+    async with async_session_maker() as session:
+        db_user = await session.get(User, user_id)
+        await flow_cancel(callback, session, db_user, state)
+
+    assert state.cleared and callback.answered
+    assert callback.message.edits and callback.message.edits[-1][1] is not None
