@@ -157,6 +157,23 @@ def _glang(db_user) -> str:
     return getattr(db_user, 'language_code', 'ar') or 'ar'
 
 
+async def _stock_line(session, product, language: str = "ar") -> str:
+    """سطر المخزون لمنتجات التسليم الفوري (المخزون الرقمي).
+
+    يمنع «ادفع ثم اكتشف أنه نافد»: يظهر المتبقي قبل الضغط على الشراء.
+    """
+    fulfillment = getattr(product, "fulfillment_type", None)
+    if getattr(fulfillment, "value", fulfillment) != ProductFulfillmentType.INVENTORY.value:
+        return ""
+    try:
+        left = await InventoryService.available_count(session, product.id)
+    except Exception:  # noqa: BLE001 — سطر تجميلي: لا يُسقط صفحة المنتج
+        return ""
+    if left <= 0:
+        return f"\n{I18nService.t('out_of_stock', language)}"
+    return f"\n{I18nService.t('stock_left', language, count=left)}"
+
+
 def _eta_line(product, language: str = "ar") -> str:
     """سطر الوقت التقريبي للاكتمال إن وُجد."""
     from services.smm_price_service import SMM_DEFAULT_ETA
@@ -713,7 +730,12 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
             await state.set_state(SMMOrderStates.waiting_link)
     else:
         head = _product_head(product, '📦')
-        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>\n\n{confirm_q}', reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+        stock_line = await _stock_line(session, product, language)
+        await callback.message.edit_text(
+            f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>'
+            f'{_eta_line(product, language)}{stock_line}\n\n{confirm_q}',
+            reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0),
+        )
 
 @router.message(GamesOrderStates.waiting_player_id)
 async def player_id_received(message: Message, state: FSMContext, session, db_user: User):
@@ -1122,6 +1144,10 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
     order_status = UnifiedOrderStatus.PENDING
     status_message = 'بانتظار تنفيذ الإدارة' if fulfillment == ProductFulfillmentType.MANUAL.value else 'بانتظار التنفيذ'
     instant_raw = None
+    # المنتجات اليدوية (وكل ما لا يمر بمزود) لا تدخل فرع الـ API أدناه، فتبقى
+    # ``used_route`` بلا قيمة → ``UnboundLocalError`` عند إنشاء الطلب بعد خصم
+    # الرصيد (المستخدم يُخصم منه ولا يُنشأ طلب). التهيئة المسبقة تمنع ذلك.
+    used_route = None
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         pass
     elif product.api_provider_id and product.provider_service_id:

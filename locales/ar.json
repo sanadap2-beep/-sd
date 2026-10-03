@@ -98,6 +98,8 @@
   "price": "السعر",
   "confirm_purchase_q": "هل تريد تأكيد الشراء؟",
   "eta_label": "⏱️ الوقت التقريبي",
+  "stock_left": "📦 المتبقي: <b>{count}</b>",
+  "out_of_stock": "⚠️ نفد المخزون حالياً — سيُعاد توفيره قريباً",
   "send_player_id": "أرسل <b>آيدي اللاعب</b> (Player ID):",
   "send_link": "أرسل <b>الرابط</b>:",
   "quantity_limits": "📊 الحد الأدنى: {min_q} | الحد الأقصى: {max_q}",

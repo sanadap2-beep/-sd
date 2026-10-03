@@ -430,6 +430,42 @@ class OrderConfirmationService:
             conf.row("📦", "المتبقي" if not en else "Left in stock", stock_left)
         return conf.render()
 
+    # ── نتيجة السلة (عدة طلبات في مرة واحدة) ─────────────────────
+    @staticmethod
+    def cart(
+        *,
+        completed: int,
+        failed: int = 0,
+        saved_usd: Decimal | None = None,
+        charged_usd: Decimal | None = None,
+        deliveries: list[str] | None = None,
+        language: str = "ar",
+    ) -> str:
+        lang = _lang(language)
+        en = lang == "en"
+        conf = OrderConfirmation(
+            title="تم تنفيذ طلبات السلة" if not en else "Cart processed",
+            emoji="🧾",
+            service=("السلة" if not en else "Cart"),
+            service_emoji="🛒",
+            price_usd=None,
+            paid_usd=charged_usd,
+            language=lang,
+        )
+        conf.row("🧮", "عدد الطلبات" if not en else "Orders", completed)
+        if failed:
+            conf.row("⚠️", "تعذّر تنفيذها" if not en else "Failed", failed)
+        if saved_usd:
+            conf.row("🎟", "وفّرت" if not en else "You saved", _money(saved_usd))
+        if deliveries:
+            conf.delivery_html = "\n".join(f"<code>{esc(v)}</code>" for v in deliveries if v)
+        conf.note = (
+            "ستصلك إشعار لكل طلب على حدة فور اكتماله."
+            if not en
+            else "You will get a separate notification for each order once completed."
+        )
+        return conf.render()
+
     # ── دفعة أرقام (شراء بالجملة) ────────────────────────────────
     @staticmethod
     def bulk_numbers(
