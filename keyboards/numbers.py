@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import Country, NumberService
+from keyboards.emoji_button import face
 
 # تحديد 25 دولة في كل صفحة (صف بمربعين)
 COUNTRIES_PER_PAGE = 25
@@ -30,9 +31,12 @@ def number_services_kb(
     """قائمة خدمات الأرقام (واتساب، تيليجرام.. إلخ)."""
     b = InlineKeyboardBuilder()
     for svc in services:
+        _text, _icon = face(
+            f"أرقام {svc.name_ar}", svc.emoji, getattr(svc, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{svc.emoji} أرقام {svc.name_ar}",
-            callback_data=f"num_svc:{svc.code}", style="success",
+            text=_text,
+            callback_data=f"num_svc:{svc.code}", style="success", **_icon,
         )
     b.button(
         text="🔙 رجوع للقائمة الرئيسية",
@@ -61,9 +65,12 @@ def numbers_hub_kb(
 
     b = InlineKeyboardBuilder()
     for svc in services:
+        _text, _icon = face(
+            f"أرقام {svc.name_ar}", svc.emoji, getattr(svc, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{svc.emoji} أرقام {svc.name_ar}",
-            callback_data=f"num_svc:{svc.code}", style="success",
+            text=_text,
+            callback_data=f"num_svc:{svc.code}", style="success", **_icon,
         )
     if packages:
         b.add(BC.apply(

@@ -32,6 +32,7 @@ from database.models import (
 )
 from services.audit_service import AuditService
 from services.dynamic_service import DynamicService
+from keyboards.emoji_button import extract_custom_emoji
 from services.product_service import ProductService
 from states.states import (
     AdminCategoryStates,
@@ -337,12 +338,16 @@ async def cat_custom_emoji_received(
     session,
     db_user,
 ):
-    """استقبال إيموجي مخصص."""
-    emoji = message.text.strip()
+    """استقبال إيموجي (عادي أو إيموجي تيليجرام المميز)."""
+    emoji = (message.text or "").strip()
+    custom_emoji_id = extract_custom_emoji(message)
 
-    if len(emoji) > 8:
+    if not custom_emoji_id and len(emoji) > 8:
         await message.answer("⚠️ إيموجي واحد فقط من فضلك.")
         return
+    if custom_emoji_id and len(emoji) > 8:
+        # تيليجرام يرسل الإيموجي البديل كنص — نتجاهله ونعتمد الأيقونة المميزة.
+        emoji = emoji[:8]
 
     data = await state.get_data()
 
@@ -352,6 +357,7 @@ async def cat_custom_emoji_received(
             name_ar=data["name"],
             emoji=emoji,
             category_type=CategoryType(data["category_type"]),
+            custom_emoji_id=custom_emoji_id,
         )
     except Exception as e:
         logger.error(f"فشل إنشاء قسم: {e}")
@@ -549,7 +555,8 @@ async def cat_edit_start(callback: CallbackQuery, state: FSMContext):
 
     field_prompts = {
         "name": "📝 أرسل الاسم الجديد للقسم:",
-        "emoji": "🎨 أرسل الإيموجي الجديد:",
+        "emoji": ("🎨 أرسل الإيموجي الجديد:\n"
+                 "(إيموجي عادي أو إيموجي تيليجرام المميز)"),
         "sort": ("🔢 أرسل رقم الترتيب الجديد (الأصغر يظهر أولاً):"),
         "desc": "📝 أرسل شرح القسم (يظهر للزبون عند فتح القسم):\nأرسل <b>مسح</b> لإزالة الشرح:",
     }
@@ -600,11 +607,15 @@ async def cat_edit_value_received(
         category.name_ar = value
 
     elif field == "emoji":
-        if len(value) > 8:
+        custom_emoji_id = extract_custom_emoji(message)
+        if not custom_emoji_id and len(value) > 8:
             await message.answer("⚠️ إيموجي واحد فقط.")
             return
+        if custom_emoji_id and len(value) > 8:
+            value = value[:8]
         old_value = category.emoji
         category.emoji = value
+        category.custom_emoji_id = custom_emoji_id
 
     elif field == "sort":
         try:
@@ -981,14 +992,17 @@ async def subcat_emoji_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminSubCategoryStates.waiting_emoji)
 async def subcat_custom_emoji_received(message: Message, state: FSMContext):
-    """استقبال إيموجي مخصص."""
-    emoji = message.text.strip()
+    """استقبال إيموجي (عادي أو إيموجي تيليجرام المميز)."""
+    emoji = (message.text or "").strip()
+    custom_emoji_id = extract_custom_emoji(message)
 
-    if len(emoji) > 8:
+    if not custom_emoji_id and len(emoji) > 8:
         await message.answer("⚠️ إيموجي واحد فقط.")
         return
+    if custom_emoji_id and len(emoji) > 8:
+        emoji = emoji[:8]
 
-    await state.update_data(emoji=emoji)
+    await state.update_data(emoji=emoji, custom_emoji_id=custom_emoji_id)
 
     await message.answer(
         f"✅ الإيموجي: {emoji}\n\n"
@@ -1108,6 +1122,7 @@ async def _create_sub_category(
             parent_sub_category_id=parent_sub_id,
             name_ar=data["name"],
             emoji=data.get("emoji", "📱"),
+            custom_emoji_id=data.get("custom_emoji_id"),
             description=data.get("description"),
             image_file_id=data.get("image_file_id"),
             image_url=data.get("image_url"),
@@ -1395,11 +1410,15 @@ async def subcat_edit_value_received(
         sub.name_ar = value
 
     elif field == "emoji":
-        if len(value) > 8:
+        custom_emoji_id = extract_custom_emoji(message)
+        if not custom_emoji_id and len(value) > 8:
             await message.answer("⚠️ إيموجي واحد فقط.")
             return
+        if custom_emoji_id and len(value) > 8:
+            value = value[:8]
         old_value = sub.emoji
         sub.emoji = value
+        sub.custom_emoji_id = custom_emoji_id
 
     elif field == "desc":
         if value == "-":

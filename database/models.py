@@ -493,6 +493,8 @@ class NumberService(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📱")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة الزر عند توفره.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     fivesim_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     herosms_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -528,6 +530,8 @@ class NumberServer(Base):
     provider: Mapped[str] = mapped_column(String(64), index=True)
     name_ar: Mapped[str] = mapped_column(String(96))
     emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر السيرفر.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # نسبة ربح السيرفر (تتجاوز هامش الخدمة/الدولة/المزود العام عند ضبطها).
     margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
@@ -572,6 +576,8 @@ class StoreServer(Base):
 
     name_ar: Mapped[str] = mapped_column(String(96))
     emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر السيرفر.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
 
@@ -867,6 +873,8 @@ class Category(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📦")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر القسم عند توفره.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     type: Mapped[CategoryType] = mapped_column(SAEnum(CategoryType))
     # شرح القسم الذي يظهر للزبون عند فتحه (يُضبط من لوحة الأدمن).
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -905,6 +913,8 @@ class SubCategory(Base):
     kind_key: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📱")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر القسم الفرعي.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

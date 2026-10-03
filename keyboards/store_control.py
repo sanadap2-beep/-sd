@@ -3,6 +3,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from services.store_section_service import StoreEntry
+from keyboards.emoji_button import icon_button
 
 
 def store_control_home_kb(entries: list[StoreEntry]) -> InlineKeyboardMarkup:
@@ -87,7 +88,7 @@ def store_section_action_help_kb() -> InlineKeyboardMarkup:
 
 def target_categories_kb(categories) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"{cat.emoji} {cat.name_ar} · ID {cat.id}", callback_data=f"stc:pick:cat:{cat.id}")]
+        [icon_button(f"{cat.name_ar} · ID {cat.id}", emoji=cat.emoji, custom_emoji_id=getattr(cat, "custom_emoji_id", None), callback_data=f"stc:pick:cat:{cat.id}")]
         for cat in categories[:40]
     ]
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="stc:add")])
@@ -96,7 +97,7 @@ def target_categories_kb(categories) -> InlineKeyboardMarkup:
 
 def target_subcategories_kb(subcategories) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"{sub.emoji} {sub.name_ar} · ID {sub.id}", callback_data=f"stc:pick:subcat:{sub.id}")]
+        [icon_button(f"{sub.name_ar} · ID {sub.id}", emoji=sub.emoji, custom_emoji_id=getattr(sub, "custom_emoji_id", None), callback_data=f"stc:pick:subcat:{sub.id}")]
         for sub in subcategories[:40]
     ]
     rows.append([InlineKeyboardButton(text="⬅️ رجوع", callback_data="stc:add")])

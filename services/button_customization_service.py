@@ -202,11 +202,20 @@ class ButtonCustomizationService:
 
     @staticmethod
     def resolve(key: str, default_label: str, default_style: str | None):
-        """Return (label, style, custom_emoji_id) with overrides applied."""
+        """Return (label, style, custom_emoji_id) with overrides applied.
+
+        عند ضبط إيموجي مميز نحذف الإيموجي النصي من بداية الاسم حتى لا يظهر
+        مرتين (الأيقونة المميزة + الإيموجي داخل النص). الحذف يتم وقت العرض لا
+        عند الحفظ، فتبقى التسميات الديناميكية (مثل رصيد الزبون) حيّة.
+        """
         entry = ButtonCustomizationService.overrides_sync().get(key, {}) or {}
         label = entry.get("label") or default_label
         style = entry.get("style", default_style)
         custom_emoji_id = entry.get("custom_emoji_id")
+        if custom_emoji_id:
+            from keyboards.emoji_button import strip_leading_emoji
+
+            label = strip_leading_emoji(label) or label
         return label, style, custom_emoji_id
 
     @staticmethod

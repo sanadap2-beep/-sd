@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import SubCategory, Product
 from services.smm_catalog import button_label
+from keyboards.emoji_button import face
 
 
 def _short_name(name: str, limit: int = 42) -> str:
@@ -27,9 +28,12 @@ def sub_categories_kb(
     """قائمة الأقسام الفرعية لقسم رئيسي."""
     b = InlineKeyboardBuilder()
     for sub in sub_categories:
+        _text, _icon = face(
+            button_label(sub.name_ar, sub.emoji), None, getattr(sub, "custom_emoji_id", None)
+        )
         b.button(
-            text=button_label(sub.name_ar, sub.emoji),
-            callback_data=f"subcat:{sub.id}", style="success",
+            text=_text,
+            callback_data=f"subcat:{sub.id}", style="success", **_icon,
         )
     b.button(
         text="🔎 بحث",
@@ -55,9 +59,12 @@ def sections_kb(
     b = InlineKeyboardBuilder()
     for section, count in sections:
         label = button_label(section.name_ar, section.emoji)
+        _text, _icon = face(
+            f"{label} ({count})", None, getattr(section, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{label} ({count})",
-            callback_data=f"subcat:{section.id}", style="success",
+            text=_text,
+            callback_data=f"subcat:{section.id}", style="success", **_icon,
         )
     b.button(
         text="🔙 رجوع",
@@ -95,9 +102,13 @@ def products_kb(
     """
     b = InlineKeyboardBuilder()
     if server is not None:
+        _text, _icon = face(
+            f"🔄 تغيير السيرفر: {_short_name(server.name_ar, 26)}",
+            server.emoji, getattr(server, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"{server.emoji} 🔄 تغيير السيرفر: {_short_name(server.name_ar, 26)}",
-            callback_data=f"subcat:{sub_category_id}", style="success",
+            text=_text,
+            callback_data=f"subcat:{sub_category_id}", style="success", **_icon,
         )
     for p in products:
         if price_map is not None and p.id in price_map:
@@ -135,9 +146,13 @@ def store_servers_kb(
         margin_label = ""
         if s.margin_percent is not None:
             margin_label = f"  ({s.margin_percent}%)"
+        _text, _icon = face(
+            f"{_short_name(s.name_ar, 34)}{margin_label}",
+            s.emoji, getattr(s, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"{s.emoji} {_short_name(s.name_ar, 34)}{margin_label}",
-            callback_data=f"svc_pick:{sub_category_id}:{s.id}", style="success",
+            text=_text,
+            callback_data=f"svc_pick:{sub_category_id}:{s.id}", style="success", **_icon,
         )
     b.button(
         text="🔙 رجوع",

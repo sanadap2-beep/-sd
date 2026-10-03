@@ -8,6 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from services.i18n_service import I18nService
 
 from keyboards.style_utils import style_for_callback
+from keyboards.emoji_button import face
 
 
 # Kept as a public mapping for existing callers that validate section names.
@@ -141,15 +142,21 @@ def store_home_kb(
                 "whatsapp": "WhatsApp",
                 "wa": "WhatsApp",
             }.get(service.code.lower(), service_name)
+        _text, _icon = face(
+            service_name, service.emoji, getattr(service, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{service.emoji} {service_name}",
-            callback_data=f"num_svc:{service.code}", style="success",
+            text=_text,
+            callback_data=f"num_svc:{service.code}", style="success", **_icon,
         )
 
     for category in categories or []:
+        _text, _icon = face(
+            category.name_ar, category.emoji, getattr(category, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{category.emoji} {category.name_ar}",
-            callback_data=f"cat:{category.id}", style="success",
+            text=_text,
+            callback_data=f"cat:{category.id}", style="success", **_icon,
         )
 
     for key in SECTION_LABELS:
@@ -200,9 +207,12 @@ def store_section_servers_kb(
         margin_label = ""
         if s.margin_percent is not None:
             margin_label = f"  ({s.margin_percent}%)"
+        _text, _icon = face(
+            f"{s.name_ar}{margin_label}", s.emoji, getattr(s, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{s.emoji} {s.name_ar}{margin_label}",
-            callback_data=f"store_svc_pick:{section}:{s.id}", style="success",
+            text=_text,
+            callback_data=f"store_svc_pick:{section}:{s.id}", style="success", **_icon,
         )
     b.button(
         text=I18nService.t("store_back", language),

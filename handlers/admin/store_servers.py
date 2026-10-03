@@ -27,6 +27,7 @@ from keyboards.admin import (
 )
 from services.dynamic_service import DynamicService
 from services.store_server_service import StoreServerService
+from keyboards.emoji_button import extract_custom_emoji
 from states.states import AdminStoreServerStates
 
 router = Router(name="admin_store_servers")
@@ -159,10 +160,13 @@ async def ssvc_name_received(message: Message, state: FSMContext):
 
 @router.message(AdminStoreServerStates.waiting_emoji)
 async def ssvc_emoji_received(message: Message, state: FSMContext):
-    emoji = message.text.strip()
+    emoji = (message.text or "").strip()
+    custom_emoji_id = extract_custom_emoji(message)
     if emoji == "-":
         emoji = "🖥"
-    await state.update_data(ssvc_emoji=emoji)
+    if custom_emoji_id and len(emoji) > 8:
+        emoji = emoji[:8]
+    await state.update_data(ssvc_emoji=emoji, ssvc_custom_emoji=custom_emoji_id)
     await message.answer(
         "🔌 <b>اختر نوع المزود:</b>\n"
         "• مزود متجر/رشق/ألعاب (API)\n"
@@ -251,6 +255,7 @@ async def ssvc_margin_received(message: Message, state: FSMContext, session):
         provider_value=provider_value,
         api_provider_id=int(api_provider_id) if api_provider_id else None,
         emoji=emoji,
+        custom_emoji_id=data.get("ssvc_custom_emoji"),
         margin_percent=margin,
     )
     await state.clear()
@@ -353,7 +358,13 @@ async def ssvc_edit_value_received(message: Message, state: FSMContext, session)
     if field == "name" and value:
         await StoreServerService.update(session, server_id, name_ar=value)
     elif field == "emoji":
-        await StoreServerService.update(session, server_id, emoji="🖥" if value == "-" else value)
+        custom_emoji_id = extract_custom_emoji(message)
+        await StoreServerService.update(
+            session,
+            server_id,
+            emoji="🖥" if value == "-" else value,
+            custom_emoji_id=custom_emoji_id,
+        )
     elif field == "description":
         await StoreServerService.update(session, server_id, description=None if value == "-" else value)
     elif field == "margin":

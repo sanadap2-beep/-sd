@@ -7,6 +7,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import settings
 
+from keyboards.emoji_button import face, face_or
+
 
 # ══════════════ اللوحة الرئيسية ══════════════
 
@@ -362,9 +364,14 @@ def admin_categories_list_kb(categories) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for cat in categories:
         status = "🟢" if cat.is_active else "⚪"
+        _text, _icon = face_or(
+            f"{status} {cat.emoji} {cat.name_ar}",
+            f"{status} {cat.name_ar}",
+            getattr(cat, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"{status} {cat.emoji} {cat.name_ar}",
-            callback_data=f"admin:cat_view:{cat.id}",
+            text=_text,
+            callback_data=f"admin:cat_view:{cat.id}", **_icon,
         )
     b.button(text="➕ إضافة قسم جديد", callback_data="admin:cat_add", style="success")
     b.button(text="🔙 رجوع", callback_data="admin:main")
@@ -394,9 +401,14 @@ def admin_subcats_list_kb(category_id: int, sub_categories) -> InlineKeyboardMar
     b = InlineKeyboardBuilder()
     for sub in sub_categories:
         status = "🟢" if sub.is_active else "⚪"
+        _text, _icon = face_or(
+            f"{status} {sub.emoji} {sub.name_ar}",
+            f"{status} {sub.name_ar}",
+            getattr(sub, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"{status} {sub.emoji} {sub.name_ar}",
-            callback_data=f"admin:subcat_view:{sub.id}",
+            text=_text,
+            callback_data=f"admin:subcat_view:{sub.id}", **_icon,
         )
     b.button(text="➕ إضافة قسم فرعي", callback_data=f"admin:subcat_add:{category_id}", style="success")
     b.button(text="🔙 رجوع", callback_data=f"admin:cat_view:{category_id}")
@@ -633,9 +645,14 @@ def admin_number_services_kb(services) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for svc in services:
         status = "🟢" if svc.is_active else "⚪"
+        _text, _icon = face_or(
+            f"{status} {svc.emoji} {svc.name_ar}",
+            f"{status} {svc.name_ar}",
+            getattr(svc, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"{status} {svc.emoji} {svc.name_ar}",
-            callback_data=f"admin:nsvc_view:{svc.id}",
+            text=_text,
+            callback_data=f"admin:nsvc_view:{svc.id}", **_icon,
         )
     b.button(text="➕ إضافة خدمة أرقام", callback_data="admin:nsvc_add", style="success")
     b.button(text="📡 قناة التوفر المتقطع", callback_data="admin:nsvc_avail")
@@ -684,9 +701,12 @@ def admin_nsvc_avail_services_kb(services) -> InlineKeyboardMarkup:
     """اختيار خدمة الأرقام التي ستُبنى لها اللوحة."""
     b = InlineKeyboardBuilder()
     for svc in services:
+        _text, _icon = face(
+            svc.name_ar, svc.emoji, getattr(svc, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{svc.emoji} {svc.name_ar}",
-            callback_data=f"admin:nsvc_avail_svc:{svc.code}",
+            text=_text,
+            callback_data=f"admin:nsvc_avail_svc:{svc.code}", **_icon,
         )
     b.button(text="🔙 رجوع", callback_data="admin:nsvc_avail")
     b.adjust(1)
@@ -835,9 +855,14 @@ def admin_store_servers_kb(servers, scope_counts=None, page: int = 0) -> InlineK
     for server in servers[start : start + STORE_SERVERS_PER_PAGE]:
         status = "🟢" if server.is_active else "⚪"
         kind = "🔌" if server.provider_kind == "api" else "📱"
+        _text, _icon = face_or(
+            _clip_label(f"{status} {kind} {server.emoji} {server.name_ar}"),
+            _clip_label(f"{status} {kind} {server.name_ar}"),
+            getattr(server, "custom_emoji_id", None),
+        )
         b.button(
-            text=_clip_label(f"{status} {kind} {server.emoji} {server.name_ar}"),
-            callback_data=f"admin:ssvc_server:{server.id}",
+            text=_text,
+            callback_data=f"admin:ssvc_server:{server.id}", **_icon,
         )
     rows = [1] * min(len(servers) - start, STORE_SERVERS_PER_PAGE)
     nav = []
