@@ -19,6 +19,7 @@ import logging
 from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from database.models import Category, Product, ProductPricingType, ProviderService, SubCategory
 from services.settings_service import SettingsService
@@ -88,7 +89,14 @@ class MarginService:
         if product.profit_margin_percent is not None and getattr(product, "margin_manual", False):
             return Decimal(str(product.profit_margin_percent)), "منتج"
 
-        sub = await session.get(SubCategory, product.sub_category_id)
+        # تحميل مسبق لـ ``category``: قراءة ``sub.category`` عبر
+        # AsyncSession تُطلق تحميلاً كسولاً (MissingGreenlet).
+        result = await session.execute(
+            select(SubCategory)
+            .options(selectinload(SubCategory.category))
+            .where(SubCategory.id == product.sub_category_id)
+        )
+        sub = result.scalar_one_or_none()
         if sub is not None:
             for row in await cls._sub_chain(session, sub):
                 if row.profit_margin_percent is not None:
