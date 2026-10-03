@@ -111,7 +111,12 @@ def _fake_catalog(products: list[dict], providers: list[dict] | None = None):
 async def _sections(session) -> dict[str, SubCategory]:
     category = (
         await session.execute(
-            select(Category).where(Category.type == CategoryType.SUBSCRIPTIONS)
+            select(Category).where(
+                Category.type == CategoryType.SUBSCRIPTIONS,
+                # البذرة تنشئ أكثر من قسم اشتراكات (AI/VPN/الشاشات/الرقمية)؛
+                # المزامنة تعمل على «قسم الاشتراكات الرقمية» تحديداً.
+                Category.name_ar == "قسم الاشتراكات الرقمية",
+            )
         )
     ).scalar_one()
     result = await session.execute(

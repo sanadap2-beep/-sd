@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import Category, SubCategory, CategoryType
+from keyboards.emoji_button import face_or
 
 
 # ══════════════ قائمة الأقسام الرئيسية ══════════════
@@ -20,9 +21,14 @@ def categories_list_kb(
     for cat in categories:
         status_icon = "🟢" if cat.is_active else "🔴"
         subs_count = len(cat.sub_categories) if cat.sub_categories else 0
+        _text, _icon = face_or(
+            f"{status_icon} {cat.emoji} {cat.name_ar} ({subs_count})",
+            f"{status_icon} {cat.name_ar} ({subs_count})",
+            getattr(cat, "custom_emoji_id", None),
+        )
         b.button(
-            text=(f"{status_icon} {cat.emoji} {cat.name_ar} ({subs_count})"),
-            callback_data=f"admin:cat_view:{cat.id}",
+            text=_text,
+            callback_data=f"admin:cat_view:{cat.id}", **_icon,
         )
 
     b.button(
@@ -309,9 +315,14 @@ def sub_categories_list_kb(
     for sub in sub_categories:
         status_icon = "🟢" if sub.is_active else "🔴"
         products_count = len(sub.products) if sub.products else 0
+        _text, _icon = face_or(
+            f"{status_icon} {sub.emoji} {sub.name_ar} ({products_count} منتج)",
+            f"{status_icon} {sub.name_ar} ({products_count} منتج)",
+            getattr(sub, "custom_emoji_id", None),
+        )
         b.button(
-            text=(f"{status_icon} {sub.emoji} {sub.name_ar} ({products_count} منتج)"),
-            callback_data=f"admin:subcat_view:{sub.id}",
+            text=_text,
+            callback_data=f"admin:subcat_view:{sub.id}", **_icon,
         )
 
     b.button(
@@ -353,9 +364,14 @@ def sub_category_detail_kb(
 
     for child, product_count in children or []:
         status_icon = "🟢" if child.is_active else "🔴"
+        _text, _icon = face_or(
+            f"└ {status_icon} {child.emoji or ''} {child.name_ar} ({product_count})",
+            f"└ {status_icon} {child.name_ar} ({product_count})",
+            getattr(child, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"└ {status_icon} {child.emoji or ''} {child.name_ar} ({product_count})",
-            callback_data=f"admin:subcat_view:{child.id}",
+            text=_text,
+            callback_data=f"admin:subcat_view:{child.id}", **_icon,
         )
     has_children = bool(children)
     if sub_category.parent_sub_category_id is None:

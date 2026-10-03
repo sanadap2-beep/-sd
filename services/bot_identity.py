@@ -114,13 +114,23 @@ def number_buy_start_link(username: str, service_code: str, country_id: int) -> 
     if not clean:
         return ""
     service = re.sub(r"[^A-Za-z0-9_\-]", "_", str(service_code or "")).strip("_")
+    raw = str(country_id if country_id is not None else "").strip()
+    if not service or not raw:
+        return ""
     try:
-        country = str(int(country_id))
+        # المسار الطبيعي: الرقم الداخلي للدولة (أقصر وأضمن من الرمز).
+        country = str(int(raw))
     except (TypeError, ValueError):
+        # لا رقم داخلي (دولة من المزوّد بلا صفّ مطابق) → نمرّر الرمز
+        # بعد تنظيفه؛ معالج /start يفكّ الشيفرة بالحالتين. بدون هذا
+        # السطر تختفي لوحة التوفر بالكامل عند غياب cid.
+        country = re.sub(r"[^A-Za-z0-9_\-]", "_", raw).strip("_")
+    if not country:
         return ""
-    if not service or not country:
+    payload = f"buy_{service}__{country}"
+    if len(payload.encode("utf-8")) > 64:  # حد تيليجرام لبايلود start
         return ""
-    return f"https://t.me/{clean}?start=buy_{service}__{country}"
+    return f"https://t.me/{clean}?start={payload}"
 
 
 def referral_share_url(link: str, share_text: str = "") -> str:

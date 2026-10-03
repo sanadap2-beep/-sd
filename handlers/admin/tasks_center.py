@@ -21,6 +21,7 @@ from database.models import (
     TaskSubmission,
     TaskType,
     TaskVerification,
+    User,
 )
 from filters.admin_filter import IsAdmin
 from keyboards.admin import admin_main_kb
@@ -400,7 +401,9 @@ async def submission_view(callback: CallbackQuery, session):
     if sub is None:
         await callback.answer("غير موجود.", show_alert=True)
         return
-    user = await session.get(type(sub.user), sub.user_id)
+    # لا نقرأ ``sub.user``: العلاقة غير محمّلة ولمسُها عبر AsyncSession
+    # يُطلق تحميلاً كسولاً (MissingGreenlet) — نجلب المستخدم باستعلام مباشر.
+    user = await session.get(User, sub.user_id)
     task = await session.get(Task, sub.task_id)
     rows = [
         [

@@ -32,6 +32,7 @@ from database.models import (
 )
 from services.audit_service import AuditService
 from services.dynamic_service import DynamicService
+from keyboards.emoji_button import extract_custom_emoji
 from services.product_service import ProductService
 from states.states import (
     AdminCategoryStates,
@@ -337,12 +338,16 @@ async def cat_custom_emoji_received(
     session,
     db_user,
 ):
-    """استقبال إيموجي مخصص."""
-    emoji = message.text.strip()
+    """استقبال إيموجي (عادي أو إيموجي تيليجرام المميز)."""
+    emoji = (message.text or "").strip()
+    custom_emoji_id = extract_custom_emoji(message)
 
-    if len(emoji) > 8:
+    if not custom_emoji_id and len(emoji) > 8:
         await message.answer("⚠️ إيموجي واحد فقط من فضلك.")
         return
+    if custom_emoji_id and len(emoji) > 8:
+        # تيليجرام يرسل الإيموجي البديل كنص — نتجاهله ونعتمد الأيقونة المميزة.
+        emoji = emoji[:8]
 
     data = await state.get_data()
 
@@ -352,6 +357,7 @@ async def cat_custom_emoji_received(
             name_ar=data["name"],
             emoji=emoji,
             category_type=CategoryType(data["category_type"]),
+            custom_emoji_id=custom_emoji_id,
         )
     except Exception as e:
         logger.error(f"فشل إنشاء قسم: {e}")
@@ -391,13 +397,63 @@ async def cat_view(callback: CallbackQuery, session):
         await callback.answer("⚠️ القسم غير موجود", show_alert=True)
         return
 
-    await _show_category_details(callback.message, category, edit=True)
+    await _show_category_details(callback.message, category, edit=True, session=session)
+
+
+async def category_counts(session, category) -> tuple[int, int]:
+    """(عدد الأقسام الفرعية، عدد النشط منها) — باستعلام صريح.
+
+    ``category.sub_categories`` علاقة: قراءتها عبر AsyncSession بعد
+    ``session.get`` أو ``session.refresh`` تُطلق تحميلاً كسولاً وترمي
+    MissingGreenlet. العدّاد الصريح يعمل دائماً وبلا IO خفي.
+    """
+    if session is None:
+        subs = list(category.sub_categories or [])
+        return len(subs), sum(1 for s in subs if s.is_active)
+    total = (
+        await session.execute(
+            select(func.count(SubCategory.id)).where(SubCategory.category_id == category.id)
+        )
+    ).scalar_one()
+    active = (
+        await session.execute(
+            select(func.count(SubCategory.id)).where(
+                SubCategory.category_id == category.id,
+                SubCategory.is_active.is_(True),
+            )
+        )
+    ).scalar_one()
+    return int(total or 0), int(active or 0)
+
+
+async def subcategory_counts(session, sub) -> tuple[int, int]:
+    """(عدد المنتجات، عدد النشط منها) داخل قسم فرعي — باستعلام صريح."""
+    from database.models import ProductStatus
+
+    if session is None:
+        products = list(sub.products or [])
+        return len(products), sum(1 for p in products if p.status == ProductStatus.ACTIVE)
+    total = (
+        await session.execute(
+            select(func.count(Product.id)).where(Product.sub_category_id == sub.id)
+        )
+    ).scalar_one()
+    active = (
+        await session.execute(
+            select(func.count(Product.id)).where(
+                Product.sub_category_id == sub.id,
+                Product.status == ProductStatus.ACTIVE,
+            )
+        )
+    ).scalar_one()
+    return int(total or 0), int(active or 0)
 
 
 async def _show_category_details(
     message,
     category: Category,
     edit: bool = True,
+    session=None,
 ):
     """يعرض تفاصيل قسم."""
     status = "🟢 مفعّل" if category.is_active else "🔴 معطّل"
@@ -415,11 +471,7 @@ async def _show_category_details(
     }
     type_label = type_labels.get(category.type.value, category.type.value)
 
-    subs_count = len(category.sub_categories) if category.sub_categories else 0
-
-    active_subs = 0
-    if category.sub_categories:
-        active_subs = sum(1 for s in category.sub_categories if s.is_active)
+    subs_count, active_subs = await category_counts(session, category)
 
     margin_text = (
         f"{category.profit_margin_percent}% (خاص بالقسم)"
@@ -460,7 +512,7 @@ async def _show_category_details(
 async def cat_toggle(callback: CallbackQuery, session, db_user):
     """يبدل حالة قسم رئيسي."""
     cat_id = int(callback.data.split(":")[2])
-    category = await session.get(Category, cat_id)
+    category = await DynamicService.get_category(session, cat_id)
 
     if not category:
         await callback.answer("⚠️ غير موجود", show_alert=True)
@@ -481,8 +533,7 @@ async def cat_toggle(callback: CallbackQuery, session, db_user):
     status_text = "✅ تم تفعيل" if category.is_active else "❌ تم تعطيل"
     await callback.answer(f"{status_text} القسم")
 
-    await session.refresh(category)
-    await _show_category_details(callback.message, category, edit=True)
+    await _show_category_details(callback.message, category, edit=True, session=session)
 
 
 # ══════════════════════════════════════════════
@@ -504,7 +555,8 @@ async def cat_edit_start(callback: CallbackQuery, state: FSMContext):
 
     field_prompts = {
         "name": "📝 أرسل الاسم الجديد للقسم:",
-        "emoji": "🎨 أرسل الإيموجي الجديد:",
+        "emoji": ("🎨 أرسل الإيموجي الجديد:\n"
+                 "(إيموجي عادي أو إيموجي تيليجرام المميز)"),
         "sort": ("🔢 أرسل رقم الترتيب الجديد (الأصغر يظهر أولاً):"),
         "desc": "📝 أرسل شرح القسم (يظهر للزبون عند فتح القسم):\nأرسل <b>مسح</b> لإزالة الشرح:",
     }
@@ -535,7 +587,10 @@ async def cat_edit_value_received(
         await state.clear()
         return
 
-    category = await session.get(Category, cat_id)
+    # ``DynamicService.get_category`` يحمّل ``sub_categories`` مسبقاً: شاشة
+    # التفاصيل تعرض عدد الأقسام الفرعية، وتحميلها كسولاً بعد الحفظ يرمي
+    # MissingGreenlet داخل AsyncSession.
+    category = await DynamicService.get_category(session, cat_id)
     if not category:
         await message.answer("⚠️ القسم غير موجود.")
         await state.clear()
@@ -552,11 +607,15 @@ async def cat_edit_value_received(
         category.name_ar = value
 
     elif field == "emoji":
-        if len(value) > 8:
+        custom_emoji_id = extract_custom_emoji(message)
+        if not custom_emoji_id and len(value) > 8:
             await message.answer("⚠️ إيموجي واحد فقط.")
             return
+        if custom_emoji_id and len(value) > 8:
+            value = value[:8]
         old_value = category.emoji
         category.emoji = value
+        category.custom_emoji_id = custom_emoji_id
 
     elif field == "sort":
         try:
@@ -592,8 +651,10 @@ async def cat_edit_value_received(
     await message.answer(f"✅ تم تحديث {field}.")
     await state.clear()
 
-    await session.refresh(category)
-    await _show_category_details(message, category, edit=False)
+    # ``refresh`` يُبطل العلاقات المحمّلة، فنعيد الجلب بالتحميل المسبق
+    # بدلاً من لمس ``category.sub_categories`` بعد التحديث.
+    fresh = await DynamicService.get_category(session, cat_id)
+    await _show_category_details(message, fresh or category, edit=False, session=session)
 
 
 # ══════════════════════════════════════════════
@@ -611,7 +672,7 @@ async def cat_delete_confirm(callback: CallbackQuery, session):
         await callback.answer("⚠️ غير موجود", show_alert=True)
         return
 
-    subs_count = len(category.sub_categories) if category.sub_categories else 0
+    subs_count, _active_subs = await category_counts(session, category)
 
     text = f"⚠️ <b>تأكيد حذف القسم</b>\n\nسيتم حذف:\n• القسم: {category.emoji} {category.name_ar}\n"
     if subs_count > 0:
@@ -931,14 +992,17 @@ async def subcat_emoji_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminSubCategoryStates.waiting_emoji)
 async def subcat_custom_emoji_received(message: Message, state: FSMContext):
-    """استقبال إيموجي مخصص."""
-    emoji = message.text.strip()
+    """استقبال إيموجي (عادي أو إيموجي تيليجرام المميز)."""
+    emoji = (message.text or "").strip()
+    custom_emoji_id = extract_custom_emoji(message)
 
-    if len(emoji) > 8:
+    if not custom_emoji_id and len(emoji) > 8:
         await message.answer("⚠️ إيموجي واحد فقط.")
         return
+    if custom_emoji_id and len(emoji) > 8:
+        emoji = emoji[:8]
 
-    await state.update_data(emoji=emoji)
+    await state.update_data(emoji=emoji, custom_emoji_id=custom_emoji_id)
 
     await message.answer(
         f"✅ الإيموجي: {emoji}\n\n"
@@ -1058,6 +1122,7 @@ async def _create_sub_category(
             parent_sub_category_id=parent_sub_id,
             name_ar=data["name"],
             emoji=data.get("emoji", "📱"),
+            custom_emoji_id=data.get("custom_emoji_id"),
             description=data.get("description"),
             image_file_id=data.get("image_file_id"),
             image_url=data.get("image_url"),
@@ -1106,7 +1171,7 @@ async def _create_sub_category(
 
     # عند إنشاء قسم داخلي نعيد الأدمن لصفحة التطبيق ليرى القسم الجديد.
     if parent_sub_id:
-        parent = await session.get(SubCategory, parent_sub_id)
+        parent = await DynamicService.get_sub_category(session, parent_sub_id)
         if parent is not None:
             await _show_sub_category_details(message, parent, session, edit=False)
 
@@ -1142,12 +1207,9 @@ async def _show_sub_category_details(
     """
     status = "🟢 مفعّل" if sub.is_active else "🔴 معطّل"
 
-    products_count = len(sub.products) if sub.products else 0
-    active_products = 0
-    if sub.products:
-        from database.models import ProductStatus
-
-        active_products = sum(1 for p in sub.products if p.status == ProductStatus.ACTIVE)
+    # عدّاد صريح: ``sub.products`` علاقة، وقراءتها عبر AsyncSession بعد
+    # ``session.get``/``refresh`` تُطلق تحميلاً كسولاً (MissingGreenlet).
+    products_count, active_products = await subcategory_counts(session, sub)
 
     children = await DynamicService.get_all_child_sections(session, sub.id)
     child_counts: dict[int, int] = {}
@@ -1212,7 +1274,7 @@ async def _show_sub_category_details(
 async def subcat_toggle(callback: CallbackQuery, session, db_user):
     """يبدل حالة قسم فرعي."""
     sub_id = int(callback.data.split(":")[2])
-    sub = await session.get(SubCategory, sub_id)
+    sub = await DynamicService.get_sub_category(session, sub_id)
 
     if not sub:
         await callback.answer("⚠️ غير موجود", show_alert=True)
@@ -1233,7 +1295,6 @@ async def subcat_toggle(callback: CallbackQuery, session, db_user):
     status_text = "✅ تم تفعيل" if sub.is_active else "❌ تم تعطيل"
     await callback.answer(f"{status_text} القسم الفرعي")
 
-    await session.refresh(sub)
     await _show_sub_category_details(callback.message, sub, session, edit=True)
 
 
@@ -1287,7 +1348,7 @@ async def subcat_edit_image_photo(
     if field != "image":
         return
 
-    sub = await session.get(SubCategory, sub_id)
+    sub = await DynamicService.get_sub_category(session, sub_id)
     if not sub:
         await message.answer("⚠️ القسم غير موجود.")
         await state.clear()
@@ -1312,7 +1373,6 @@ async def subcat_edit_image_photo(
     await message.answer("✅ تم تحديث الصورة.")
     await state.clear()
 
-    await session.refresh(sub)
     await _show_sub_category_details(message, sub, session, edit=False)
 
 
@@ -1333,7 +1393,7 @@ async def subcat_edit_value_received(
         await state.clear()
         return
 
-    sub = await session.get(SubCategory, sub_id)
+    sub = await DynamicService.get_sub_category(session, sub_id)
     if not sub:
         await message.answer("⚠️ القسم غير موجود.")
         await state.clear()
@@ -1350,11 +1410,15 @@ async def subcat_edit_value_received(
         sub.name_ar = value
 
     elif field == "emoji":
-        if len(value) > 8:
+        custom_emoji_id = extract_custom_emoji(message)
+        if not custom_emoji_id and len(value) > 8:
             await message.answer("⚠️ إيموجي واحد فقط.")
             return
+        if custom_emoji_id and len(value) > 8:
+            value = value[:8]
         old_value = sub.emoji
         sub.emoji = value
+        sub.custom_emoji_id = custom_emoji_id
 
     elif field == "desc":
         if value == "-":
@@ -1408,7 +1472,6 @@ async def subcat_edit_value_received(
     await message.answer(f"✅ تم تحديث {field}.")
     await state.clear()
 
-    await session.refresh(sub)
     await _show_sub_category_details(message, sub, session, edit=False)
 
 
@@ -1425,7 +1488,7 @@ async def subcat_delete_confirm(callback: CallbackQuery, session):
         await callback.answer("⚠️ غير موجود", show_alert=True)
         return
 
-    products_count = len(sub.products) if sub.products else 0
+    products_count, _active_products = await subcategory_counts(session, sub)
     children = await DynamicService.get_all_child_sections(session, sub.id)
 
     text = f"⚠️ <b>تأكيد حذف القسم الفرعي</b>\n\nسيتم حذف:\n• القسم: {sub.emoji} {sub.name_ar}\n"
@@ -1472,7 +1535,7 @@ async def subcat_delete(callback: CallbackQuery, session, db_user):
 
     # حذف قسم داخلي؟ نعيد الأدمن لصفحة التطبيق الذي كان يحويه.
     if parent_sub_id is not None:
-        parent = await session.get(SubCategory, parent_sub_id)
+        parent = await DynamicService.get_sub_category(session, parent_sub_id)
         if parent is not None:
             await _show_sub_category_details(callback.message, parent, session, edit=False)
             return

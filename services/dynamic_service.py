@@ -70,6 +70,7 @@ class DynamicService:
         emoji: str,
         category_type: CategoryType,
         sort_order: int = 0,
+        custom_emoji_id: str | None = None,
     ) -> Category:
         category = Category(
             name_ar=name_ar,
@@ -77,6 +78,7 @@ class DynamicService:
             type=category_type,
             sort_order=sort_order,
             is_active=True,
+            custom_emoji_id=custom_emoji_id,
         )
         session.add(category)
         await session.commit()
@@ -333,6 +335,7 @@ class DynamicService:
         sort_order: int = 0,
         parent_sub_category_id: int | None = None,
         kind_key: str | None = None,
+        custom_emoji_id: str | None = None,
     ) -> SubCategory:
         sub = SubCategory(
             category_id=category_id,
@@ -340,6 +343,7 @@ class DynamicService:
             kind_key=kind_key,
             name_ar=name_ar,
             emoji=emoji,
+            custom_emoji_id=custom_emoji_id,
             description=description,
             sort_order=sort_order,
             is_active=True,
@@ -629,11 +633,13 @@ class DynamicService:
         smspool_code: str | None = None,
         grizzly_code: str | None = None,
         sort_order: int = 0,
+        custom_emoji_id: str | None = None,
     ) -> NumberService:
         svc = NumberService(
             code=code,
             name_ar=name_ar,
             emoji=emoji,
+            custom_emoji_id=custom_emoji_id,
             fivesim_code=fivesim_code,
             herosms_code=herosms_code,
             sms_activate_code=sms_activate_code,

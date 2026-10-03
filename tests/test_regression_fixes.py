@@ -225,7 +225,8 @@ async def test_smart_number_routing_prefers_reliable_provider_over_slightly_chea
         assert result.provider == ProviderName.SMSHUB
 
 
-def test_main_menu_is_compact_and_moves_language_currency_to_account():
+def test_main_menu_wide_sections_then_square_buttons_and_moves_language_currency_to_account():
+    """الشاشة الأولى: ثلاثة أزرار عريضة (أرقام/متجر/سوق) ثم مربّعات زوجية."""
     from keyboards.main_menu import build_main_menu
     from services.i18n_service import I18nService
     from services.main_button_service import MainMenuButton
@@ -243,30 +244,48 @@ def test_main_menu_is_compact_and_moves_language_currency_to_account():
     rows = keyboard.inline_keyboard
     buttons = [button for row in rows for button in row]
 
-    assert [len(row) for row in rows] == [1, 2, 2, 1, 2]
-    assert [button.callback_data for button in buttons] == [
+    # ثلاثة أزرار عريضة (كل واحد بصف كامل) ثم صفوف من زرين.
+    assert [len(row) for row in rows] == [1, 1, 1, 2, 2, 2, 1]
+    assert [button.callback_data for row in rows[:3] for button in row] == [
+        "num_hub",
         "store:home",
-        "menu:account",
+        "market:home",
+    ]
+    assert [button.callback_data for button in buttons] == [
+        "num_hub",
+        "store:home",
+        "market:home",
         "menu:deposit",
+        "menu:support",
+        "menu:account",
         "menu:referral",
         "menu:transfer",
         "extras:home",
-        "menu:support",
         "info:terms",
     ]
     assert [button.text for button in buttons] == [
+        I18nService.t("menu_numbers_hub", "en"),
         I18nService.t("menu_full_store", "en"),
-        I18nService.t("menu_account_with_balance", "en", balance="$12.50"),
+        I18nService.t("menu_marketplace", "en"),
         I18nService.t("menu_deposit", "en"),
+        I18nService.t("menu_support", "en"),
+        I18nService.t("menu_account_with_balance", "en", balance="$12.50"),
         I18nService.t("menu_referral", "en"),
         I18nService.t("menu_transfer", "en"),
         I18nService.t("menu_extras", "en"),
-        I18nService.t("menu_support", "en"),
         I18nService.t("menu_terms", "en"),
     ]
     assert "menu:language" not in [button.callback_data for button in buttons]
     assert "menu:currency" not in [button.callback_data for button in buttons]
     assert all(button.url is None and button.web_app is None for button in buttons)
+
+    # إطفاء سوق المستخدمين من لوحة الأدمن يُسقط زره العريض فقط.
+    without_market = build_main_menu(
+        number_services=[], categories=[], balance_usd="12.50", language="en", show_marketplace=False
+    )
+    market_callbacks = [b.callback_data for row in without_market.inline_keyboard for b in row]
+    assert "market:home" not in market_callbacks
+    assert market_callbacks[:2] == ["num_hub", "store:home"]
 
 
 def test_main_menu_moves_language_and_currency_into_account_page():
@@ -384,7 +403,10 @@ async def test_extras_page_is_grouped_into_three_sections_and_keeps_dynamic_butt
         "Marketplace & ads (4)",
         "Advanced tools & services (9)",
     ]
-    assert "🧩 Other bot services & features" in callback.message.text
+    # عنوان الصفحة هو عنوان القسم نفسه من خدمة الترجمة (لا نص ثابت قديم).
+    from services.i18n_service import I18nService
+
+    assert callback.message.text.startswith(I18nService.t("menu_extras", "en"))
     assert labels[-1] == "🔙 Back to main menu"
 
     # Dynamic/admin shortcuts are kept inside the Advanced tools section.

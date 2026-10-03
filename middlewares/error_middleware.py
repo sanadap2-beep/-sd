@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import logging
 import traceback
+from pathlib import Path
 
 from aiogram import BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest
@@ -58,6 +59,31 @@ def _is_benign_telegram_error(exc: Exception) -> bool:
     return any(marker.lower() in message for marker in _BENIGN_TELEGRAM_ERRORS)
 
 
+def _project_root() -> str:
+    return str(Path(__file__).resolve().parents[1])
+
+
+def app_frames(tb: str, limit: int = 6) -> list[str]:
+    """أسطر التتبّع التي تخصّ مشروعنا فقط (لا مكتبات خارجية).
+
+    تقرير الإدارة كان يعرض آخر 2000 حرف من التتبّع، فتظهر فقط دوال
+    SQLAlchemy وتُقطع الإطارات التي تبيّن المعالج والسطر المُسبب. هذه
+    الدالة تعرض إطارات المشروع أولاً ليكون الإصلاح فورياً.
+    """
+    root = _project_root()
+    frames: list[str] = []
+    for line in (tb or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("File "):
+            continue
+        if root not in stripped or "site-packages" in stripped:
+            continue
+        compact = stripped.replace(root + "/", "")
+        if compact not in frames:
+            frames.append(compact)
+    return frames[-limit:]
+
+
 def format_admin_error_report(
     exc: BaseException,
     *,
@@ -69,9 +95,18 @@ def format_admin_error_report(
     tb: str = "",
 ) -> str:
     diagnosis = diagnose(exc, tb, context=f"{event_name} {callback_data or text or ''}")
+    frames = app_frames(tb)
+    frames_block = (
+        "📍 <b>المكان في كودنا:</b>\n"
+        + "\n".join(html.escape(frame) for frame in frames)
+        + "\n\n"
+        if frames
+        else ""
+    )
     return (
         f"{diagnosis.as_html()}\n\n"
         "━━━━━━━━━━━━\n"
+        f"{frames_block}"
         f"الحدث: <code>{html.escape(str(event_name))}</code>\n"
         f"المستخدم: <code>{html.escape(str(user_id))}</code> "
         f"@{html.escape(username or '-')}\n"

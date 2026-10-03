@@ -1161,6 +1161,7 @@ async def create_product_from_provider_service(callback: CallbackQuery, session)
     # والاسم الأصلي يبقى في ProviderService.name للمطابقة مع المزود.
     # (كان يُنسخ الاسم الإنجليزي هنا، فيظهر «PUBG Mobile 60 UC» للزبون
     # رغم أن مسار «الخدمات المسحوبة» ينشره «ببجي موبايل 60 UC».)
+    from services.provider_sync_service import _is_hyper_store_provider
     from services.service_localization_service import service_name_ar
 
     product = await DynamicService.create_product(
@@ -1179,7 +1180,7 @@ async def create_product_from_provider_service(callback: CallbackQuery, session)
         requires_link=service.requires_link,
         requires_player_id=service.requires_player_id,
         requires_quantity=service.requires_quantity,
-        display_type=(ProductDisplayType.PER_UNIT if _is_hyper_store_provider_from_raw(provider) else None),
+        display_type=(ProductDisplayType.PER_UNIT if _is_hyper_store_provider(provider) else None),
     )
     await callback.message.edit_text(
         "✅ <b>تم إنشاء المنتج تلقائياً من خدمة المزود</b>\n\n"

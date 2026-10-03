@@ -8,6 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from services.i18n_service import I18nService
 
 from keyboards.style_utils import style_for_callback
+from keyboards.emoji_button import face
 
 
 # Kept as a public mapping for existing callers that validate section names.
@@ -17,9 +18,11 @@ SECTION_LABELS = {
     "bestsellers": "🏆 الأكثر مبيعاً",
     "instant": "⚡ تسليم فوري",
     "cheap": "💸 أقل من 2$",
-    "games": "🎮 ألعاب",
-    "smm": "📈 سوشيال ميديا",
-    "apps": "📦 تطبيقات واشتراكات",
+    "smm": "🚀 الرشق",
+    "games": "🎮 شحن الألعاب",
+    "apps": "📱 شحن البرامج",
+    "balances": "💳 شحن الرصيد",
+    "subscriptions": "✨ الاشتراكات الرقمية",
 }
 
 
@@ -58,7 +61,8 @@ def store_home_kb(
 
     from services.button_customization_service import ButtonCustomizationService as BC
 
-    def _bc(action: str, default_label: str, style=None, web_app=None, url=None):
+    def _bc(action: str, default_label: str, style=None, web_app=None, url=None,
+            key: str | None = None, callback: str | None = None):
         mapping = {
             "num_hub": "store.numbers",
             "webapp": "store.webapp",
@@ -68,14 +72,18 @@ def store_home_kb(
         }
         if action.startswith("store:section:"):
             mapping[action] = f"store.{action.rsplit(':', 1)[-1]}"
-        key = mapping.get(action)
+        # ``key`` يسمح بتمرير مفتاح تخصيص صريح (مثلاً قسم حُلّ إلى فئة)،
+        # و``callback`` يسمح بتغيير بيانات الضغط مع الحفاظ على المفتاح.
+        key = key or mapping.get(action)
+        target = callback or action
         if not key:
-            btn = InlineKeyboardButton(text=default_label, callback_data=None if web_app or url else action,
+            btn = InlineKeyboardButton(text=default_label, callback_data=None if web_app or url else target,
                                        style=style, web_app=web_app, url=url)
             return btn
-        return BC.apply(key, default_label, None if web_app or url else action, style, url=url, web_app=web_app)
+        return BC.apply(key, default_label, None if web_app or url else target, style, url=url, web_app=web_app)
 
     if entries is not None:
+        primary_rows: list[list] = []
         section_rows: list[list] = []
         category_rows: list[list] = []
         url_rows: list[list] = []
@@ -85,25 +93,34 @@ def store_home_kb(
 
         for entry in entries:
             default_label = entry.label or I18nService.t("menu_numbers", language)
+            bc_key = getattr(entry, "bc_key", None)
+            is_primary = bool(getattr(entry, "is_primary", False))
             if entry.action == "num_hub":
-                num_hub_btn = _bc("num_hub", default_label, "success")
+                # داخل المتجر نعود إلى المتجر، ومن القائمة الرئيسية نعود إليها.
+                num_hub_btn = _bc("num_hub", default_label, "success", callback="num_hub:store")
             elif entry.action == "webapp":
                 if webapp_url:
                     webapp_btn = _bc("webapp", default_label or I18nService.t("store_webapp", language), "success",
                                      web_app=WebAppInfo(url=webapp_url))
             elif entry.is_url:
                 url_rows.append(_bc(entry.action, default_label, None, url=entry.action))
+            elif is_primary:
+                # الأقسام الخمسة الرئيسية (الرشق/الألعاب/البرامج/الرصيد/الاشتراكات)
+                # تظهر أولاً سواء حُلّت إلى فئة أو بقيت قسماً ذكياً.
+                primary_rows.append(_bc(entry.action, default_label, "success", key=bc_key))
             elif entry.action.startswith("cat:"):
-                category_rows.append(_bc(entry.action, default_label, "success"))
+                category_rows.append(_bc(entry.action, default_label, "success", key=bc_key))
             elif entry.action.startswith("store:section:"):
-                section_rows.append(_bc(entry.action, default_label, "success"))
+                section_rows.append(_bc(entry.action, default_label, "success", key=bc_key))
             else:
                 _style = style_for_callback(entry.action, default_label or "")
                 other_rows.append(_bc(entry.action, default_label, _style))
 
-        # التصميم الجديد: زر رئيسي عريض ← أقسام 2×2 ← منتجات/فئات 2×2 ← أدوات
+        # التصميم الجديد: زر الأرقام عريض ← الأقسام الرئيسية ← بقية الأقسام
+        # ← الفئات ← الأدوات.
         if num_hub_btn is not None:
             b.row(num_hub_btn)
+        _chunk(b, primary_rows, size=2)
         _chunk(b, section_rows, size=2)
         _chunk(b, category_rows, size=2)
         _chunk(b, other_rows if other_rows else [], size=2)
@@ -125,15 +142,21 @@ def store_home_kb(
                 "whatsapp": "WhatsApp",
                 "wa": "WhatsApp",
             }.get(service.code.lower(), service_name)
+        _text, _icon = face(
+            service_name, service.emoji, getattr(service, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{service.emoji} {service_name}",
-            callback_data=f"num_svc:{service.code}", style="success",
+            text=_text,
+            callback_data=f"num_svc:{service.code}", style="success", **_icon,
         )
 
     for category in categories or []:
+        _text, _icon = face(
+            category.name_ar, category.emoji, getattr(category, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{category.emoji} {category.name_ar}",
-            callback_data=f"cat:{category.id}", style="success",
+            text=_text,
+            callback_data=f"cat:{category.id}", style="success", **_icon,
         )
 
     for key in SECTION_LABELS:
@@ -157,6 +180,12 @@ def store_empty_section_kb(language: str = "ar") -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=I18nService.t("store_search", language),
+                    callback_data="menu:search", style="success",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text=I18nService.t("store_back", language),
@@ -184,9 +213,12 @@ def store_section_servers_kb(
         margin_label = ""
         if s.margin_percent is not None:
             margin_label = f"  ({s.margin_percent}%)"
+        _text, _icon = face(
+            f"{s.name_ar}{margin_label}", s.emoji, getattr(s, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{s.emoji} {s.name_ar}{margin_label}",
-            callback_data=f"store_svc_pick:{section}:{s.id}", style="success",
+            text=_text,
+            callback_data=f"store_svc_pick:{section}:{s.id}", style="success", **_icon,
         )
     b.button(
         text=I18nService.t("store_back", language),

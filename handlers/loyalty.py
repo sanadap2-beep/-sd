@@ -1,5 +1,6 @@
 """برنامج الولاء والمكافآت للمستخدمين."""
 
+import logging
 from datetime import date
 
 from aiogram import F, Router
@@ -12,6 +13,7 @@ from services.loyalty_service import LoyaltyError, LoyaltyService
 from services.i18n_service import I18nService
 
 router = Router(name="loyalty")
+logger = logging.getLogger(__name__)
 
 
 def _progress_bar(progress: int, required: int, size: int = 10) -> str:
@@ -54,8 +56,19 @@ async def _render_loyalty(target, session, db_user: User):
         multiplier=tier.points_multiplier,
         progress=progress_text,
     )
+    # 🔥 سلسلة الولاء: كم طلب باقٍ للعتبة القادمة (لا تُسقط الشاشة إن تعذّرت)
+    has_next_tier = False
+    try:
+        from services.loyalty_chain_service import LoyaltyChainService
+
+        chain = await LoyaltyChainService.progress(session, db_user.id)
+        text += LoyaltyChainService.render_progress(chain, language)
+        has_next_tier = bool(chain and chain.get("next_tier"))
+    except Exception:
+        logger.exception("تعذّر عرض سلسلة الولاء")
+
     min_redeem = await _min_redeem_points()
-    markup = loyalty_kb(points, can_claim, min_redeem)
+    markup = loyalty_kb(points, can_claim, min_redeem, show_shop=has_next_tier)
     if isinstance(target, CallbackQuery):
         await target.message.edit_text(text, reply_markup=markup)
     else:

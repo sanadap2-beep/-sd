@@ -275,6 +275,10 @@ class User(Base):
 
     joined_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # آخر تذكير أُرسل للمستخدم النائم («اشتقنا لك») — يمنع تكرار الرسالة.
+    dormant_reminder_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
 
     referrer: Mapped["User"] = relationship(remote_side=[id], backref="referrals")
 
@@ -493,6 +497,8 @@ class NumberService(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📱")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة الزر عند توفره.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     fivesim_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     herosms_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -528,6 +534,8 @@ class NumberServer(Base):
     provider: Mapped[str] = mapped_column(String(64), index=True)
     name_ar: Mapped[str] = mapped_column(String(96))
     emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر السيرفر.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # نسبة ربح السيرفر (تتجاوز هامش الخدمة/الدولة/المزود العام عند ضبطها).
     margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
@@ -572,6 +580,8 @@ class StoreServer(Base):
 
     name_ar: Mapped[str] = mapped_column(String(96))
     emoji: Mapped[str] = mapped_column(String(8), default="🖥")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر السيرفر.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     margin_percent: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
 
@@ -867,6 +877,8 @@ class Category(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📦")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر القسم عند توفره.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     type: Mapped[CategoryType] = mapped_column(SAEnum(CategoryType))
     # شرح القسم الذي يظهر للزبون عند فتحه (يُضبط من لوحة الأدمن).
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -905,6 +917,8 @@ class SubCategory(Base):
     kind_key: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📱")
+    # إيموجي Telegram Premium المميز: يُعرض كأيقونة زر القسم الفرعي.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -1129,6 +1143,11 @@ class CartItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, onupdate=func.now(), server_default=func.now()
+    )
+    # آخر تذكير أُرسل لصاحب السلة عن هذا العنصر. يُعاد التذكير فقط إن
+    # تغيّرت السلة بعد التذكير (updated_at أحدث) — تذكير واحد لكل سلة.
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
     )
 
     product: Mapped["Product"] = relationship(back_populates="cart_items")

@@ -3,6 +3,7 @@
 """
 
 from decimal import Decimal, InvalidOperation
+from html import escape
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
@@ -16,8 +17,10 @@ from states.states import (
     AdminOrderTimeoutStates,
     AdminSettingsStates,
     AdminWelcomeStates,
+    AdminBrandingStates,
 )
 from keyboards.admin import (
+    admin_branding_kb,
     admin_loyalty_settings_kb,
     admin_payment_settings_kb,
     admin_rates_kb,
@@ -382,6 +385,102 @@ async def set_welcome_received(
         message.text,
     )
     await message.answer("✅ تم تحديث رسالة الترحيب.")
+    await state.clear()
+
+
+# ══════════════ هوية المتجر والشاشة الأولى ══════════════
+
+
+@router.callback_query(F.data == "admin:branding")
+async def branding_menu(callback: CallbackQuery):
+    """تخصيص اسم المتجر ووصفه وميزات الشاشة الأولى."""
+    from services.branding_service import BrandingService
+
+    store_name = await BrandingService.store_name()
+    tagline = await BrandingService.tagline("ar")
+    features = await BrandingService.feature_lines("ar")
+    features_text = "\n".join(f"• {line}" for line in features)
+    await callback.message.edit_text(
+        "🏷 <b>هوية المتجر والشاشة الأولى</b>\n\n"
+        f"⚡ الاسم الحالي: <b>{escape(store_name)}</b>\n"
+        f"📝 الوصف الحالي: <b>{escape(tagline)}</b>\n\n"
+        f"<b>الميزات الظاهرة في الشاشة الأولى:</b>\n{escape(features_text)}\n\n"
+        "اختر ما تريد تعديله:",
+        reply_markup=admin_branding_kb(),
+    )
+
+
+@router.callback_query(F.data == "admin:set_store_name")
+async def set_store_name_start(callback: CallbackQuery, state: FSMContext):
+    from services.branding_service import BrandingService
+
+    current = await BrandingService.store_name()
+    await callback.message.edit_text(
+        f"🏷 اسم المتجر الحالي: <b>{escape(current)}</b>\n\n"
+        "أرسل الاسم الجديد (مثال: LUX STORE):",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminBrandingStates.waiting_store_name)
+
+
+@router.message(AdminBrandingStates.waiting_store_name)
+async def set_store_name_received(message: Message, state: FSMContext, session):
+    value = (message.text or "").strip()
+    if not value:
+        await message.answer("⚠️ الاسم لا يمكن أن يكون فارغاً.")
+        return
+    await SettingsService.set(session, "store_name", value[:64])
+    await message.answer(f"✅ تم تحديث اسم المتجر إلى: <b>{escape(value[:64])}</b>")
+    await state.clear()
+
+
+@router.callback_query(F.data == "admin:set_store_tagline")
+async def set_store_tagline_start(callback: CallbackQuery, state: FSMContext):
+    from services.branding_service import BrandingService
+
+    current = await BrandingService.tagline("ar")
+    await callback.message.edit_text(
+        f"📝 الوصف الحالي: <b>{escape(current)}</b>\n\n"
+        "أرسل الوصف الجديد الذي يظهر تحت اسم المتجر:",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminBrandingStates.waiting_store_tagline)
+
+
+@router.message(AdminBrandingStates.waiting_store_tagline)
+async def set_store_tagline_received(message: Message, state: FSMContext, session):
+    value = (message.text or "").strip()
+    if not value:
+        await message.answer("⚠️ الوصف لا يمكن أن يكون فارغاً.")
+        return
+    await SettingsService.set(session, "store_tagline", value[:200])
+    await message.answer("✅ تم تحديث وصف المتجر.")
+    await state.clear()
+
+
+@router.callback_query(F.data == "admin:set_menu_features")
+async def set_menu_features_start(callback: CallbackQuery, state: FSMContext):
+    from services.branding_service import BrandingService
+
+    current = "\n".join(await BrandingService.feature_lines("ar"))
+    await callback.message.edit_text(
+        "✨ ميزات الشاشة الأولى الحالية:\n\n"
+        f"<code>{escape(current)}</code>\n\n"
+        "أرسل الميزات جديدة — <b>سطر لكل ميزة</b> (بحد أقصى 6 أسطر):",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminBrandingStates.waiting_menu_features)
+
+
+@router.message(AdminBrandingStates.waiting_menu_features)
+async def set_menu_features_received(message: Message, state: FSMContext, session):
+    value = (message.text or "").strip()
+    lines = [line.strip() for line in value.splitlines() if line.strip()][:6]
+    if not lines:
+        await message.answer("⚠️ أرسل سطراً واحداً على الأقل.")
+        return
+    await SettingsService.set(session, "main_menu_features", "\n".join(lines))
+    await message.answer("✅ تم تحديث ميزات الشاشة الأولى.")
     await state.clear()
 
 

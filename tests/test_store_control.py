@@ -85,9 +85,11 @@ async def test_store_keyboard_uses_entries_and_hides_inactive():
     ]
     kb: InlineKeyboardMarkup = store_home_kb(entries=entries, webapp_url=None, language="ar")
     texts = [btn.text for row in kb.inline_keyboard for btn in row]
-    # العروض معطلة → تختفي، والأرقام مفعلة → تظهر
+    # العروض معطلة → تختفي، وأقسام المتجر المفعلة تظهر
     assert not any("العروض الخاصة" in (text or "") for text in texts)
-    assert any("الأرقام" in (text or "") for text in texts)
+    assert any("الرشق" in (text or "") for text in texts)
+    # الأرقام قسم مستقل في الشاشة الأولى، فلا يظهر داخل المتجر
+    assert not any("الأرقام" in (text or "") for text in texts)
     # زر الـ webapp لا يظهر بدون رابط
     assert not any("متجرك الكامل" in (text or "") for text in texts)
 

@@ -23,7 +23,6 @@ from services.feature_service import FeatureService
 from services.i18n_service import I18nService
 from services.store_discovery_service import StoreDiscoveryService
 from services.dynamic_service import DynamicService
-from providers.countries import get_active_number_services
 
 router = Router(name="store")
 
@@ -37,7 +36,6 @@ async def store_home(callback: CallbackQuery, session, db_user, state: FSMContex
         await callback.answer(I18nService.t("not_available", language), show_alert=True)
         return
 
-    number_services = await get_active_number_services(session)
     categories = await DynamicService.get_active_categories(session)
     overview = await StoreDiscoveryService.overview(session)
     counts = overview["type_counts"]
@@ -45,34 +43,25 @@ async def store_home(callback: CallbackQuery, session, db_user, state: FSMContex
         I18nService.t("menu_full_store", language),
         "",
         I18nService.t("store_choose_service", language),
-        I18nService.t("store_numbers_count", language, count=len(number_services)),
-        I18nService.t("store_games_count", language, count=counts.get("games", 0)),
         I18nService.t("store_smm_count", language, count=counts.get("smm", 0)),
+        I18nService.t("store_games_count", language, count=counts.get("games", 0)),
         I18nService.t("store_apps_count", language, count=counts.get("apps", 0)),
+        I18nService.t("store_balances_count", language, count=counts.get("balances", 0)),
+        I18nService.t("store_subscriptions_count", language, count=counts.get("subscriptions", 0)),
         I18nService.t("store_total_count", language, count=overview["total_products"]),
     ]
     # الأزرار تُبنى من التحكم المركزي بالأدمن: أي زر يُطفأ من
     # «🛍 التحكم بالمتجر» يختفي هنا فوراً، وأي قسم جديد يُضاف يظهر.
-    from services.store_section_service import StoreEntry, StoreSectionService
+    # الأقسام الخمسة (الرشق، شحن الألعاب، شحن البرامج، شحن الرصيد،
+    # الاشتراكات الرقمية) تُحَلّ إلى فئاتها الحقيقية إن وُجدت.
+    from services.store_section_service import StoreSectionService
 
     entries = [
         entry
         for entry in await StoreSectionService.list_entries(include_inactive=True)
         if entry.is_active
     ]
-    # الأقسام الديناميكية تظهر بعد الأقسام الذكية (حسب ترتيبها في الإدارة).
-    for category in categories:
-        entries.append(
-            StoreEntry(
-                key=f"cat:{category.id}",
-                label=f"{category.emoji} {category.name_ar}",
-                action=f"cat:{category.id}",
-                is_active=True,
-                sort_order=40 + min(max(category.sort_order, 0), 55),
-                is_builtin=True,
-            )
-        )
-    entries.sort(key=lambda item: (item.sort_order, item.key))
+    entries = StoreSectionService.build_page_entries(entries, categories)
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=store_home_kb(entries=entries, webapp_url=settings.WEBAPP_URL, language=language),
@@ -115,6 +104,8 @@ async def store_section(callback: CallbackQuery, session, db_user, state: FSMCon
         return
 
     lines = [section_label(section, language), ""]
+    ranked = section == "bestsellers"
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
     for index, product in enumerate(products, start=1):
         price = await CurrencyService.format_dual(product.price_usd, db_user, session)
         category = product.sub_category.category if product.sub_category else None
@@ -131,9 +122,15 @@ async def store_section(callback: CallbackQuery, session, db_user, state: FSMCon
             stock_label = "Stock" if language == "en" else "مخزون"
             badges.append(f"⚡ {stock_label}: {stock}")
         badge_text = " ".join(badges)
+        # ترتيب الأكثر مبيعاً: وسام للثلاثة الأوائل + عدد مرات البيع
+        marker = medals.get(index, f"{index}.") if ranked else f"{index}."
+        sold_note = ""
+        if ranked:
+            sold_label = "sales" if language == "en" else "عملية بيع"
+            sold_note = f" · 🔥 {int(product.total_sold or 0)} {sold_label}"
         lines.append(
-            f"{index}. <b>{escape(product.name_ar)}</b> {badge_text}\n"
-            f"   {category.emoji if category else '📦'} {escape(sub)} · {price}"
+            f"{marker} <b>{escape(product.name_ar)}</b> {badge_text}\n"
+            f"   {category.emoji if category else '📦'} {escape(sub)} · {price}{sold_note}"
         )
 
     lines.append(f"\n{I18nService.t('store_products_hint', language)}")

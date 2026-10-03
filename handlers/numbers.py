@@ -52,9 +52,11 @@ from services.settings_service import SettingsService
 from services.price_lock_service import PriceLockService
 from services.agent_service import AgentService
 from services.balance_service import BalanceService, InsufficientBalanceError
+from services.order_confirmation_service import OrderConfirmationService
 from services.bulk_number_service import BulkError, BulkNumberService
 from services.feature_service import FeatureService
 from services.notification_service import NotificationService
+from keyboards.common import empty_state_kb
 from keyboards.numbers import (
     bulk_confirm_kb,
     bulk_quantity_kb,
@@ -146,18 +148,48 @@ async def _check_active_orders_limit(session, user_id: int) -> bool:
 # ══════════════ قسم الأرقام الموحّد (واتساب + تيليجرام + أي قسم جديد) ══════════════
 
 
-@router.callback_query(F.data == "num_hub")
+@router.callback_query(F.data.in_({"num_hub", "num_hub:store"}))
 async def numbers_hub(callback: CallbackQuery, session, db_user=None):
-    """زر «📱 الأرقام» في المتجر: يفتح كل خدمات الأرقام المفعلة."""
+    """زر «📞 الأرقام»: يفتح كل خدمات الأرقام + أرقام تليجرام الجاهزة.
+
+    يُفتح من القائمة الرئيسية (زر عريض) أو من داخل المتجر؛ زر الرجوع
+    يعود إلى حيث أتى المستخدم.
+    """
+    from services.feature_service import FeatureService
+    from services.i18n_service import I18nService
+
+    language = getattr(db_user, "language_code", "ar") or "ar"
+    from_store = callback.data == "num_hub:store"
     services = await get_active_number_services(session)
-    if not services:
+
+    # أرقام تليجرام الجاهزة: تظهر فقط إذا كان هناك مخزون متاح فعلاً.
+    tg_ready = False
+    try:
+        from services.tg_ready_service import TgReadyService
+
+        tg_ready = bool(await TgReadyService.stock_overview(session))
+    except Exception:  # noqa: BLE001
+        tg_ready = False
+
+    # باقات الأرقام الجاهزة: تظهر حسب ميزات الأدمن.
+    packages = False
+    try:
+        packages = bool(
+            await FeatureService.enabled("ready_number_packages")
+            and await FeatureService.enabled("bulk_numbers")
+        )
+    except Exception:  # noqa: BLE001
+        packages = False
+
+    if not services and not tg_ready and not packages:
         await callback.message.edit_text(
-            "📱 <b>الأرقام</b>\n\nلا توجد خدمات أرقام مفعلة حالياً.",
+            "📞 <b>الأرقام</b>\n\nلا توجد خدمات أرقام مفعلة حالياً.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🔙 رجوع للمتجر", callback_data="store:home"
+                            text="🔙 رجوع للمتجر" if from_store else "🔙 رجوع للقائمة الرئيسية",
+                            callback_data="store:home" if from_store else "back_to_main",
                         )
                     ]
                 ]
@@ -165,9 +197,17 @@ async def numbers_hub(callback: CallbackQuery, session, db_user=None):
         )
         await callback.answer()
         return
+
     await callback.message.edit_text(
-        "📱 <b>الأرقام</b>\n\nاختر نوع الخدمة المطلوبة:",
-        reply_markup=numbers_hub_kb(services, back_to_store=True),
+        f"{I18nService.t('numbers_hub_title', language)}\n\n"
+        f"{I18nService.t('numbers_hub_desc', language)}",
+        reply_markup=numbers_hub_kb(
+            services,
+            back_to_store=from_store,
+            tg_ready=tg_ready,
+            packages=packages,
+            language=language,
+        ),
     )
     await callback.answer()
 
@@ -542,14 +582,20 @@ async def ready_number_packages(callback: CallbackQuery, session, db_user: User)
         await callback.answer("الباقات الجاهزة غير مفعّلة حالياً.", show_alert=True)
         return
     if not await FeatureService.enabled("bulk_numbers"):
-        await callback.message.edit_text("📦 الباقات الجاهزة تتطلب تفعيل ميزة الشراء بالجملة.")
+        await callback.message.edit_text(
+            "📦 الباقات الجاهزة تتطلب تفعيل ميزة الشراء بالجملة.",
+            reply_markup=empty_state_kb(db_user.language_code, back_callback="num_hub", back_label="📞 اطلب رقم", search=False),
+        )
         await callback.answer()
         return
 
     services = [svc for svc in await get_active_number_services(session) if svc.is_active]
     countries = [c for c in await get_active_countries(session) if c.is_active]
     if not services or not countries:
-        await callback.message.edit_text("📦 لا توجد باقات أرقام مفعّلة حالياً.")
+        await callback.message.edit_text(
+            "📦 لا توجد باقات أرقام مفعّلة حالياً.",
+            reply_markup=empty_state_kb(db_user.language_code, back_callback="num_hub", back_label="📞 اطلب رقم", search=False),
+        )
         await callback.answer()
         return
 
@@ -848,14 +894,16 @@ async def bulk_confirm(callback: CallbackQuery, session, db_user: User, bot):
         )
         return
 
-    text = (
-        f"✅ <b>تم تنفيذ دفعة الأرقام</b>\n\n"
-        f"🔢 المطلوب: <b>{result['requested']}</b>\n"
-        f"✅ تم الشراء: <b>{result['succeeded']}</b>\n"
-        f"❌ فشل: <b>{result['failed']}</b>\n"
-        f"💰 الصافي المخصوم: <b>{result['net_charged_usd']}$</b>\n"
-        f"↩️ المسترجع لرصيدك: <b>{result['refunded_usd']}$</b>\n\n"
-        "سيتم إرسال الأكواد فور وصولها."
+    text = OrderConfirmationService.bulk_numbers(
+        requested=result['requested'],
+        succeeded=result['succeeded'],
+        failed=result['failed'],
+        net_charged_usd=result['net_charged_usd'],
+        refunded_usd=result['refunded_usd'],
+        service_name=service.name_ar,
+        country_name=country.name_ar,
+        flag=getattr(country, "flag", None) or "🌍",
+        language=getattr(db_user, "language_code", "ar") or "ar",
     )
     await callback.message.answer(text, reply_markup=after_number_order_kb())
 
@@ -1092,11 +1140,25 @@ async def confirm_buy(
     except Exception:
         logger.exception("فشل تحديث تقدم التحدي الأسبوعي")
 
+    try:
+        from services.balance_service import BalanceService as _BS
+
+        _balance_after = await _BS.get_balance(session, db_user.id)
+    except Exception:  # noqa: BLE001
+        _balance_after = None
     status_msg = await callback.message.answer(
-        f"✅ <b>تم شراء الرقم بنجاح!</b>\n\n"
-        f"📱 الرقم: <code>{buy_result.phone_number}</code>\n"
-        f"⏳ بانتظار الكود... الوقت المتبقي: {timeout_minutes}:00\n\n"
-        "سيتم تحديث هذه الرسالة تلقائياً عند وصول الكود.",
+        OrderConfirmationService.number(
+            order=order,
+            phone_number=buy_result.phone_number,
+            service_name=service.name_ar,
+            country_name=country.name_ar,
+            flag=getattr(country, "flag", None) or "🌍",
+            price_usd=sell_price,
+            balance_after=_balance_after,
+            timeout_minutes=timeout_minutes,
+            language=getattr(db_user, "language_code", "ar") or "ar",
+            emoji=getattr(service, "emoji", None) or "📞",
+        ),
         reply_markup=order_actions_kb(order.id),
     )
     order.status_chat_id = status_msg.chat.id

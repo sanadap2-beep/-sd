@@ -32,7 +32,10 @@ async def promotions_page(callback: CallbackQuery, session, db_user=None):
 
     lines = [I18nService.t("promotions_title", language) + "\n"]
     for promotion in promotions:
-        name = promotion.product.name_ar if promotion.product else promotion.name
+        try:
+            name = promotion.product.name_ar if promotion.product else promotion.name
+        except Exception:  # noqa: BLE001 — علاقة غير محمّلة: نتراجع لاسم العرض
+            name = promotion.name
         lines.append(
             I18nService.t(
                 "promotion_line",
