@@ -863,6 +863,43 @@ FEATURES: tuple[FeatureSpec, ...] = (
         True,
         check_interval_hours=6,
     ),
+    _spec(
+        "weekly_admin_report",
+        "التقرير الأسبوعي للأدمن",
+        "Weekly Admin Report",
+        "النمو",
+        "رسالة واحدة كل أسبوع فيها الطلبات والإيراد والربح والمستخدمون الجدد "
+        "والأكثر مبيعاً وأكثر المزودين تعثراً، مع مقارنة بالأسبوع السابق.",
+        True,
+        day_of_week="mon",
+        hour=9,
+        days=7,
+    ),
+    _spec(
+        "loyalty_chain",
+        "سلسلة الولاء (خصم متصاعد)",
+        "Loyalty Streak Coupons",
+        "النمو",
+        "كوبون خصم متصاعد لمن يكثر الطلب في الشهر (٣ ← ٥٪، ٦ ← ١٠٪، "
+        "١٠ ← ١٥٪) مع نقاط ولاء، مرة واحدة لكل عتبة كل شهر.",
+        True,
+        tiers="3:5,6:10,10:15",
+        coupon_valid_days=14,
+        bonus_points=25,
+        check_interval_hours=6,
+    ),
+    _spec(
+        "stock_guard",
+        "حارس المخزون",
+        "Stock-Out Guard",
+        "النمو",
+        "ينبّه عند نفاد مخزون منتج رقمي، ويخفيه تلقائياً من المتجر بدل بيع "
+        "فاشل، ثم يعيده تلقائياً متى توفر المخزون.",
+        True,
+        low_stock_threshold=3,
+        auto_hide=True,
+        check_interval_minutes=30,
+    ),
     # ─────────── الإضافات الثلاث الهدية (على مستوى البوت كامل) ───────────
     _spec(
         "bot_cockpit",
