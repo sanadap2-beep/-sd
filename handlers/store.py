@@ -53,26 +53,16 @@ async def store_home(callback: CallbackQuery, session, db_user, state: FSMContex
     ]
     # الأزرار تُبنى من التحكم المركزي بالأدمن: أي زر يُطفأ من
     # «🛍 التحكم بالمتجر» يختفي هنا فوراً، وأي قسم جديد يُضاف يظهر.
-    from services.store_section_service import StoreEntry, StoreSectionService
+    # الأقسام الخمسة (الرشق، شحن الألعاب، شحن البرامج، شحن الرصيد،
+    # الاشتراكات الرقمية) تُحَلّ إلى فئاتها الحقيقية إن وُجدت.
+    from services.store_section_service import StoreSectionService
 
     entries = [
         entry
         for entry in await StoreSectionService.list_entries(include_inactive=True)
         if entry.is_active
     ]
-    # الأقسام الديناميكية تظهر بعد الأقسام الذكية (حسب ترتيبها في الإدارة).
-    for category in categories:
-        entries.append(
-            StoreEntry(
-                key=f"cat:{category.id}",
-                label=f"{category.emoji} {category.name_ar}",
-                action=f"cat:{category.id}",
-                is_active=True,
-                sort_order=40 + min(max(category.sort_order, 0), 55),
-                is_builtin=True,
-            )
-        )
-    entries.sort(key=lambda item: (item.sort_order, item.key))
+    entries = StoreSectionService.build_page_entries(entries, categories)
     await callback.message.edit_text(
         "\n".join(lines),
         reply_markup=store_home_kb(entries=entries, webapp_url=settings.WEBAPP_URL, language=language),

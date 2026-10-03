@@ -91,6 +91,16 @@ class StoreDiscoveryService:
             query = base.join(Product.sub_category).join(SubCategory.category).where(
                 Category.type == CategoryType.APPS
             ).order_by(Product.total_sold.desc(), Product.id)
+        elif section == "balances":
+            # شحن الرصيد: أرصدة الألعاب والتطبيقات والمتاجر.
+            query = base.join(Product.sub_category).join(SubCategory.category).where(
+                Category.type == CategoryType.BALANCES
+            ).order_by(Product.total_sold.desc(), Product.id)
+        elif section == "subscriptions":
+            # الاشتراكات الرقمية: ChatGPT/شاهد/VPN ... إلخ.
+            query = base.join(Product.sub_category).join(SubCategory.category).where(
+                Category.type == CategoryType.SUBSCRIPTIONS
+            ).order_by(Product.total_sold.desc(), Product.id)
         elif section == "deals":
             promotions = await PromotionService.get_active_promotions(session, limit=limit)
             return [promo.product for promo in promotions if promo.product and promo.product.status == ProductStatus.ACTIVE]

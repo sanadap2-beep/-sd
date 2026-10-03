@@ -45,22 +45,42 @@ def number_services_kb(
 def numbers_hub_kb(
     services: list[NumberService],
     back_to_store: bool = True,
+    tg_ready: bool = False,
+    packages: bool = False,
+    language: str = "ar",
 ) -> InlineKeyboardMarkup:
     """قسم «الأرقام» الموحّد: كل خدمات الأرقام (واتساب/تيليجرام/جديدة).
 
     أي خدمة أرقام يضيفها الأدمن من «إدارة خدمات الأرقام» تظهر هنا
-    تلقائياً دون تعديل الكود.
+    تلقائياً دون تعديل الكود، ويضاف إليها:
+    - «أرقام تليجرام الجاهزة» إذا كان فيها مخزون متاح.
+    - «باقات أرقام جاهزة» إذا كانت الميزة مفعّلة.
     """
+    from services.button_customization_service import ButtonCustomizationService as BC
+    from services.i18n_service import I18nService
+
     b = InlineKeyboardBuilder()
     for svc in services:
         b.button(
             text=f"{svc.emoji} أرقام {svc.name_ar}",
             callback_data=f"num_svc:{svc.code}", style="success",
         )
+    if packages:
+        b.add(BC.apply(
+            "numbers.packages",
+            I18nService.t("numbers_packages", language),
+            "num_packages", "primary",
+        ))
+    if tg_ready:
+        b.add(BC.apply(
+            "numbers.tg_ready",
+            I18nService.t("numbers_tg_ready", language),
+            "tgready:list", "success",
+        ))
     if back_to_store:
         b.button(text="🔙 رجوع للمتجر", callback_data="store:home")
     else:
-        b.button(text="🔙 رجوع", callback_data="back_to_main")
+        b.button(text="🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)
     return b.as_markup()
 

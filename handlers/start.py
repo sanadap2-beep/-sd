@@ -41,12 +41,17 @@ async def _build_menu(session, db_user):
     completed_orders = await _completed_orders_count(session)
     show_ai = await _ai_section_visible(session)
     show_whatsapp = await FeatureService.enabled("whatsapp_section")
+    # سوق المستخدمين يظهر فقط إذا كانت ميزة الوساطة مفعّلة من لوحة الأدمن.
+    from services.marketplace_service import MarketplaceService
+
+    show_marketplace = await MarketplaceService.enabled()
     return build_main_menu(
         number_services=[],
         categories=[],
         balance_usd=f"{db_user.balance:.2f}",
         language=language,
         balance_display=balance_display,
+        show_marketplace=show_marketplace,
         show_agent=show_agent,
         agent_percent=agent_percent,
         completed_orders_count=completed_orders,

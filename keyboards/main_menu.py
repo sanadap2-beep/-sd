@@ -1,8 +1,13 @@
-"""Compact top-level menu for the bot.
+"""Top-level menu for the bot.
 
-The store and extras pages own their dynamic catalog and feature shortcuts;
-the first screen contains only the essential actions and two entry points.
-All visible static labels use the existing Arabic/English translation service.
+التصميم المطلوب للشاشة الأولى:
+1. ثلاثة أزرار عريضة (مستطيلة) فوق بعضها: الأرقام ← المتجر ← سوق المستخدمين.
+   كل زر منها يحتل صفاً كاملاً لأنه قسم رئيسي.
+2. بقية الأزرار مربّعات: كل زرين جنب بعض.
+
+المتجر وصفحة الخدمات الإضافية يملكان كتالوجهما الديناميكي وأزرار الميزات،
+فتبقى الشاشة الأولى قصيرة وواضحة. كل النصوص الظاهرة تمر عبر خدمة الترجمة
+العربية/الإنجليزية.
 """
 
 from aiogram.types import InlineKeyboardMarkup
@@ -29,15 +34,17 @@ def build_main_menu(
     show_ai: bool = False,
     show_whatsapp: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Build the compact top-level menu.
+    """Build the top-level menu: three wide sections then square buttons.
 
-    Product categories and number services are intentionally not rendered here.
-    They are all reachable from ``store:home``. Optional features and admin-made
-    shortcuts are reachable from ``extras:home`` so the main menu stays short.
-    The arguments remain for backwards compatibility with callers that already
-    build the menu with dynamic data.
+    The three wide rows are: numbers (``num_hub``), the store (``store:home``)
+    and the user market (``market:home``). Product categories and number
+    services are intentionally not rendered here — they are reachable from
+    ``num_hub`` and ``store:home``. Optional features and admin-made shortcuts
+    are reachable from ``extras:home`` so the main menu stays short.
+    The unused arguments remain for backwards compatibility with callers that
+    already build the menu with dynamic data.
     """
-    del number_services, categories, show_marketplace, show_tasks, show_points, dynamic_buttons
+    del number_services, categories, show_tasks, show_points, dynamic_buttons
 
     t = lambda key, **kw: I18nService.t(key, language, **kw)  # noqa: E731
     balance_text = balance_display if balance_display is not None else f"${balance_usd}"
@@ -45,39 +52,46 @@ def build_main_menu(
 
     rows: list[list] = []
 
-    # زر «المتجر» واسع وممتد أول الشاشة — نقطة الدخول الأساسية.
+    # ── الأزرار العريضة (المستطيلة): أقسام البوت الثلاثة، كل واحد بصف كامل ──
+    # 1) الأرقام: أرقام واتساب/تيليجرام + أرقام تليجرام الجاهزة.
+    rows.append([BC.apply("main.numbers", t("menu_numbers_hub"), "num_hub", "success")])
+    # 2) المتجر: الرشق، شحن الألعاب، شحن البرامج، شحن الرصيد، الاشتراكات الرقمية
+    #    + أي قسم يضيفه الأدمن من لوحته.
     rows.append([BC.apply("main.store", t("menu_full_store"), "store:home", "success")])
+    # 3) سوق المستخدمين: يظهر فقط عندما تكون الميزة مفعّلة من لوحة الأدمن.
+    if show_marketplace:
+        rows.append([BC.apply("main.market", t("menu_marketplace"), "market:home", "success")])
 
+    # ── الأزرار المربّعة: كل زرين جنب بعض ──
+    rows.append([
+        BC.apply("main.deposit", t("menu_deposit"), "menu:deposit", "primary"),
+        BC.apply("main.support", t("menu_support"), "menu:support", None),
+    ])
     rows.append([
         BC.apply("main.account", t("menu_account_with_balance", balance=balance_text), "menu:account", "primary"),
-        BC.apply("main.deposit", t("menu_deposit"), "menu:deposit", "primary"),
+        BC.apply("main.referral", t("menu_referral"), "menu:referral", "primary"),
     ])
     rows.append([
-        BC.apply("main.referral", t("menu_referral"), "menu:referral", "primary"),
         BC.apply("main.transfer", t("menu_transfer"), "menu:transfer", "primary"),
+        BC.apply("main.extras", t("menu_extras"), "extras:home", "success"),
     ])
 
-    row4 = []
+    row_tail = []
     if completed_orders_count is not None:
-        row4.append(BC.apply("main.completed_orders", t("menu_completed_orders", count=completed_orders_count), "info:stats", "success"))
-    row4.append(BC.apply("main.extras", t("menu_extras"), "extras:home", "success"))
-    rows.append(row4)
+        row_tail.append(BC.apply("main.completed_orders", t("menu_completed_orders", count=completed_orders_count), "info:stats", "success"))
+    row_tail.append(BC.apply("main.terms", t("menu_terms"), "info:terms", "danger"))
+    rows.append(row_tail)
 
     if show_ai or show_whatsapp:
-        row5 = []
+        row_features = []
         if show_ai:
-            row5.append(BC.apply("main.ai", t("menu_ai"), "ai:home", "success"))
+            row_features.append(BC.apply("main.ai", t("menu_ai"), "ai:home", "success"))
         if show_whatsapp:
-            row5.append(BC.apply("main.whatsapp", t("menu_whatsapp"), "wa:home", "success"))
-        rows.append(row5)
+            row_features.append(BC.apply("main.whatsapp", t("menu_whatsapp"), "wa:home", "success"))
+        rows.append(row_features)
 
     if show_agent:
         rows.append([BC.apply("main.agent", t("menu_agent", percent=agent_percent), "agent:home", "primary")])
-
-    rows.append([
-        BC.apply("main.support", t("menu_support"), "menu:support", None),
-        BC.apply("main.terms", t("menu_terms"), "info:terms", "danger"),
-    ])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

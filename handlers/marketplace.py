@@ -69,7 +69,16 @@ async def market_profile_create(callback: CallbackQuery, state: FSMContext):
 
 @router.message(MarketProfileStates.waiting_alias)
 async def market_profile_alias(message: Message, state: FSMContext):
+    import re
+
     alias = (message.text or '').strip()
+    # تحقق فوري من الاسم المستعار حتى لا يكتشف المستخدم الخطأ بعد كتابة كلمة السر.
+    if not re.fullmatch(r"[A-Za-z0-9_\u0600-\u06FF]{3,24}", alias):
+        await message.answer(
+            "⚠️ الاسم المستعار يجب أن يكون 3-24 حرفاً (أرقام/حروف/_ فقط) بدون مسافات أو رموز.\n"
+            "أعد إرسال الاسم المستعار:"
+        )
+        return
     await state.update_data(alias=alias)
     await state.set_state(MarketProfileStates.waiting_password)
     await message.answer(I18nService.t('ux_marketplace_126_10', _auto_lang(locals())))
@@ -88,7 +97,22 @@ async def market_profile_password(message: Message, state: FSMContext, session, 
     except Exception:
         pass
     await state.clear()
-    await message.answer(f"{I18nService.t('ux_marketplace_149_12', _auto_lang(locals()))}{profile.alias}{I18nService.t('ux_marketplace_149_13', _auto_lang(locals()))}")
+    language = _lang(db_user)
+    await message.answer(
+        f"{I18nService.t('ux_marketplace_149_12', _auto_lang(locals()))}{profile.alias}{I18nService.t('ux_marketplace_149_13', _auto_lang(locals()))}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=I18nService.t('market_profile_created_button', language),
+                        callback_data='market:home',
+                        style="success",
+                    )
+                ],
+                [InlineKeyboardButton(text=I18nService.t('back_to_main', language), callback_data='back_to_main')],
+            ]
+        ),
+    )
 
 @router.callback_query(F.data.startswith('market_browse:'))
 async def browse(callback: CallbackQuery, session, db_user):

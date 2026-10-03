@@ -146,18 +146,48 @@ async def _check_active_orders_limit(session, user_id: int) -> bool:
 # ══════════════ قسم الأرقام الموحّد (واتساب + تيليجرام + أي قسم جديد) ══════════════
 
 
-@router.callback_query(F.data == "num_hub")
+@router.callback_query(F.data.in_({"num_hub", "num_hub:store"}))
 async def numbers_hub(callback: CallbackQuery, session, db_user=None):
-    """زر «📱 الأرقام» في المتجر: يفتح كل خدمات الأرقام المفعلة."""
+    """زر «📞 الأرقام»: يفتح كل خدمات الأرقام + أرقام تليجرام الجاهزة.
+
+    يُفتح من القائمة الرئيسية (زر عريض) أو من داخل المتجر؛ زر الرجوع
+    يعود إلى حيث أتى المستخدم.
+    """
+    from services.feature_service import FeatureService
+    from services.i18n_service import I18nService
+
+    language = getattr(db_user, "language_code", "ar") or "ar"
+    from_store = callback.data == "num_hub:store"
     services = await get_active_number_services(session)
-    if not services:
+
+    # أرقام تليجرام الجاهزة: تظهر فقط إذا كان هناك مخزون متاح فعلاً.
+    tg_ready = False
+    try:
+        from services.tg_ready_service import TgReadyService
+
+        tg_ready = bool(await TgReadyService.stock_overview(session))
+    except Exception:  # noqa: BLE001
+        tg_ready = False
+
+    # باقات الأرقام الجاهزة: تظهر حسب ميزات الأدمن.
+    packages = False
+    try:
+        packages = bool(
+            await FeatureService.enabled("ready_number_packages")
+            and await FeatureService.enabled("bulk_numbers")
+        )
+    except Exception:  # noqa: BLE001
+        packages = False
+
+    if not services and not tg_ready and not packages:
         await callback.message.edit_text(
-            "📱 <b>الأرقام</b>\n\nلا توجد خدمات أرقام مفعلة حالياً.",
+            "📞 <b>الأرقام</b>\n\nلا توجد خدمات أرقام مفعلة حالياً.",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🔙 رجوع للمتجر", callback_data="store:home"
+                            text="🔙 رجوع للمتجر" if from_store else "🔙 رجوع للقائمة الرئيسية",
+                            callback_data="store:home" if from_store else "back_to_main",
                         )
                     ]
                 ]
@@ -165,9 +195,17 @@ async def numbers_hub(callback: CallbackQuery, session, db_user=None):
         )
         await callback.answer()
         return
+
     await callback.message.edit_text(
-        "📱 <b>الأرقام</b>\n\nاختر نوع الخدمة المطلوبة:",
-        reply_markup=numbers_hub_kb(services, back_to_store=True),
+        f"{I18nService.t('numbers_hub_title', language)}\n\n"
+        f"{I18nService.t('numbers_hub_desc', language)}",
+        reply_markup=numbers_hub_kb(
+            services,
+            back_to_store=from_store,
+            tg_ready=tg_ready,
+            packages=packages,
+            language=language,
+        ),
     )
     await callback.answer()
 

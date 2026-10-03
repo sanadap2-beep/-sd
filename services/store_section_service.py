@@ -25,21 +25,38 @@ SETTING_KEY = "store_sections_json"
 
 # ─────────── الأزرار الثابتة المدمجة ───────────
 # (key, label, action, sort_order)
+#
+# الأقسام الخمسة الرئيسية للمتجر (الرشق، شحن الألعاب، شحن البرامج،
+# شحن الرصيد، الاشتراكات الرقمية) تأتي أولاً بعد الأرقام، وكل واحد
+# منها قابل للإطفاء/التحريك/التسمية من «🛍 التحكم بالمتجر» في لوحة الأدمن.
 BUILTIN_ENTRIES: tuple[tuple[str, str, str, int], ...] = (
     ("numbers", "📱 الأرقام", "num_hub", 10),
-    ("offers", "🔥 العروض الخاصة 24", "special:home", 20),
-    ("smart_featured", "⭐ مختارات المتجر", "store:section:featured", 30),
-    ("smart_deals", "🔥 عروض اليوم", "store:section:deals", 31),
-    ("smart_bestsellers", "🏆 الأكثر مبيعاً", "store:section:bestsellers", 32),
-    ("smart_instant", "⚡ تسليم فوري", "store:section:instant", 33),
-    ("smart_cheap", "💸 أقل من 2$", "store:section:cheap", 34),
-    ("smart_games", "🎮 ألعاب", "store:section:games", 35),
-    ("smart_smm", "📈 سوشيال ميديا", "store:section:smm", 36),
-    ("smart_apps", "📦 تطبيقات واشتراكات", "store:section:apps", 37),
+    ("smart_smm", "🚀 الرشق", "store:section:smm", 20),
+    ("smart_games", "🎮 شحن الألعاب", "store:section:games", 21),
+    ("smart_apps", "📱 شحن البرامج", "store:section:apps", 22),
+    ("smart_balances", "💳 شحن الرصيد", "store:section:balances", 23),
+    ("smart_subscriptions", "✨ الاشتراكات الرقمية", "store:section:subscriptions", 24),
+    ("offers", "🔥 العروض الخاصة 24", "special:home", 30),
+    ("smart_featured", "⭐ مختارات المتجر", "store:section:featured", 40),
+    ("smart_deals", "🔥 عروض اليوم", "store:section:deals", 41),
+    ("smart_bestsellers", "🏆 الأكثر مبيعاً", "store:section:bestsellers", 42),
+    ("smart_instant", "⚡ تسليم فوري", "store:section:instant", 43),
+    ("smart_cheap", "💸 أقل من 2$", "store:section:cheap", 44),
     ("search", "🔎 البحث عن خدمة", "menu:search", 100),
     ("cart", "🛒 السلة", "menu:cart", 110),
     ("request", "➕ اطلب منتج غير موجود", "menu:product_request", 120),
     ("webapp", "🌐 متجرك الكامل", "webapp", 130),
+)
+
+# الأقسام الخمسة الرئيسية: (مفتاح الإدارة، نوع الفئة = اسم القسم الذكي، التسمية).
+# إن وُجدت فئة مفعّلة من هذا النوع يفتح الزر الفئة نفسها (فيحفظ تنقّل
+# التطبيقات/الأقسام الداخلية)، وإلا يفتح القسم الذكي (قائمة منتجات مسطّحة).
+PRIMARY_SECTIONS: tuple[tuple[str, str, str], ...] = (
+    ("smart_smm", "smm", "🚀 الرشق"),
+    ("smart_games", "games", "🎮 شحن الألعاب"),
+    ("smart_apps", "apps", "📱 شحن البرامج"),
+    ("smart_balances", "balances", "💳 شحن الرصيد"),
+    ("smart_subscriptions", "subscriptions", "✨ الاشتراكات الرقمية"),
 )
 
 BUILTIN_KEYS = {key for key, _label, _action, _order in BUILTIN_ENTRIES}
@@ -54,6 +71,12 @@ class StoreEntry:
     is_active: bool
     sort_order: int
     is_builtin: bool = True
+    # مفتاح تخصيص الزر في لوحة الأدمن (لون/نص/إيموجي). يُستخدم عندما يُحَلّ
+    # القسم إلى فئة حتى لا يفقد الزر إعدادات التخصيص.
+    bc_key: str | None = None
+    # أقسام المتجر الرئيسية (الرشق/الألعاب/البرامج/الرصيد/الاشتراكات):
+    # تُرسم مباشرة بعد زر الأرقام قبل بقية الأقسام.
+    is_primary: bool = False
 
     @property
     def is_url(self) -> bool:
@@ -222,3 +245,97 @@ class StoreSectionService:
     @staticmethod
     async def reset_defaults(session) -> None:
         await StoreSectionService._save(session, _builtin_entries())
+
+    # ─────────── بناء صفحة المتجر ───────────
+
+    @staticmethod
+    def resolve_primary_sections(
+        entries: list[StoreEntry],
+        categories: list,
+    ) -> tuple[list[StoreEntry], set]:
+        """اربط الأقسام الخمسة الرئيسية بالفئات الحقيقية إن وُجدت.
+
+        - إن وُجدت فئة مفعّلة من نوع القسم (مثلاً ``smm``) صار الزر يفتحها،
+          فيستفيد المستخدم من تنقّل التطبيقات/الأقسام الداخلية داخلها.
+        - وإلا يبقى الزر يفتح القسم الذكي (قائمة منتجات مسطّحة من نفس النوع).
+        - الأقسام التي يعطّلها الأدمن من «التحكم بالمتجر» تختفي تماماً.
+
+        يُعاد: (قائمة الأقسام النهائية، أنواع الفئات التي غطّاها قسم رئيسي)
+        حتى لا تتكرر نفس الفئة مرتين تحت القسم الذكي وكرر كفئة عادية.
+        """
+        by_key = {entry.key: entry for entry in entries}
+        covered_types: set[str] = set()
+        resolved: list[StoreEntry] = []
+
+        for key, type_value, default_label in PRIMARY_SECTIONS:
+            entry = by_key.get(key)
+            if entry is not None and not entry.is_active:
+                continue  # الأدمن أطفأ هذا القسم
+            category = next(
+                (
+                    cat
+                    for cat in sorted(
+                        categories or [],
+                        key=lambda item: (
+                            getattr(item, "sort_order", 0) or 0,
+                            getattr(item, "id", 0) or 0,
+                        ),
+                    )
+                    if getattr(getattr(cat, "type", None), "value", None) == type_value
+                ),
+                None,
+            )
+            covered_types.add(type_value)
+            resolved.append(
+                StoreEntry(
+                    key=key,
+                    label=(entry.label if entry is not None else default_label) or default_label,
+                    action=f"cat:{category.id}" if category is not None else f"store:section:{type_value}",
+                    is_active=True,
+                    sort_order=entry.sort_order if entry is not None else 20,
+                    is_builtin=True,
+                    bc_key=f"store.{type_value}",
+                    is_primary=True,
+                )
+            )
+
+        return resolved, covered_types
+
+    @staticmethod
+    def build_page_entries(
+        entries: list[StoreEntry],
+        categories: list,
+    ) -> list[StoreEntry]:
+        """القائمة النهائية لأزرار صفحة المتجر.
+
+        تحافظ على كل ما يضيفه الأدمن (أقسام مخصصة، فئات ديناميكية) وتستبدل
+        الأقسام الخمسة الرئيسية بنسختها المحلولة، مع حذف الفئات المكررة.
+        """
+        primary, covered_types = StoreSectionService.resolve_primary_sections(entries, categories)
+        primary_keys = {key for key, _type, _label in PRIMARY_SECTIONS}
+
+        rest = [
+            entry
+            for entry in entries
+            if entry.key not in primary_keys
+        ]
+        # الفئات الديناميكية: تُضاف تلقائياً كما كانت، باستثناء ما غطّاه
+        # قسم رئيسي لتجنّب تكرار «الرشق» مرتين مثلاً.
+        for category in categories or []:
+            type_value = getattr(getattr(category, "type", None), "value", None)
+            if type_value in covered_types:
+                continue
+            rest.append(
+                StoreEntry(
+                    key=f"cat:{category.id}",
+                    label=f"{category.emoji} {category.name_ar}",
+                    action=f"cat:{category.id}",
+                    is_active=True,
+                    sort_order=40 + min(max(getattr(category, "sort_order", 0) or 0, 0), 55),
+                    is_builtin=True,
+                )
+            )
+
+        page = primary + rest
+        page.sort(key=lambda item: (item.sort_order, item.key))
+        return page
