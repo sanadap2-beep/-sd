@@ -21,6 +21,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from database.models import AiSession, User
 from keyboards.common import empty_state_kb
 from keyboards.ai_sections import (
+    ai_cancel_kb,
     ai_error_kb,
     ai_hist_view_kb,
     ai_history_kb,
@@ -171,7 +172,8 @@ async def ai_new_or_stay(
             language,
             name=_section_name(section, language),
             price=f"{price:g}$",
-        )
+        ),
+        reply_markup=ai_cancel_kb(language),
     )
     await callback.answer()
 
@@ -208,6 +210,7 @@ async def ai_continue(
         I18nService.t("ai_continue_header", language, name=_section_name(section, language))
         + (f"\n{preview}" if preview else "")
         + f"\n{I18nService.t('ai_write_prompt_short', language, price=f'{price:g}$')}",
+        reply_markup=ai_cancel_kb(language),
     )
     await callback.answer()
 

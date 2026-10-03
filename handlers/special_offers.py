@@ -193,7 +193,13 @@ async def special_confirm(callback: CallbackQuery, state: FSMContext, session, d
         f"🆔 الطلب: #{order.id}\n"
         f"📦 العرض: {offer.name if offer else '—'}\n"
         f"📊 الحالة: {order.status_message}\n"
-        "سيصلك إشعار عند اكتمال التنفيذ أو الاسترجاع."
+        "سيصلك إشعار عند اكتمال التنفيذ أو الاسترجاع.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🛍 تصفّح المتجر", callback_data="store:home", style="success")],
+                [InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="back_to_main")],
+            ]
+        ),
     )
     if order.status == "manual_pending":
         await NotificationService(bot).notify_admin(

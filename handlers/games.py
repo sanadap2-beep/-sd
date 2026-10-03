@@ -88,7 +88,7 @@ from services.watch_service import WatchService
 from protocols.base import ProtocolError, ProtocolInsufficientFundsError
 from protocols.factory import ProtocolFactory
 from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
-from keyboards.common import flow_cancel_kb
+from keyboards.common import after_order_kb, flow_cancel_kb
 from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb, store_servers_kb
 from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 logger = logging.getLogger(__name__)
@@ -1096,7 +1096,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
             title='تم تسليم طلبك فوراً',
             emoji='🎉',
         )
-        await callback.message.answer(inventory_text, reply_markup=back_to_main_kb())
+        await callback.message.answer(inventory_text, reply_markup=after_order_kb(_glang(db_user)))
         await notifier.notify_admin(f'📦 <b>تم تسليم منتج من المخزون</b>\n\n🆔 الطلب: #{order.id}\n👤 المستخدم: {db_user.telegram_id}\n📦 المنتج: {esc(product.name_ar)}\n💰 المبلغ: {final_price}$', notification_type="order")
         upsells = await UpsellService.recommend(session, product.id)
         if upsells:
@@ -1256,7 +1256,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                         language=_glang(db_user),
                         title='تم إنشاء طلبك بنجاح',
                     ),
-                    reply_markup=back_to_main_kb(),
+                    reply_markup=after_order_kb(_glang(db_user)),
                 )
                 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
                 await notifier.notify_admin(
@@ -1335,7 +1335,7 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
         title='تم تسليم طلبك فوراً' if delivery_html else 'تم إنشاء طلبك بنجاح',
         emoji='🎉' if delivery_html else '✅',
     )
-    await callback.message.answer(result_text, reply_markup=back_to_main_kb())
+    await callback.message.answer(result_text, reply_markup=after_order_kb(_glang(db_user)))
     if fulfillment == ProductFulfillmentType.MANUAL.value:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 

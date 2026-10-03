@@ -58,6 +58,14 @@ def ai_prompt_kb(section_id: int, language: str = "ar") -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def ai_cancel_kb(language: str = "ar") -> InlineKeyboardMarkup:
+    """زر إلغاء لشاشة إدخال الطلب — يوقف الجلسة ويرجع لقائمة الأقسام."""
+    t = lambda key: I18nService.t(key, language)  # noqa: E731
+    b = InlineKeyboardBuilder()
+    b.button(text=t("ai_cancel"), callback_data="ai:cancel", style="danger")
+    return b.as_markup()
+
+
 def ai_history_kb(section_id: int, sessions: list[AiSession], language: str = "ar") -> InlineKeyboardMarkup:
     t = lambda key: I18nService.t(key, language)  # noqa: E731
     b = InlineKeyboardBuilder()

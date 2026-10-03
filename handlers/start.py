@@ -97,21 +97,59 @@ async def _completed_orders_count(session) -> int:
     return int(number_count or 0) + int(unified_count or 0)
 
 
+async def _pending_orders_hint(session, db_user) -> str:
+    """سطر «طلباتك قيد التنفيذ» حتى لا ينسى الزبون طلباً لم يكتمل."""
+    try:
+        from sqlalchemy import func, select
+
+        from database.models import (
+            NumberOrder,
+            OrderStatus,
+            UnifiedOrder,
+            UnifiedOrderStatus,
+        )
+
+        unified = await session.scalar(
+            select(func.count(UnifiedOrder.id)).where(
+                UnifiedOrder.user_id == db_user.id,
+                UnifiedOrder.status.in_(
+                    (UnifiedOrderStatus.PENDING, UnifiedOrderStatus.PROCESSING)
+                ),
+            )
+        )
+        numbers = await session.scalar(
+            select(func.count(NumberOrder.id)).where(
+                NumberOrder.user_id == db_user.id,
+                NumberOrder.status == OrderStatus.PENDING,
+            )
+        )
+        total = int(unified or 0) + int(numbers or 0)
+    except Exception:  # noqa: BLE001 — سطر تجميلي لا يُسقط الشاشة الأولى
+        return ""
+    if total <= 0:
+        return ""
+    if str(getattr(db_user, "language_code", "ar") or "ar").startswith("en"):
+        return f"\n\u23f3 <b>{total}</b> order(s) still in progress — follow them from \u00abMy Account\u00bb."
+    return f"\n\u23f3 \u0644\u062f\u064a\u0643 <b>{total}</b> \u0637\u0644\u0628 \u0642\u064a\u062f \u0627\u0644\u062a\u0646\u0641\u064a\u0630 \u2014 \u062a\u0627\u0628\u0639\u0647\u0627 \u0645\u0646 \u00ab\u062d\u0633\u0627\u0628\u064a \u2190 \u0637\u0644\u0628\u0627\u062a\u064a\u00bb."
+
+
 async def _main_header(session, db_user) -> str:
     """رأس القائمة الرئيسية: هوية المتجر + الميزات + الرصيد بعملته المحلية."""
     balance_text = await CurrencyService.format_dual(db_user.balance, db_user, session)
+    hint = await _pending_orders_hint(session, db_user)
     try:
-        return await BrandingService.main_menu_header(
+        text = await BrandingService.main_menu_header(
             balance_text,
             getattr(db_user, "language_code", "ar") or "ar",
         )
     except Exception:  # noqa: BLE001 — لا تُسقط الشاشة الأولى بسبب نص تجميلي
         logger.exception("تعذر بناء رأس القائمة الرئيسية، استخدام النص الافتراضي")
-        return I18nService.t(
+        text = I18nService.t(
             "main_menu_header",
             db_user.language_code,
             balance=balance_text,
         )
+    return f"{text}{hint}" if hint else text
 
 
 async def _alternatives_kb(session, service, missing_code: str):

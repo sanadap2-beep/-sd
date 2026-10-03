@@ -50,6 +50,18 @@ def cancel_kb(
     return b.as_markup()
 
 
+def after_order_kb(language: str = "ar") -> InlineKeyboardMarkup:
+    """أزرار رسالة تأكيد الطلب: تتبّع الطلب، أو متابعة التسوّق."""
+    from services.i18n_service import I18nService
+
+    b = InlineKeyboardBuilder()
+    b.button(text="📋 طلباتي", callback_data="my_uni_orders:0", style="primary")
+    b.button(text="🛍 تصفّح المتجر", callback_data="store:home", style="success")
+    b.button(text=I18nService.t("back_to_main", language), callback_data="back_to_main")
+    b.adjust(2, 1)
+    return b.as_markup()
+
+
 def flow_cancel_kb(language: str = "ar") -> InlineKeyboardMarkup:
     """زر إلغاء لشاشات الإدخال: يُنهي الحالة ويرجع للقائمة الرئيسية."""
     from services.i18n_service import I18nService
