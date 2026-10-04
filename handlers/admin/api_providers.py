@@ -522,9 +522,16 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
     )
 
     if not success:
+        safe_msg = str(message_text or "")[:300]
+        # لا تعرض صدى المفتاح إن أعاده المزود في رسالة الخطأ
+        _raw_key = str(data.get("api_key") or "")
+        if _raw_key and _raw_key in safe_msg:
+            safe_msg = safe_msg.replace(_raw_key, "***")
+        from services.html_guard import esc as _esc2
+
         await test_msg.edit_text(
             f"❌ <b>فشل الاتصال بالمزود!</b>\n\n"
-            f"السبب: <code>{message_text}</code>\n\n"
+            f"السبب: <code>{_esc2(safe_msg)}</code>\n\n"
             "تأكد من:\n"
             "• صحة الـ API URL\n"
             "• صحة الـ API Key\n"
@@ -549,6 +556,10 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
         priority=1,
         low_balance_threshold=Decimal("10"),
     )
+    from services.encryption_service import EncryptionService
+    from services.html_guard import esc
+
+    EncryptionService.store_provider_key(provider)
     session.add(provider)
     await session.commit()
     await session.refresh(provider)
@@ -639,7 +650,12 @@ async def _show_provider_details(message, provider: ApiProvider, edit: bool = Tr
     api_url_display = (
         provider.api_url[:40] + "..." if len(provider.api_url) > 40 else provider.api_url
     )
-    api_key_display = provider.api_key[:8] + "***" if len(provider.api_key) > 8 else "***"
+    try:
+        from services.encryption_service import EncryptionService as _Enc
+
+        api_key_display = _Enc.mask_provider_key(provider)
+    except Exception:
+        api_key_display = "***"
 
     text = (
         f"🔌 <b>{provider.name}</b>\n\n"
@@ -1286,6 +1302,13 @@ async def aprov_edit_value_received(message: Message, state: FSMContext, session
             await message.answer("⚠️ المفتاح قصير جداً.")
             return
         provider.api_key = value
+        provider.api_key_encrypted = None
+        try:
+            from services.encryption_service import EncryptionService as _Enc2
+
+            _Enc2.store_provider_key(provider)
+        except Exception:
+            pass
         try:
             await message.delete()
         except Exception:

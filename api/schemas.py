@@ -94,6 +94,8 @@ class ResellerOrderIn(BaseModel):
     product_id: int
     target: str = ""
     quantity: int = Field(default=1, ge=1, le=1_000_000)
+    # مفتاح عدم تكرار اختياري — إعادة نفس المفتاح ترجع الطلب الأصلي.
+    idempotency_key: str | None = Field(default=None, max_length=64)
 
 
 class CartItemIn(BaseModel):

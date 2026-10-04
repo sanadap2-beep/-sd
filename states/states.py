@@ -649,3 +649,40 @@ class AdminButtonCustomStates(StatesGroup):
 
     waiting_label = State()
     waiting_emoji = State()
+
+
+class TenantBuyStates(StatesGroup):
+    """شراء زبون فرعي: الهدف ثم الكمية."""
+
+    waiting_target = State()
+    waiting_quantity = State()
+
+
+class TenantSupportStates(StatesGroup):
+    """تذكرة دعم في بوت فرعي — تذهب للتاجر."""
+
+    waiting_message = State()
+
+
+class TenantDepositStates(StatesGroup):
+    """شحن رصيد زبون فرعي — يعتمده التاجر."""
+
+    waiting_amount = State()
+    waiting_proof = State()
+
+
+class MerchantStates(StatesGroup):
+    """لوحة التاجر في البوت الأساسي."""
+
+    waiting_token = State()
+    waiting_brand = State()
+    waiting_margin = State()
+    waiting_wallet_amount = State()
+    waiting_ticket_reply = State()
+    waiting_reject_reason = State()
+
+
+class AdminPremiumStates(StatesGroup):
+    """إيموجي مميز لكيان كتالوج: kind ∈ {cat, sub, prod}."""
+
+    waiting_emoji = State()

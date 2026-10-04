@@ -124,9 +124,14 @@ class GiftService:
                     balance_after=user.balance,
                     related_table="gift_redemptions",
                     related_id=redemption.id,
-                    payment_reference=f"gift:{redemption.id}",
+                    payment_reference=f"gift:{gift.id}:{user_id}",
                     description=f"استبدال بطاقة هدية {gift.code}",
                 )
             )
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                # سباق على آخر استخدام أو استرداد مزدوج — رسالة نظيفة بدل خام
+                raise GiftCodeError("تم استخدام هذه البطاقة للتو، تحقق من رصيدك.")
             return gift.amount_usd

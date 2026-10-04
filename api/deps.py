@@ -19,7 +19,7 @@ async def get_current_user(
     tg_user: dict = Depends(current_telegram_user),
     session=Depends(get_session),
 ) -> User:
-    result = await session.execute(select(User).where(User.telegram_id == int(tg_user["id"])))
+    result = await session.execute(select(User).where(User.telegram_id == int(tg_user["id"]), User.tenant_id == 0))
     user = result.scalar_one_or_none()
     if user is None:
         user = User(
@@ -28,8 +28,20 @@ async def get_current_user(
             full_name=tg_user.get("first_name", ""),
         )
         session.add(user)
-        await session.commit()
-        await session.refresh(user)
+        try:
+            await session.commit()
+        except Exception:
+            # طلبان متزامنان لنفس المستخدم الجديد — أحدهما يفوز بالقيد
+            # الفريد، والآخر يعيد قراءة الصف بدل الخطأ.
+            await session.rollback()
+            result = await session.execute(
+                select(User).where(User.telegram_id == int(tg_user["id"]), User.tenant_id == 0)
+            )
+            user = result.scalar_one_or_none()
+            if user is None:
+                raise
+        else:
+            await session.refresh(user)
     return user
 
 

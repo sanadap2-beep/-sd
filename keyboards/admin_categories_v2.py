@@ -218,6 +218,10 @@ def category_detail_kb(
         callback_data=f"admin:cat_edit:emoji:{category.id}",
     )
     b.button(
+        text="✨ إيموجي مميز",
+        callback_data=f"admin:prem:cat:{category.id}",
+    )
+    b.button(
         text="🔢 تعديل الترتيب",
         callback_data=f"admin:cat_edit:sort:{category.id}",
     )
@@ -391,6 +395,10 @@ def sub_category_detail_kb(
     b.button(
         text="🎨 تعديل الإيموجي",
         callback_data=(f"admin:subcat_edit:emoji:{sub_category.id}"),
+    )
+    b.button(
+        text="✨ إيموجي مميز",
+        callback_data=(f"admin:prem:sub:{sub_category.id}"),
     )
     b.button(
         text="📝 تعديل الوصف",

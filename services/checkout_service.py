@@ -207,11 +207,20 @@ class CheckoutService:
             raise CheckoutError("مزود المنتج غير متاح حالياً.")
 
         # ── حارس رصيد المزود (الاشتراكات الرقمية) ──
-        # قبل خصم رصيد المستخدم نفحص رصيد المزود المفضَّل. إن كان معلوماً
-        # وأقل من سعر الطلب، لا نخصم ولا نرسل — يُترك الطلب بانتظار تنفيذ
-        # الإدارة بدل فشلٍ من المزود يضطرنا للاسترجاع لاحقاً.
+        # جلب جماعي واحد بدل N+1 — كل المزودين المرشحين دفعة واحدة.
+        from sqlalchemy import select as _select
+
+        _provider_ids = [r.api_provider_id for r in routes if r.api_provider_id]
+        _providers_map: dict[int, ApiProvider] = {}
+        if _provider_ids:
+            _rows = (
+                await session.execute(
+                    _select(ApiProvider).where(ApiProvider.id.in_(_provider_ids))
+                )
+            ).scalars().all()
+            _providers_map = {p.id: p for p in _rows}
         for route in routes:
-            candidate_provider = await session.get(ApiProvider, route.api_provider_id)
+            candidate_provider = _providers_map.get(route.api_provider_id)
             if (
                 candidate_provider
                 and candidate_provider.is_active
@@ -219,32 +228,17 @@ class CheckoutService:
             ):
                 balance = await _provider_balance_usd(candidate_provider)
                 if balance is not None and balance < price:
-                    order = UnifiedOrder(
-                        user_id=user_id,
-                        product_id=product.id,
-                        api_provider_id=candidate_provider.id,
-                        promotion_id=promotion.id if promotion else None,
-                        target=target,
-                        quantity=quantity,
-                        price_usd=price,
-                        cost_price_usd=product.cost_price_usd,
-                        status=UnifiedOrderStatus.PENDING,
-                        status_message="بانتظار تنفيذ الإدارة (رصيد المزود غير كافٍ)",
-                    )
-                    session.add(order)
-                    await session.commit()
-                    await session.refresh(order)
-                    if promotion:
-                        await PromotionService.mark_used(session, promotion.id)
-                    await CashbackService.apply_cashback(
-                        session, user_id, order.id, "unified_orders", price
-                    )
-                    await LoyaltyService.award_purchase_points(
-                        session, user_id, "unified_orders", order.id, price
+                    # P0: لا طلب ولا مكافآت قبل خصم مؤكد — الرفض الفوري فقط.
+                    # إنشاء طلب PENDING مع كاشباك/نقاط بلا خصم كان يمنح قيمة
+                    # مجانية (رصيد/نقاط) لطلب لم يُدفع. الإدارة ترى الطلبات
+                    # الفاشلة في السجلات وتنشئ طلباً يدوياً عند الحاجة.
+                    logger.warning(
+                        "رفض شراء المنتج %s للمستخدم %s: رصيد المزود %s أقل من %s",
+                        product.id, user_id, balance, price,
                     )
                     raise CheckoutError(
-                        "⚠️ المزود المنفذ يحتاج شحناً مؤقتاً. تم تسجيل طلبك "
-                        "الان بانتظار تنفيذ الإدارة — سنرسل لك فور جاهزيته."
+                        "⚠️ المزود المنفذ يحتاج شحناً مؤقتاً — لم يُخصم منك شيء. "
+                        "حاول لاحقاً أو تواصل مع الدعم."
                     )
             break
 
@@ -289,7 +283,7 @@ class CheckoutService:
         used_route = None
         errors: list[str] = []
         for route in routes:
-            provider = await session.get(ApiProvider, route.api_provider_id)
+            provider = _providers_map.get(route.api_provider_id)
             if provider is None or not provider.is_active:
                 errors.append(f"المزود {route.api_provider_id} غير نشط")
                 continue

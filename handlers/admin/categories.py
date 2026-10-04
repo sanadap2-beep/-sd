@@ -274,7 +274,7 @@ async def cat_emoji_selected(
     data = await state.get_data()
 
     if emoji_choice == "custom":
-        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:\n(إيموجي واحد فقط)")
+        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:\n(حرف عادي، أو إيموجي مميز ⭐ من حزم Premium كرسالة)")
         return
 
     if emoji_choice == "default":
@@ -337,14 +337,22 @@ async def cat_custom_emoji_received(
     session,
     db_user,
 ):
-    """استقبال إيموجي مخصص."""
-    emoji = message.text.strip()
-
-    if len(emoji) > 8:
-        await message.answer("⚠️ إيموجي واحد فقط من فضلك.")
-        return
+    """استقبال إيموجي مخصص: مميز (premium) من الرسالة أو حرف عادي."""
+    from services.premium_emoji import extract_custom_emoji_id
 
     data = await state.get_data()
+    premium_id = extract_custom_emoji_id(message)
+    if premium_id:
+        emoji, custom_id = "✨", premium_id
+    else:
+        emoji = (message.text or "").strip()
+        if not emoji:
+            await message.answer("⚠️ أرسل إيموجي من فضلك (عادي أو مميز).")
+            return
+        if len(emoji) > 8:
+            await message.answer("⚠️ إيموجي واحد فقط من فضلك.")
+            return
+        custom_id = None
 
     try:
         category = await DynamicService.create_category(
@@ -352,6 +360,7 @@ async def cat_custom_emoji_received(
             name_ar=data["name"],
             emoji=emoji,
             category_type=CategoryType(data["category_type"]),
+            custom_emoji_id=custom_id,
         )
     except Exception as e:
         logger.error(f"فشل إنشاء قسم: {e}")
@@ -552,11 +561,19 @@ async def cat_edit_value_received(
         category.name_ar = value
 
     elif field == "emoji":
-        if len(value) > 8:
-            await message.answer("⚠️ إيموجي واحد فقط.")
-            return
-        old_value = category.emoji
-        category.emoji = value
+        from services.premium_emoji import extract_custom_emoji_id
+
+        premium_id = extract_custom_emoji_id(message)
+        if premium_id:
+            old_value = category.custom_emoji_id
+            category.custom_emoji_id = premium_id
+            value = f"مميز:{premium_id}"
+        else:
+            if len(value) > 8:
+                await message.answer("⚠️ إيموجي واحد فقط.")
+                return
+            old_value = category.emoji
+            category.emoji = value
 
     elif field == "sort":
         try:
@@ -912,7 +929,7 @@ async def subcat_emoji_selected(callback: CallbackQuery, state: FSMContext):
     emoji_choice = callback.data.split(":", 2)[2]
 
     if emoji_choice == "custom":
-        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:")
+        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:\n(حرف عادي، أو إيموجي مميز ⭐ من حزم Premium كرسالة)")
         return
 
     if emoji_choice == "default":
@@ -931,17 +948,26 @@ async def subcat_emoji_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminSubCategoryStates.waiting_emoji)
 async def subcat_custom_emoji_received(message: Message, state: FSMContext):
-    """استقبال إيموجي مخصص."""
-    emoji = message.text.strip()
+    """استقبال إيموجي مخصص: مميز (premium) أو حرف عادي."""
+    from services.premium_emoji import extract_custom_emoji_id
 
-    if len(emoji) > 8:
-        await message.answer("⚠️ إيموجي واحد فقط.")
-        return
-
-    await state.update_data(emoji=emoji)
+    premium_id = extract_custom_emoji_id(message)
+    if premium_id:
+        await state.update_data(emoji="✨", custom_emoji_id=premium_id)
+        label = "الإيموجي المميز ✨"
+    else:
+        emoji = (message.text or "").strip()
+        if not emoji:
+            await message.answer("⚠️ أرسل إيموجي من فضلك.")
+            return
+        if len(emoji) > 8:
+            await message.answer("⚠️ إيموجي واحد فقط.")
+            return
+        await state.update_data(emoji=emoji, custom_emoji_id=None)
+        label = f"الإيموجي: {emoji}"
 
     await message.answer(
-        f"✅ الإيموجي: {emoji}\n\n"
+        f"✅ {label}\n\n"
         "الخطوة 3️⃣ من 4️⃣\n\n"
         "📝 أرسل وصف القسم (اختياري):\n"
         "أرسل نصاً أو - للتخطي"
@@ -1058,6 +1084,7 @@ async def _create_sub_category(
             parent_sub_category_id=parent_sub_id,
             name_ar=data["name"],
             emoji=data.get("emoji", "📱"),
+            custom_emoji_id=data.get("custom_emoji_id"),
             description=data.get("description"),
             image_file_id=data.get("image_file_id"),
             image_url=data.get("image_url"),
@@ -1350,11 +1377,19 @@ async def subcat_edit_value_received(
         sub.name_ar = value
 
     elif field == "emoji":
-        if len(value) > 8:
-            await message.answer("⚠️ إيموجي واحد فقط.")
-            return
-        old_value = sub.emoji
-        sub.emoji = value
+        from services.premium_emoji import extract_custom_emoji_id as _extract
+
+        premium_id = _extract(message)
+        if premium_id:
+            old_value = sub.custom_emoji_id
+            sub.custom_emoji_id = premium_id
+            value = f"مميز:{premium_id}"
+        else:
+            if len(value) > 8:
+                await message.answer("⚠️ إيموجي واحد فقط.")
+                return
+            old_value = sub.emoji
+            sub.emoji = value
 
     elif field == "desc":
         if value == "-":

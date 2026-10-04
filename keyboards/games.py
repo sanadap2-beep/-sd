@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import SubCategory, Product
-from services.smm_catalog import button_label
+from services.premium_emoji import button_kwargs, button_text
 
 
 def _short_name(name: str, limit: int = 42) -> str:
@@ -28,8 +28,9 @@ def sub_categories_kb(
     b = InlineKeyboardBuilder()
     for sub in sub_categories:
         b.button(
-            text=button_label(sub.name_ar, sub.emoji),
+            text=button_text(sub.name_ar, sub.emoji, getattr(sub, "custom_emoji_id", None)),
             callback_data=f"subcat:{sub.id}", style="success",
+            **button_kwargs(getattr(sub, "custom_emoji_id", None)),
         )
     b.button(
         text="🔎 بحث",
@@ -54,10 +55,11 @@ def sections_kb(
     """
     b = InlineKeyboardBuilder()
     for section, count in sections:
-        label = button_label(section.name_ar, section.emoji)
+        label = button_text(section.name_ar, section.emoji, getattr(section, "custom_emoji_id", None))
         b.button(
             text=f"{label} ({count})",
             callback_data=f"subcat:{section.id}", style="success",
+            **button_kwargs(getattr(section, "custom_emoji_id", None)),
         )
     b.button(
         text="🔙 رجوع",
@@ -105,8 +107,9 @@ def products_kb(
         else:
             price = _server_product_price(p, server)
         b.button(
-            text=f"{_short_name(p.name_ar)} - {price}$",
+            text=f"{button_text(_short_name(p.name_ar), None, getattr(p, 'custom_emoji_id', None))} - {price}$",
             callback_data=f"prod:{p.id}", style="success",
+            **button_kwargs(getattr(p, "custom_emoji_id", None)),
         )
     if back_sub_id is not None:
         back_callback = f"subcat:{back_sub_id}"

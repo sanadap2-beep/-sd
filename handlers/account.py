@@ -204,7 +204,8 @@ async def unified_order_detail(callback: CallbackQuery, session, db_user: User):
         return
     status_label = _label(UNIFIED_STATUS_LABELS, order.status, db_user.language_code)
     product_name = order.product.name_ar if order.product else '—'
-    text = f"🛒 <b>تفاصيل الطلب #{order.id}</b>\n\n📦 المنتج: <b>{product_name}</b>\n📊 الحالة: {status_label}\n💰 المبلغ: <b>{order.price_usd}$</b>\n🎯 الهدف: <code>{order.target or '—'}</code>\n📊 الكمية: {order.quantity}\n🆔 رقم المزود: <code>{order.external_order_id or '—'}</code>\n📝 الحالة التفصيلية: {order.status_message or '—'}\n📅 التاريخ: {order.created_at.strftime('%Y-%m-%d %H:%M')}"
+    from services.html_guard import esc
+    text = f"🛒 <b>تفاصيل الطلب #{order.id}</b>\n\n📦 المنتج: <b>{esc(product_name)}</b>\n📊 الحالة: {esc(status_label)}\n💰 المبلغ: <b>{order.price_usd}$</b>\n🎯 الهدف: <code>{esc(order.target) or '—'}</code>\n📊 الكمية: {order.quantity}\n🆔 رقم المزود: <code>{esc(order.external_order_id) or '—'}</code>\n📝 الحالة التفصيلية: {esc(order.status_message) or '—'}\n📅 التاريخ: {order.created_at.strftime('%Y-%m-%d %H:%M')}"
     if order.remains is not None:
         text += f'\n⏳ المتبقي: {order.remains}'
     delivery_result = await session.execute(select(DigitalInventoryItem).where(DigitalInventoryItem.unified_order_id == order.id))

@@ -94,9 +94,9 @@ class ReferralGuardService:
         referrer_id = user.referrer_id
         outcome["referrer_id"] = referrer_id
 
-        ban_joiner = await FeatureService.config_bool(FEATURE_KEY, "ban_joiner_on_bot", True)
+        ban_joiner = await FeatureService.config_bool(FEATURE_KEY, "ban_joiner_on_bot", False)
         ban_referrer = await FeatureService.config_bool(
-            FEATURE_KEY, "ban_referrer_on_bot", True
+            FEATURE_KEY, "ban_referrer_on_bot", False
         )
 
         if ban_joiner:

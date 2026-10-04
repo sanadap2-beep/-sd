@@ -54,6 +54,8 @@ class StoreEntry:
     is_active: bool
     sort_order: int
     is_builtin: bool = True
+    # أيقونة إيموجي مميز لزر الدخول (تُعرض بدل بادئة الإيموجي العادي).
+    icon_custom_emoji_id: str | None = None
 
     @property
     def is_url(self) -> bool:

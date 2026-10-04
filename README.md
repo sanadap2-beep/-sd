@@ -37,6 +37,11 @@ docker compose up -d --build
 
 يتم حفظ SQLite في `bot_database.db` داخل مجلد `data/`، وتحفظ Redis حالات المحادثة بشكل دائم. خذ نسخة احتياطية قبل أي ترقية.
 
+> **الإنتاج:** يعمل Docker على PostgreSQL + Redis (خدمات `postgres` و`redis` في
+> `docker-compose.yml`)، وتُشغَّل الترحيلات مرة واحدة عبر خدمة `migrate` قبل
+> إقلاع البوت والـ API. غيّر `POSTGRES_PASSWORD` الافتراضية، ولا تنشر الـ API
+> (8080) على الإنترنت مباشرة — ضعه خلف reverse proxy مع TLS.
+
 ## الإعداد بعد أول تشغيل
 
 1. أضف البوت كأدمن في قناة/مجموعة إشعارات الإدارة.

@@ -57,8 +57,10 @@ async def transfer_recipient_received(
     session,
     db_user: User,
 ):
+    from services.input_validation_service import InputValidationService as _IVS
+
     try:
-        recipient_tg_id = int(message.text.strip())
+        recipient_tg_id = int(_IVS.message_text(message))
     except ValueError:
         await message.answer("⚠️ الرجاء إرسال آيدي صحيح (أرقام فقط).")
         return
@@ -67,7 +69,7 @@ async def transfer_recipient_received(
         await message.answer("⚠️ لا يمكنك التحويل لنفسك.")
         return
 
-    result = await session.execute(select(User).where(User.telegram_id == recipient_tg_id))
+    result = await session.execute(select(User).where(User.telegram_id == recipient_tg_id, User.tenant_id == 0))
     recipient = result.scalar_one_or_none()
     if recipient is None:
         await message.answer("⚠️ لا يوجد مستخدم بهذا الآيدي في البوت.")
@@ -131,36 +133,17 @@ async def transfer_amount_received(
         await FeatureService.track("transfer_fee", "transfer", user_id=db_user.id, value=str(fee_amount))
 
     try:
-        # نخصم العمولة أولاً كإيراد للمنصة، ثم نحوّل الصافي للمستلم.
-        # إن فشل التحويل تُردّ العمولة فوراً فلا يُخصم المستخدم مرتين.
-        if fee_amount > 0:
-            await BalanceService.deduct_balance(
-                session,
-                db_user.id,
-                fee_amount,
-                TransactionType.PURCHASE,
-                description=f"عمولة تحويل {fee_percent}% إلى {recipient_tg_id}",
-                related_table="users",
-                related_id=recipient_id,
-            )
-        try:
-            _, _, _ = await BalanceService.transfer(
-                session,
-                from_user_id=db_user.id,
-                to_user_id=recipient_id,
-                amount=net_amount,
-            )
-        except InsufficientBalanceError:
-            if fee_amount > 0:
-                await BalanceService.add_balance(
-                    session,
-                    db_user.id,
-                    fee_amount,
-                    TransactionType.REFUND,
-                    description="إرجاع عمولة تحويل لم يكتمل",
-                    payment_reference=f"transfer_fee_refund:{db_user.id}:{recipient_id}:{int(amount * 10000)}",
-                )
-            raise
+        # مسار ذري واحد: العمولة + الصافي في commit واحد — لا خصم جزئي أبداً.
+        _, _, _ = await BalanceService.transfer_with_fee(
+            session,
+            from_user_id=db_user.id,
+            to_user_id=recipient_id,
+            amount=net_amount,
+            fee_amount=fee_amount,
+            fee_description=(
+                f"عمولة تحويل {fee_percent}% إلى {recipient_tg_id}" if fee_amount > 0 else None
+            ),
+        )
     except InsufficientBalanceError:
         await message.answer("⚠️ رصيدك غير كافٍ لإتمام هذا التحويل مع العمولة.")
         await state.clear()

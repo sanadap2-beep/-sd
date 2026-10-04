@@ -26,6 +26,23 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # ترحيلات قاعدة البيانات مرة واحدة قبل إقلاع bot وapi
+  # (يمنع سباق الترحيلات؛ يوجد أيضاً قفل استشاري كحماية ثانية).
+  migrate:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bot:${POSTGRES_PASSWORD:-change_me}@postgres:5432/botdb
+      REDIS_URL: redis://redis:6379/0
+    command: python -c "import asyncio; from database.seed import init_db; asyncio.run(init_db())"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
   bot:
     build: .
     env_file:
@@ -38,6 +55,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   api:
@@ -55,6 +74,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     restart: unless-stopped

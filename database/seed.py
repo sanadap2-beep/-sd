@@ -456,8 +456,9 @@ async def init_db() -> None:
             await session.commit()
 
         # ── تسجيل الأدمن ──
-        for admin_tg_id in settings.admin_ids_list:
-            result = await session.execute(select(User).where(User.telegram_id == admin_tg_id))
+        env_admin_ids = set(settings.admin_ids_list)
+        for admin_tg_id in env_admin_ids:
+            result = await session.execute(select(User).where(User.telegram_id == admin_tg_id, User.tenant_id == 0))
             user = result.scalar_one_or_none()
             if user is None:
                 session.add(
@@ -466,10 +467,28 @@ async def init_db() -> None:
                         is_admin=True,
                         is_activated=True,
                         full_name="Admin",
+                        admin_source="env",
                     )
                 )
-            elif not user.is_admin:
-                user.is_admin = True
+            else:
+                if not user.is_admin:
+                    user.is_admin = True
+                user.admin_source = "env"
+        # سحب صلاحية من أُزيل من ADMIN_IDS (مصدر env فقط — مدراء اللوحة لا يُمسون).
+        stale_admins = (
+            await session.execute(
+                select(User).where(
+                    User.is_admin.is_(True),
+                    User.tenant_id == 0,
+                    User.admin_source == "env",
+                )
+            )
+        ).scalars().all()
+        for stale in stale_admins:
+            if stale.telegram_id not in env_admin_ids:
+                stale.is_admin = False
+                stale.admin_source = None
+        await session.commit()
 
         # ── زرع حالة المزودين ──
         for provider in ProviderName:

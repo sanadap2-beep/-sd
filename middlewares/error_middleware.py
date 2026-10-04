@@ -58,6 +58,30 @@ def _is_benign_telegram_error(exc: Exception) -> bool:
     return any(marker.lower() in message for marker in _BENIGN_TELEGRAM_ERRORS)
 
 
+def _redact_secrets(value: str) -> str:
+    """يحجب الأسرار قبل إرسالها لقناة الأدمن (مفتاح/توكن/جلسة/2FA)."""
+    import re as _re
+
+    if not value:
+        return value
+    patterns = [
+        r"(?i)(api[_-]?key\s*[:=]\s*)(['\"]?)[^'\"\s,;]+",
+        r"(?i)(token\s*[:=]\s*)(['\"]?)[^'\"\s,;]+",
+        r"(?i)(secret\s*[:=]\s*)(['\"]?)[^'\"\s,;]+",
+        r"(?i)(password\s*[:=]\s*)(['\"]?)[^'\"\s,;]+",
+        r"(?i)(2fa\s*[:=]\s*)(['\"]?)[^'\"\s,;]+",
+        r"(?i)(session\s*[:=]\s*)(['\"]?)[^'\"\s,;]+",
+        r"bot\d+:[A-Za-z0-9_-]{20,}",
+    ]
+    out = value
+    for pat in patterns:
+        try:
+            out = _re.sub(pat, r"\1\2***", out)
+        except Exception:
+            continue
+    return out
+
+
 def format_admin_error_report(
     exc: BaseException,
     *,
@@ -75,10 +99,10 @@ def format_admin_error_report(
         f"الحدث: <code>{html.escape(str(event_name))}</code>\n"
         f"المستخدم: <code>{html.escape(str(user_id))}</code> "
         f"@{html.escape(username or '-')}\n"
-        f"Callback: <code>{html.escape(str(callback_data or '—'))}</code>\n"
-        f"Text: <code>{html.escape(str(text or '—')[:200])}</code>\n"
-        f"الخطأ: <code>{html.escape(str(exc)[:500])}</code>\n\n"
-        f"<pre>{html.escape((tb or '')[-2000:])}</pre>"
+        f"Callback: <code>{html.escape(_redact_secrets(str(callback_data or '—')))}</code>\n"
+        f"Text: <code>{html.escape(_redact_secrets(str(text or '—'))[:200])}</code>\n"
+        f"الخطأ: <code>{html.escape(_redact_secrets(str(exc))[:500])}</code>\n\n"
+        f"<pre>{html.escape(_redact_secrets((tb or ''))[-2000:])}</pre>"
     )
 
 

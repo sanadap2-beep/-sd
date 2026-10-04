@@ -78,9 +78,21 @@ class CatalogRoutingService:
                 ProductProviderRoute.is_active.is_(True),
             )
         )
-        for route in result.scalars().all():
-            provider = await session.get(ApiProvider, route.api_provider_id)
-            if provider is None or not provider.is_active:
+        route_rows = list(result.scalars().all())
+        # جلب جماعي للمزودين بدل N+1
+        _pids = list({r.api_provider_id for r in route_rows if r.api_provider_id})
+        _active: set[int] = set()
+        if _pids:
+            _prows = (
+                await session.execute(
+                    select(ApiProvider.id).where(
+                        ApiProvider.id.in_(_pids), ApiProvider.is_active.is_(True)
+                    )
+                )
+            ).all()
+            _active = {row[0] for row in _prows}
+        for route in route_rows:
+            if route.api_provider_id not in _active:
                 continue
             if route.api_provider_id == product.api_provider_id:
                 continue  # مكرر مع الأساسي

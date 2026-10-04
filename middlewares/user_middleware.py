@@ -47,7 +47,7 @@ class UserMiddleware(BaseMiddleware):
         if tg_user is None:
             return await handler(event, data)
 
-        result = await session.execute(select(User).where(User.telegram_id == tg_user.id))
+        result = await session.execute(select(User).where(User.telegram_id == tg_user.id, User.tenant_id == 0))
         user = result.scalar_one_or_none()
 
         # ── إنشاء مستخدم جديد ──
@@ -58,7 +58,7 @@ class UserMiddleware(BaseMiddleware):
                 ref_tg_id = extract_referrer_telegram_id(event.text)
                 if ref_tg_id and ref_tg_id != tg_user.id:
                     ref_result = await session.execute(
-                        select(User).where(User.telegram_id == ref_tg_id)
+                        select(User).where(User.telegram_id == ref_tg_id, User.tenant_id == 0)
                     )
                     ref_user = ref_result.scalar_one_or_none()
                     if ref_user is not None:

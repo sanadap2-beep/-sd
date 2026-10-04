@@ -183,7 +183,13 @@ class SpinService:
                 day_key=today,
             )
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+            await session.rollback()
+            raise SpinError("لقد حصلت على لفتك المجانية اليوم. عُد غداً!")
 
         logger.info("لفة عجلة للمستخدم %s: %s", user_id, outcome)
         return {

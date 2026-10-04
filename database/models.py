@@ -76,6 +76,9 @@ class OrderStatus(str, enum.Enum):
     EXPIRED = "expired"
     CANCELLED = "cancelled"
     REFUNDED = "refunded"
+    # UNKNOWN: انتهت مهلة الاتصال بالمزود بعد احتمال قبول الطلب —
+    # لا استرجاع ولا failover تلقائي قبل التسوية اليدوية/الاستعلام.
+    UNKNOWN = "unknown"
 
 
 class ProviderName(str, enum.Enum):
@@ -217,6 +220,8 @@ class AutoInvoiceStatus(str, enum.Enum):
     EXPIRED = "expired"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # REVIEW: دفع غير مطابق (زائد/ناقص) يحتاج قرار إدارياً — لا اعتماد تلقائي.
+    REVIEW = "review"
 
 
 class AuditAction(str, enum.Enum):
@@ -237,9 +242,15 @@ class AuditAction(str, enum.Enum):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # العزل متعدد المستأجرين: نفس الشخص قد يكون زبوناً في عدة بوتات فرعية.
+        # المستأجر 0 = البوت الأساسي.
+        UniqueConstraint("tenant_id", "telegram_id", name="uq_user_tenant_telegram"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     language_code: Mapped[str] = mapped_column(String(8), default="ar")
@@ -259,6 +270,9 @@ class User(Base):
     referral_check_fails: Mapped[int] = mapped_column(Integer, default=0)
 
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # مصدر صلاحية الأدمن: env (من ADMIN_IDS) أو panel (من لوحة المدراء).
+    # حذف ID من ADMIN_IDS يسحب صلاحية env فقط ولا يمس مدراء اللوحة.
+    admin_source: Mapped[str | None] = mapped_column(String(8), nullable=True)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
 
     total_spent_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
@@ -363,6 +377,7 @@ class Transaction(Base):
 
     related_table: Mapped[str | None] = mapped_column(String(32), nullable=True)
     related_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
 
     # مرجع فريد للدفعات الخارجية (Telegram Stars / invoices). يمنع إضافة
     # نفس الدفعة مرتين عند إعادة إرسال التحديث أو تشغيل أكثر من مهمة مراقبة.
@@ -378,9 +393,14 @@ class Transaction(Base):
 
 class DepositRequest(Base):
     __tablename__ = "deposit_requests"
+    # المرجع الفريد يمنع طلبين بنفس الإثبات تحت السباق (NULLs متعددة مسموحة).
+    __table_args__ = (
+        UniqueConstraint("proof_tx_number", name="uq_deposit_proof_tx"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
 
     amount_usd: Mapped[Decimal] = mapped_column(MONEY)
     proof_photo_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -406,9 +426,15 @@ class NumberOrder(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
 
     provider: Mapped[ProviderName] = mapped_column(SAEnum(ProviderName))
     provider_order_id: Mapped[str] = mapped_column(String(64))
+
+    # مفتاح عدم التكرار لنية الشراء — يُنشأ قبل الخصم.
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
 
     service: Mapped[str] = mapped_column(String(64))
     country_code: Mapped[str] = mapped_column(String(32))
@@ -779,6 +805,7 @@ class SupportTicket(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
     subject: Mapped[str] = mapped_column(String(128))
     message: Mapped[str] = mapped_column(Text)
     status: Mapped[SupportTicketStatus] = mapped_column(
@@ -867,6 +894,8 @@ class Category(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📦")
+    # إيموجي تيليجرام المميز (premium) برقمه التعريفي — يظهر بجانب الاسم.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     type: Mapped[CategoryType] = mapped_column(SAEnum(CategoryType))
     # شرح القسم الذي يظهر للزبون عند فتحه (يُضبط من لوحة الأدمن).
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -905,6 +934,8 @@ class SubCategory(Base):
     kind_key: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     name_ar: Mapped[str] = mapped_column(String(64))
     emoji: Mapped[str] = mapped_column(String(8), default="📱")
+    # إيموجي تيليجرام المميز (premium) برقمه التعريفي — يظهر بجانب الاسم.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -947,6 +978,9 @@ class ApiProvider(Base):
     )
     api_url: Mapped[str] = mapped_column(String(500))
     api_key: Mapped[str] = mapped_column(String(255))
+    # تشفير المفاتيح: api_key يبقى للتوافق مع البيانات القديمة،
+    # والقيم الجديدة تُخزن مشفرة في api_key_encrypted ويُمسح النص الصريح.
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     balance: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     rate_to_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("1"))
@@ -1048,6 +1082,8 @@ class Product(Base):
 
     provider_service_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name_ar: Mapped[str] = mapped_column(String(128))
+    # إيموجي تيليجرام المميز (premium) برقمه التعريفي — يظهر بجانب اسم المنتج.
+    custom_emoji_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     estimated_time: Mapped[str | None] = mapped_column(String(64), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -1372,6 +1408,7 @@ class UnifiedOrder(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
     # nullable لأن بعض أنواع الطلبات (مثل التطبيقات والأكواد الجاهزة) لا
     # ترتبط بمنتج حقيقي في جدول products. القيمة 0 كانت تُستخدم سابقاً في
     # تلك الحالات ففشلت قيد FOREIGN KEY.
@@ -1510,6 +1547,9 @@ class AutoInvoice(Base):
     amount_usd: Mapped[Decimal] = mapped_column(MONEY)
     amount_original: Mapped[Decimal] = mapped_column(MONEY)
     currency: Mapped[str] = mapped_column(String(8))
+    # المبلغ الفعلي المستلم من المزود (بعملة الدفع) — للمطابقة والمراجعة.
+    actual_amount: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    actual_currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     network: Mapped[str | None] = mapped_column(String(16), nullable=True)
     payment_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -2150,6 +2190,8 @@ class Tenant(Base):
     """
     مستأجر في مصنع العلامات البيضاء: بوت بعلامته ولغته وهامشه.
     يحسم من bot_username أي علامة يخدم هذا الطلب.
+    موسّع لسيناريو White-Label الكامل: توكن مشفر + محفظة مسبقة الدفع
+    + هامش فوق السعر الأساسي + اشتراك شهري + وضع كتالوج.
     """
 
     __tablename__ = "tenants"
@@ -2163,6 +2205,29 @@ class Tenant(Base):
     commission_percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # ── White-Label الكامل ──
+    # مالك المتجر (مستخدم في البوت الأساسي، المستأجر 0)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    # توكن بوت التاجر مشفراً — لا يُعرض ولا يُسجَّل أبداً
+    token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # بصمة sha256 للتوكن للبحث ومسار الـ webhook — غير قابلة للعكس
+    token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    # هامش التاجر % فوق سعر البوت الأساسي (عام)
+    margin_percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("20"))
+    # عمولة المنصة % من السعر الأساسي لكل طلب
+    platform_fee_percent: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("2"))
+    catalog_mode: Mapped[str] = mapped_column(String(16), default="full")
+    subscription_status: Mapped[str] = mapped_column(String(16), default="active")
+    subscription_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    suspended_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # هل الـ webhook مسجل حالياً في تيليجرام لهذا البوت؟
+    webhook_set: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, onupdate=func.now(), server_default=func.now()
+    )
 
 
 class ProviderBid(Base):
@@ -2569,6 +2634,11 @@ class DepositBonusGrant(Base):
     """
 
     __tablename__ = "deposit_bonus_grants"
+    __table_args__ = (
+        UniqueConstraint(
+            "deposit_source", "deposit_id", name="uq_deposit_bonus_source_id"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -2610,6 +2680,9 @@ class SpinHistory(Base):
     """
 
     __tablename__ = "spin_history"
+    __table_args__ = (
+        UniqueConstraint("user_id", "day_key", name="uq_spin_user_day"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -2803,3 +2876,90 @@ class TopupGiftRequest(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship(foreign_keys=[user_id])
+
+
+# ═══════════════════════════ البوتات الفرعية (White-Label) ═══════════════════
+
+
+class TenantCatalogMode(str, enum.Enum):
+    FULL = "full"  # مرآة كاملة لكتالوج البوت الأساسي
+    SELECTIVE = "selective"  # أقسام/خدمات منتقاة فقط
+
+
+class TenantSubscriptionStatus(str, enum.Enum):
+    ACTIVE = "active"
+    GRACE = "grace"  # سماح 3 أيام بعد فشل الخصم
+    SUSPENDED = "suspended"  # موقوف: webhook متجمد
+
+
+class TenantWallet(Base):
+    """محفظة التاجر المدفوعة مسبقاً — منفصلة عن رصيده الشخصي."""
+
+    __tablename__ = "tenant_wallets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    balance: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    total_funded_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    total_spent_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    total_earned_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, onupdate=func.now(), server_default=func.now()
+    )
+
+
+class TenantCategoryMargin(Base):
+    """هامش خاص بقسم معين داخل بوت التاجر (يتجاوز الهامش العام)."""
+
+    __tablename__ = "tenant_category_margins"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "category_id", name="uq_tenant_category"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), index=True)
+    margin_percent: Mapped[Decimal] = mapped_column(MONEY)
+
+
+class TenantCatalogSelection(Base):
+    """الأقسام/المنتجات المنتقاة في الوضع الانتقائي."""
+
+    __tablename__ = "tenant_catalog_selection"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "item_type", "item_id", name="uq_tenant_selection"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    # category / product
+    item_type: Mapped[str] = mapped_column(String(16), index=True)
+    item_id: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class TenantOrderMap(Base):
+    """يربط طلب الزبون الفرعي بالطلب المطابق في البوت الأساسي."""
+
+    __tablename__ = "tenant_orders_map"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "sub_order_type", "sub_order_id", name="uq_tenant_sub_order"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    # unified / number
+    sub_order_type: Mapped[str] = mapped_column(String(16), index=True)
+    sub_order_id: Mapped[int] = mapped_column(Integer, index=True)
+    main_order_id: Mapped[int] = mapped_column(Integer, index=True)
+    # السعر الأساسي الذي دُفع من محفظة التاجر + العمولة
+    base_price_usd: Mapped[Decimal] = mapped_column(MONEY)
+    fee_usd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

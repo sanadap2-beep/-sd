@@ -11,4 +11,8 @@ __pycache__
 *.db
 data
 *.log
+*.zip
+sd-bot-latest.zip
 sms_number_bot7787_full-1.md
+.pytest_cache
+.ruff_cache

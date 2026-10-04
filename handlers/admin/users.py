@@ -148,7 +148,7 @@ async def user_search_result(message: Message, state: FSMContext, session):
     # Try Telegram ID first
     try:
         tg_id = int(search_term)
-        result = await session.execute(select(User).where(User.telegram_id == tg_id))
+        result = await session.execute(select(User).where(User.telegram_id == tg_id, User.tenant_id == 0))
         user = result.scalar_one_or_none()
         if user:
             await _show_user(message, user)

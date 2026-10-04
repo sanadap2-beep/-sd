@@ -258,19 +258,18 @@ class ParsedEntry:
 
 
 def protect_payload(payload: str) -> str | None:
-    """حفظ حمولة السطر: مشفّرة إن توفّر المفتاح، وإلا صريحة — لا نضيع الروابط أبداً.
+    """حفظ حمولة السطر: مشفّرة حصراً — Fail-closed.
 
-    كان السلوك السابق: أي فشل تشفير (مفتاح ناقص) يسجّل payload_encrypted=None،
-    فيفقد المشتري رابط ZIP ورابط الكود ويظهر «لا توجد جلسة محفوظة».
+    السلوك القديم كان يخزن plaintext بصمت عند غياب المفتاح، فيتسرب
+    2FA وروابط ZIP لقاعدة البيانات. الآن نرفع استثناءً صريحاً ويجب
+    على المتصل رفض الرفع مع رسالة واضحة للأدمن.
     """
     if not payload:
         return None
-    try:
-        from services.encryption_service import EncryptionService
+    from services.encryption_service import EncryptionService
 
-        return EncryptionService.encrypt(payload)
-    except Exception:
-        return payload
+    # يرفع EncryptionError عند غياب/فساد المفتاح — لا fallback صريح أبداً.
+    return EncryptionService.encrypt(payload)
 
 
 def reveal_payload(stored: str | None, phone: str = "") -> str:
@@ -614,14 +613,24 @@ async def _fetch_json(url: str, timeout_s: int = 20, method: str = "GET") -> dic
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
     try:
+        from services.ssrf_guard import SsrfError, validate_url
+
+        validate_url(url, allow_http=True)
+    except Exception:
+        return None
+    try:
         import aiohttp
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=timeout_s),
             headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
+            max_line_size=16384,
         ) as sess:
-            ctx = sess.post(url, allow_redirects=True) if method.upper() == "POST" else sess.get(url, allow_redirects=True)
+            ctx = sess.post(url, allow_redirects=False, max_redirects=0) if method.upper() == "POST" else sess.get(url, allow_redirects=False)
             async with ctx as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    # نرفض redirects تلقائياً — Hop جديد يحتاج فحص SSRF مستقل
+                    return None
                 if resp.status != 200:
                     return None
                 try:
@@ -674,13 +683,21 @@ async def fetch_url_text(url: str, timeout_s: int = 20, max_chars: int = 200_000
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
     try:
+        from services.ssrf_guard import validate_url
+
+        validate_url(url, allow_http=True)
+    except Exception:
+        return None
+    try:
         import aiohttp
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=timeout_s),
             headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
         ) as sess:
-            async with sess.get(url, allow_redirects=True) as resp:
+            async with sess.get(url, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    return None
                 if resp.status != 200:
                     return None
                 data = await resp.content.read(max_chars + 1)
@@ -751,13 +768,21 @@ async def download_file_bytes(url: str, timeout_s: int = 30, max_bytes: int = 25
     if not url or not url.lower().startswith(("http://", "https://")):
         return None
     try:
+        from services.ssrf_guard import validate_url
+
+        validate_url(url, allow_http=True)
+    except Exception:
+        return None
+    try:
         import aiohttp
 
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=timeout_s),
             headers={"User-Agent": "Mozilla/5.0 (TelegramBot)"},
         ) as sess:
-            async with sess.get(url, allow_redirects=True) as resp:
+            async with sess.get(url, allow_redirects=False) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    return None
                 if resp.status != 200:
                     return None
                 length = resp.headers.get("Content-Length")
@@ -886,6 +911,14 @@ class TgReadyService:
         import json as _json
 
         from database.models import TgReadyBatch, TgReadyCountry, TgReadyItem, TgReadyItemStatus
+        from services.encryption_service import EncryptionService
+
+        if not EncryptionService.is_configured():
+            raise ValueError(
+                "مفتاح التشفير INVENTORY_ENCRYPTION_KEY غير مُهيأ — "
+                "رفض الرفع لمنع تخزين 2FA وروابط الجلسات كنص صريح. "
+                "ولّد مفتاحاً بـ Fernet.generate_key وضعه في .env ثم أعد المحاولة."
+            )
 
         sell = calc_sell_price(cost_usd, margin_percent)
         batch = TgReadyBatch(

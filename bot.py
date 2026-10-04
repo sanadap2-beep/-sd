@@ -65,6 +65,7 @@ from handlers import (
     tg_ready as user_tg_ready,
     fallback,
 )
+from handlers import merchant as merchant_panel
 from handlers.deposit_methods import router as deposit_methods_router
 from handlers.games import router as games_router
 from handlers.deposit_credit import router as deposit_credit_router
@@ -128,6 +129,7 @@ from handlers.admin import (
     campaign_codes as admin_campaign_codes,
     topup_gifts as admin_topup_gifts,
     tg_ready as admin_tg_ready,
+    premium_emoji as admin_premium_emoji,
 )
 
 from tasks.order_monitor import (
@@ -141,6 +143,7 @@ from tasks.watch_job import check_product_watches
 from tasks.backup_job import daily_backup
 from tasks.sponsored_ads_job import process_sponsored_ads
 from tasks.special_offers_job import process_special_offers
+from tasks.tenant_monitor import bill_tenant_subscriptions, check_tenant_orders
 from tasks.engagement_jobs import (
     send_monthly_reports,
     offer_expiry_cycle,
@@ -190,9 +193,10 @@ def register_middlewares():
         observer.outer_middleware(error_mw)
         observer.outer_middleware(db_mw)
         observer.outer_middleware(user_mw)
-        observer.outer_middleware(state_reset_mw)
-        observer.outer_middleware(throttle_mw)
         observer.outer_middleware(sub_mw)
+        observer.outer_middleware(throttle_mw)
+        observer.outer_middleware(state_reset_mw)
+    return throttle_mw
 
 
 def register_routers():
@@ -297,6 +301,7 @@ def register_routers():
     dp.include_router(admin_campaign_codes.router)
     dp.include_router(admin_topup_gifts.router)
     dp.include_router(admin_tg_ready.router)
+    dp.include_router(admin_premium_emoji.router)
 
     # Legacy direct session listener.  Keep it after the ready-sessions uploader:
     # both accept TXT documents, and the uploader must get the document while
@@ -307,6 +312,8 @@ def register_routers():
     dp.include_router(error_reports_router)
 
     # آخر Router دائماً: يلتقط أي زر غير مربوط بدل أن يسكت البوت.
+    dp.include_router(merchant_panel.router)
+
     dp.include_router(fallback.router)
 
 
@@ -527,57 +534,64 @@ async def failover_decay_cycle():
         logger.exception("فشل دورة تلاشي عدادات auto_failover")
 
 
-async def start_scheduler() -> AsyncIOScheduler:
+async def start_scheduler(throttle_mw=None) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
 
+    def _add(func, trigger, **kwargs):
+        # منع تراكب نفس المهمة عند بطء الشبكة/DB: نسخة واحدة فقط + دمج الفائت
+        kwargs.setdefault("max_instances", 1)
+        kwargs.setdefault("coalesce", True)
+        kwargs.setdefault("misfire_grace_time", 300)
+        return scheduler.add_job(func, trigger, **kwargs)
+
     order_poll_seconds = max(
-        3,
+        10,
         await FeatureService.config_int(
-            "instant_delivery", "poll_interval_seconds", 15
+            "instant_delivery", "poll_interval_seconds", 30
         ),
     )
-    scheduler.add_job(
+    _add(
         check_pending_orders,
         "interval",
         seconds=order_poll_seconds,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         check_unified_orders,
         "interval",
         minutes=2,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         check_pending_invoices,
         "interval",
-        seconds=max(5, settings.PLISIO_POLLING_INTERVAL_SECONDS),
+        seconds=max(15, settings.PLISIO_POLLING_INTERVAL_SECONDS),
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         update_provider_status,
         "interval",
         minutes=10,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         check_product_watches,
         "interval",
         minutes=10,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         cleanup_balance_locks,
         "interval",
         minutes=5,
     )
 
-    scheduler.add_job(
+    _add(
         daily_backup,
         "cron",
         hour=3,
@@ -585,46 +599,46 @@ async def start_scheduler() -> AsyncIOScheduler:
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         refill_guarantee_cycle,
         "interval",
         hours=6,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         marketplace_maintenance_cycle,
         "interval",
         minutes=30,
     )
 
-    scheduler.add_job(
+    _add(
         prune_feature_events,
         "cron",
         hour=4,
         minute=30,
     )
 
-    scheduler.add_job(
+    _add(
         drip_feed_cycle,
         "interval",
         minutes=5,
     )
 
-    scheduler.add_job(
+    _add(
         autonomous_purchase_cycle,
         "interval",
         minutes=15,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         escrow_expiry_cycle,
         "interval",
         hours=1,
     )
 
-    scheduler.add_job(
+    _add(
         subscription_cycle,
         "cron",
         hour=8,
@@ -632,48 +646,49 @@ async def start_scheduler() -> AsyncIOScheduler:
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         catalog_autopilot_cycle,
         "interval",
         hours=6,
     )
 
-    scheduler.add_job(
+    _add(
         fx_refresh_cycle,
         "interval",
         minutes=60,
     )
 
-    scheduler.add_job(
+    _add(
         bid_cleanup_cycle,
         "interval",
         minutes=30,
     )
 
     # قسم واتساب: تجديد تلقائي اليومي + تنبيه الانتهاء (كل ساعة).
-    scheduler.add_job(
+    _add(
         wa_renewal_cycle,
         "interval",
         hours=1,
     )
 
     # قسم واتساب: صحة جسر البوت الثاني — إنذار الأدمن عند انقطاعه (كل 10 دقائق).
-    scheduler.add_job(
+    _add(
         wa_bridge_health_cycle,
         "interval",
         minutes=10,
         args=[bot],
     )
 
-    # التوفر المتقطع: كل دورة (افتراضياً دقيقة) تُحذف اللوحة وتُنشأ بأحدث
-    # الدول الجاهزة فوراً من المزود.
-    scheduler.add_job(
+    # التوفر المتقطع: كل دورة (افتراضياً 5 دقائق) تُحذف اللوحة وتُنشأ بأحدث
+    # الدول الجاهزة فوراً من المزود. النشر كل دقيقة كان يسبب FloodWait
+    # وإزعاج المشتركين — الحد الأدنى الآن 3 دقائق.
+    _add(
         availability_board_cycle,
         "interval",
         seconds=max(
-            30,
+            180,
             await FeatureService.config_int(
-                "numbers_availability_board", "refresh_seconds", 60
+                "numbers_availability_board", "refresh_seconds", 300
             ),
         ),
         args=[bot],
@@ -681,7 +696,7 @@ async def start_scheduler() -> AsyncIOScheduler:
 
     # برنامج الوكلاء: فحص دوري (افتراضياً كل 6 ساعات) لسحب وكالات
     # الوكلاء الذين أقل إيداعهم الأسبوعي من الحد.
-    scheduler.add_job(
+    _add(
         agent_weekly_cycle,
         "interval",
         hours=max(
@@ -691,21 +706,21 @@ async def start_scheduler() -> AsyncIOScheduler:
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         sentinel_cycle,
         "interval",
         minutes=5,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         process_sponsored_ads,
         "interval",
         minutes=5,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         process_special_offers,
         "interval",
         minutes=5,
@@ -713,7 +728,7 @@ async def start_scheduler() -> AsyncIOScheduler:
     )
 
     # ميزات التفاعل الجديدة.
-    scheduler.add_job(
+    _add(
         send_monthly_reports,
         "cron",
         hour=9,
@@ -721,14 +736,14 @@ async def start_scheduler() -> AsyncIOScheduler:
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         offer_expiry_cycle,
         "interval",
         minutes=15,
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         price_alert_cycle,
         "interval",
         minutes=max(
@@ -738,14 +753,14 @@ async def start_scheduler() -> AsyncIOScheduler:
         args=[bot],
     )
 
-    scheduler.add_job(
+    _add(
         weekly_challenge_cycle,
         "interval",
         hours=1,
     )
 
     # auto_failover: تلاشي عدادات الفشل تدريجياً حسب إعداد الميزة.
-    scheduler.add_job(
+    _add(
         failover_decay_cycle,
         "interval",
         minutes=max(
@@ -756,12 +771,68 @@ async def start_scheduler() -> AsyncIOScheduler:
         ),
     )
 
+    if throttle_mw is not None:
+        def _throttle_cleanup():
+            try:
+                removed = throttle_mw.cleanup()
+                if removed:
+                    logger.info("throttle cleanup: أُزيل %s مفتاحاً خاملاً.", removed)
+            except Exception:
+                pass
+
+            try:
+                from services.balance_service import BalanceService
+
+                BalanceService.cleanup_idle_locks()
+            except Exception:
+                pass
+
+            try:
+                from services.operation_lock_service import OperationLockService
+
+                asyncio.get_running_loop().create_task(OperationLockService.cleanup())
+            except Exception:
+                pass
+
+        _add(_throttle_cleanup, "interval", minutes=5)
+
+    async def _tenant_orders_cycle():
+        try:
+            await check_tenant_orders()
+        except Exception:
+            logger.exception("فشل دورة طلبات الفروع")
+
+    async def _tenant_billing_cycle(bot):
+        try:
+            await bill_tenant_subscriptions(bot)
+        except Exception:
+            logger.exception("فشل فوترة المستأجرين")
+
+    _add(_tenant_orders_cycle, "interval", minutes=2)
+    _add(_tenant_billing_cycle, "cron", hour=9, minute=30, args=[bot])
+
     scheduler.start()
     return scheduler
 
 
 async def main():
     logger.info("⏳ جاري تهيئة قاعدة البيانات...")
+    # فشل سريع إن بقي SQLite في الإنتاج — يحمي من تشغيل حاويتين على ملف واحد
+    db_url = (settings.DATABASE_URL or "").lower()
+    if settings.ENVIRONMENT == "production" and db_url.startswith("sqlite"):
+        logger.error(
+            "DATABASE_URL ما زال sqlite في بيئة production — ارفض الإقلاع "
+            "لمنع فساد الرصيد. اضبط Postgres في .env."
+        )
+        raise RuntimeError("Refusing to run production on SQLite")
+    if settings.ENVIRONMENT == "production" and "change_me" in (settings.DATABASE_URL or ""):
+        logger.error("كلمة سر قاعدة البيانات ما زالت الافتراضية change_me — ارفض الإقلاع.")
+        raise RuntimeError("Refusing to run production with default DB password")
+    if not settings.INVENTORY_ENCRYPTION_KEY:
+        logger.warning(
+            "INVENTORY_ENCRYPTION_KEY غير مضبوط — رفع الجلسات الجاهزة مرفوض "
+            "حتى يُضبط (Fail-closed)."
+        )
     await init_db()
     # ترقيات alembic تستدعي fileConfig من alembic.ini (root=WARN) فتمسح
     # إعداد السجلات — نعيد ضبطها هنا ليبقى INFO ظاهراً أثناء التشغيل.
@@ -800,64 +871,79 @@ async def main():
     async with async_session_maker() as session:
         await TaskService.seed_defaults(session)
 
+    async def _deferred_heavy_startup():
+        # مهام ثقيلة خارج المسار الحرج: تعمل بعد بدء الـ polling بثلاث دقائق
+        # حتى لا يتجمد الإقلاع عند بطء مزود خارجي.
+        await asyncio.sleep(180)
+        try:
+            async with async_session_maker() as session:
+                if await SmmSectionsService.auto_build_enabled():
+                    if await SmmSectionsService.upgrade_legacy_limit():
+                        logger.info("⬆️ رُفع حد النشر التلقائي لأقسام الرشق من 5 إلى 10.")
+                    report = await SmmSectionsService.build(session)
+                    logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
+        except Exception:
+            logger.exception("فشل البناء التلقائي لأقسام الرشق (مؤجل)")
+        try:
+            from services.junk_products_service import JunkProductsService
+
+            async with async_session_maker() as session:
+                junk_report = await JunkProductsService.clean(session)
+                if junk_report.changed:
+                    logger.info(
+                        "🧹 تنظيف منتجات «سيرفر» الوهمية: حُذف %s ونُشر %s بديلاً.",
+                        junk_report.deleted,
+                        junk_report.replaced,
+                    )
+        except Exception:
+            logger.exception("فشل تنظيف منتجات «سيرفر» الوهمية (مؤجل)")
+        try:
+            async with async_session_maker() as session:
+                if await SubscriptionsSyncService.enabled() and await SubscriptionsSyncService.auto_on_startup():
+                    try:
+                        reports = await asyncio.wait_for(
+                            SubscriptionsSyncService.sync_all(session), timeout=300
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("مزامنة الاشتراكات تجاوزت 5 دقائق — أُجهضت.")
+                        return
+                    for report in reports:
+                        logger.info("🛍 مزامنة الاشتراكات: %s", report)
+        except Exception:
+            logger.exception("فشل مزامنة الاشتراكات الرقمية (مؤجل)")
+
     # ── بناء أقسام الرشق الداخلية تلقائياً ──
-    # ينشئ لكل تطبيق أقسامه (متابعون/لايكات/مشاهدات...) من الخدمات المسحوبة
-    # وينشر أرخص 10 خدمات بكل قسم (ويتجاهل الخدمات بلا سعر).
-    # Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
-    try:
-        async with async_session_maker() as session:
-            if await SmmSectionsService.auto_build_enabled():
-                if await SmmSectionsService.upgrade_legacy_limit():
-                    logger.info("⬆️ رُفع حد النشر التلقائي لأقسام الرشق من 5 إلى 10.")
-                report = await SmmSectionsService.build(session)
-                logger.info("🚀 البناء التلقائي لأقسام الرشق: %s", report)
-    except Exception:
-        logger.exception("فشل البناء التلقائي لأقسام الرشق عند الإقلاع")
-
+    # (نُقل للخلفية — انظر _deferred_heavy_startup أعلاه)
     # ── تنظيف منتجات «سيرفر» الوهمية تلقائياً ──
-    # أسطر كتالوج المزود («متابعين انستجرام سيرفر 1» بسعر 0$) ليست خدمات
-    # حقيقية؛ تُحذف من كل تطبيقات الرشق وأقسامها وتُستبدل بخدمات مسعّرة.
-    try:
-        from services.junk_products_service import JunkProductsService
-
-        async with async_session_maker() as session:
-            junk_report = await JunkProductsService.clean(session)
-            if junk_report.changed:
-                logger.info(
-                    "🧹 تنظيف منتجات «سيرفر» الوهمية: حُذف %s ونُشر %s بديلاً.",
-                    junk_report.deleted,
-                    junk_report.replaced,
-                )
-    except Exception:
-        logger.exception("فشل تنظيف منتجات «سيرفر» الوهمية عند الإقلاع")
-
+    # (نُقل للخلفية)
     # ── مزامنة الاشتراكات الرقمية (ggsoma) تلقائياً ──
-    # يسحب كتالوج المزود وينشر منتجاته في قسم الاشتراكات بسعر التكلفة +
-    # هامش الربح المحدد. Idempotent: لا يكرر ولا يمس المنتجات اليدوية.
-    try:
-        async with async_session_maker() as session:
-            if await SubscriptionsSyncService.enabled() and await SubscriptionsSyncService.auto_on_startup():
-                reports = await SubscriptionsSyncService.sync_all(session)
-                for report in reports:
-                    logger.info("🛍 مزامنة الاشتراكات: %s", report)
-    except Exception:
-        logger.exception("فشل مزامنة الاشتراكات الرقمية عند الإقلاع")
+    # (نُقلت للخلفية بمهلة 5 دقائق)
 
     logger.info(f"🔑 آيديات الأدمن: {settings.admin_ids_list}")
     logger.info("✅ قاعدة البيانات جاهزة.")
 
-    register_middlewares()
+    throttle_mw = register_middlewares()
     register_routers()
     install_asyncio_exception_handler(bot)
-    scheduler = await start_scheduler()
+    scheduler = await start_scheduler(throttle_mw)
+    asyncio.create_task(_deferred_heavy_startup())
 
     logger.info("🚀 البوت يعمل الآن...")
     try:
+        # زر القائمة: /start للجميع (غير قاتل إن تعذرت الشبكة).
+        try:
+            from services.bot_menu_service import sync_bot_menu
+
+            await sync_bot_menu(bot)
+        except Exception:
+            logger.warning("تخطي مزامنة زر القائمة هذه المرة.")
         # الشبكة نحو api.telegram.org قد تكون متقطعة (Connection reset).
         # نعيد المحاولة عدة مرات، وإن فشلت كلها نتابع للـ polling بدل أن يسقط البوت.
         for attempt in range(1, 6):
             try:
-                await bot.delete_webhook(drop_pending_updates=True, request_timeout=20)
+                # لا تُسقط التحديثات المعلقة: successful_payment (نجوم) قد يصل
+                # أثناء إعادة التشغيل، وإسقاطه يعني دفعاً بلا شحن.
+                await bot.delete_webhook(drop_pending_updates=False, request_timeout=20)
                 break
             except Exception as exc:
                 logger.warning("تعذّر حذف الـ webhook (محاولة %s/5): %s", attempt, exc)

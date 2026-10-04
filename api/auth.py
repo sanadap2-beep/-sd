@@ -28,7 +28,10 @@ def validate_init_data(init_data: str) -> dict:
     if not received_hash or not auth_date or not settings.BOT_TOKEN:
         raise TelegramAuthError()
     try:
-        if abs(int(time.time()) - int(auth_date)) > 86_400:
+        now = int(time.time())
+        auth_ts = int(auth_date)
+        # ارفض المستقبل (ساعة منحرفة أو replay مُركّب) وقلص النافذة لـ 10 دقائق
+        if auth_ts > now + 300 or (now - auth_ts) > 600:
             raise TelegramAuthError("Telegram session expired")
     except ValueError as exc:
         raise TelegramAuthError() from exc

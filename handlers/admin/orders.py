@@ -242,6 +242,31 @@ async def order_refund(callback: CallbackQuery, session, bot):
         )
         return
 
+    # P0: الاسترجاع مشروط بوجود حركة خصم أصلية غير مسترجعة — وإلا يمنح
+    # رصيداً مجانياً لطلب لم يُدفع (مثل طلبات AWAITING_FUNDS القديمة).
+    from sqlalchemy import select as _select
+
+    from database.models import Transaction as _Transaction
+    from database.models import TransactionType as _TxType
+
+    debit = (
+        await session.execute(
+            _select(_Transaction).where(
+                _Transaction.user_id == order.user_id,
+                _Transaction.type == _TxType.PURCHASE,
+                _Transaction.amount < 0,
+                _Transaction.related_table == "unified_orders",
+                _Transaction.related_id == order.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if debit is None:
+        await callback.answer(
+            "⛔ لا توجد حركة خصم أصلية لهذا الطلب — الاسترجاع مرفوض.",
+            show_alert=True,
+        )
+        return
+
     user = await BalanceService.add_balance(
         session,
         order.user_id,

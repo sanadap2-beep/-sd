@@ -97,7 +97,7 @@ async def madmin_add_received(message: Message, state: FSMContext, session, db_u
         await state.clear()
         return
 
-    result = await session.execute(select(User).where(User.telegram_id == tg_id))
+    result = await session.execute(select(User).where(User.telegram_id == tg_id, User.tenant_id == 0))
     target_user = result.scalar_one_or_none()
 
     if target_user is None:
@@ -113,6 +113,7 @@ async def madmin_add_received(message: Message, state: FSMContext, session, db_u
         return
 
     target_user.is_admin = True
+    target_user.admin_source = "panel"
     await session.commit()
 
     logger.info(f"الأدمن {db_user.telegram_id} منح صلاحيات أدمن للمستخدم {tg_id}")
@@ -153,6 +154,7 @@ async def madmin_remove(callback: CallbackQuery, session, db_user: User):
         return
 
     target_user.is_admin = False
+    target_user.admin_source = None
     await session.commit()
 
     logger.info(

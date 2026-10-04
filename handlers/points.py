@@ -73,26 +73,35 @@ async def points_redeem(callback: CallbackQuery, session, db_user: User):
 
     # نستخدم مسار النقاط نفسه حتى يبقى سعر الصرف واحداً في كل البوت،
     # ثم نضيف القيمة رصيداً.
+    from uuid import uuid4
+
     from database.models import TransactionType
     from services.balance_service import BalanceService
+    from services.operation_lock_service import OperationBusyError, OperationLockService
     from services.points_service import PointsError
 
+    lock_key = f"points-redeem:{db_user.id}"
     try:
-        spent_value = await PointsService.spend(
-            session, db_user.id, points, "استبدال نقاط رصيداً"
-        )
-    except PointsError as exc:
-        await callback.answer(str(exc), show_alert=True)
-        return
+        async with OperationLockService.acquire(lock_key, timeout=3):
+            try:
+                spent_value = await PointsService.spend(
+                    session, db_user.id, points, "استبدال نقاط رصيداً"
+                )
+            except PointsError as exc:
+                await callback.answer(str(exc), show_alert=True)
+                return
 
-    await BalanceService.add_balance(
-        session,
-        db_user.id,
-        spent_value,
-        TransactionType.LOYALTY_REDEEM,
-        description=f"استبدال {points} نقطة",
-        payment_reference=f"points_redeem:{db_user.id}:{points}:{int(value * 10000)}",
-    )
+            await BalanceService.add_balance(
+                session,
+                db_user.id,
+                spent_value,
+                TransactionType.LOYALTY_REDEEM,
+                description=f"استبدال {points} نقطة",
+                payment_reference=f"points_redeem:{db_user.id}:{uuid4().hex}",
+            )
+    except OperationBusyError:
+        await callback.answer("عملية استبدال جارية بالفعل، انتظر قليلاً.", show_alert=True)
+        return
     await session.refresh(db_user)
     await callback.answer(f"💱 أُضيف {spent_value}$ إلى رصيدك.")
     await points_home(callback)

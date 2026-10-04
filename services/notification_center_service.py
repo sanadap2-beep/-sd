@@ -127,7 +127,7 @@ class NotificationCenterService:
         try:
             async with async_session_maker() as session:
                 user = (
-                    await session.execute(select(User).where(User.telegram_id == int(telegram_id)))
+                    await session.execute(select(User).where(User.telegram_id == int(telegram_id), User.tenant_id == 0))
                 ).scalar_one_or_none()
                 user_id = user.id if user else None
                 if status != "sent" or await NotificationCenterService.should_send(session, user_id, category, priority):

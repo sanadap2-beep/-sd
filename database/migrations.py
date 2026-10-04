@@ -92,7 +92,10 @@ _POST_INITIAL_MARKERS = frozenset(
 
 
 def _sync_url() -> str:
-    return settings.DATABASE_URL.replace("+aiosqlite", "").replace("+asyncpg", "")
+    url = settings.DATABASE_URL.replace("+aiosqlite", "")
+    # الترحيلات متزامنة: asyncpg لا يعمل مع create_engine العادي.
+    # psycopg[binary] في requirements لهذا الغرض.
+    return url.replace("+asyncpg", "+psycopg")
 
 
 def _unversioned_schema_action(tables: set[str]) -> str:
@@ -136,22 +139,40 @@ def _run_sync() -> None:
         with engine.connect() as connection:
             tables = set(inspect(connection).get_table_names())
 
-        if tables and "alembic_version" not in tables:
-            action = _unversioned_schema_action(tables)
-            if action == "reject":
-                raise _legacy_schema_error(tables)
+            # قفل استشاري على PostgreSQL حتى لا تُشغّل حاويتا bot وapi
+            # الترحيلات معاً. على SQLite لا حاجة (كاتب واحد).
+            locked = False
+            if connection.dialect.name == "postgresql":
+                from sqlalchemy import text as _text
 
-            # This is a known pre-Alembic/initial-revision shape. Mark it at
-            # the initial revision, then let Alembic apply every later change.
-            # Never mark an unknown schema as head.
-            logger.warning(
-                "Unversioned database matches the initial schema; baselining at %s "
-                "before applying remaining migrations.",
-                _INITIAL_SCHEMA_REVISION,
-            )
-            command.stamp(config, _INITIAL_SCHEMA_REVISION)
+                connection.execute(
+                    _text("SELECT pg_advisory_lock(hashtext('alembic_migrations'))")
+                )
+                locked = True
+            try:
+                if tables and "alembic_version" not in tables:
+                    action = _unversioned_schema_action(tables)
+                    if action == "reject":
+                        raise _legacy_schema_error(tables)
 
-        command.upgrade(config, "head")
+                    # This is a known pre-Alembic/initial-revision shape. Mark it at
+                    # the initial revision, then let Alembic apply every later change.
+                    # Never mark an unknown schema as head.
+                    logger.warning(
+                        "Unversioned database matches the initial schema; baselining at %s "
+                        "before applying remaining migrations.",
+                        _INITIAL_SCHEMA_REVISION,
+                    )
+                    command.stamp(config, _INITIAL_SCHEMA_REVISION)
+
+                command.upgrade(config, "head")
+            finally:
+                if locked:
+                    from sqlalchemy import text as _text2
+
+                    connection.execute(
+                        _text2("SELECT pg_advisory_unlock(hashtext('alembic_migrations'))")
+                    )
     finally:
         engine.dispose()
 

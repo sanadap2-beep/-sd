@@ -9,8 +9,10 @@
 USDT يدوي، USDT تلقائي، طرق أخرى) في handlers/deposit_methods.py
 """
 import logging
-from decimal import Decimal, InvalidOperation
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from html import escape
+
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, PreCheckoutQuery
@@ -50,7 +52,7 @@ def _parse_positive_amount(value: str | None) -> Decimal:
 
 async def _get_admin_user(session, telegram_id: int) -> User | None:
     """Resolve the Telegram admin to the internal users.id value."""
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    result = await session.execute(select(User).where(User.telegram_id == telegram_id, User.tenant_id == 0))
     user = result.scalar_one_or_none()
     if user and user.is_admin:
         return user
@@ -150,7 +152,7 @@ async def deposit_accept(callback: CallbackQuery, session, bot):
         bonus_usd=str(bonus) if bonus and bonus > 0 else None,
     )
     try:
-        await callback.message.edit_caption(caption=(callback.message.caption or '') + f'\n\n✅ <b>تم القبول</b> بواسطة {callback.from_user.full_name}', reply_markup=None)
+        await callback.message.edit_caption(caption=(callback.message.caption or '') + f'\n\n✅ <b>تم القبول</b> بواسطة {escape(callback.from_user.full_name or "")}', reply_markup=None)
     except Exception:
         try:
             await callback.message.edit_text((callback.message.text or '') + I18nService.t('ux_deposit_229_3', _auto_lang(locals())), reply_markup=None)
@@ -180,7 +182,7 @@ async def deposit_reject(callback: CallbackQuery, session, bot):
     notifier = NotificationService(bot)
     await notifier.notify_deposit_rejected(user_telegram_id=user.telegram_id)
     try:
-        await callback.message.edit_caption(caption=(callback.message.caption or '') + f'\n\n❌ <b>تم الرفض</b> بواسطة {callback.from_user.full_name}', reply_markup=None)
+        await callback.message.edit_caption(caption=(callback.message.caption or '') + f'\n\n❌ <b>تم الرفض</b> بواسطة {escape(callback.from_user.full_name or "")}', reply_markup=None)
     except Exception:
         try:
             await callback.message.edit_text((callback.message.text or '') + I18nService.t('ux_deposit_284_7', _auto_lang(locals())), reply_markup=None)
@@ -230,7 +232,11 @@ async def deposit_tx_number_received(message: Message, state: FSMContext, sessio
         return
     amount_usd = Decimal(data['amount_usd'])
     photo_file_id = data['photo_file_id']
-    tx_number = message.text.strip()
+    from services.input_validation_service import InputValidationService as _IVS
+    tx_number = _IVS.message_text(message)
+    if not tx_number:
+        await message.answer("⚠️ أرسل رقم العملية كنص.")
+        return
     duplicate = await session.execute(select(DepositRequest.id).where(DepositRequest.proof_tx_number == tx_number, DepositRequest.status.in_([DepositStatus.PENDING, DepositStatus.APPROVED])).limit(1))
     if duplicate.scalar_one_or_none() is not None:
         await message.answer(I18nService.t('ux_deposit_357_15', _auto_lang(locals())))
@@ -238,7 +244,15 @@ async def deposit_tx_number_received(message: Message, state: FSMContext, sessio
         return
     deposit = DepositRequest(user_id=db_user.id, amount_usd=amount_usd, proof_photo_file_id=photo_file_id, proof_tx_number=tx_number, payment_method='Manual (Legacy)', status=DepositStatus.PENDING)
     session.add(deposit)
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        from sqlalchemy.exc import IntegrityError as _IntegrityError
+
+        await session.rollback()
+        await message.answer(I18nService.t('ux_deposit_357_15', _auto_lang(locals())))
+        await state.clear()
+        return
     await session.refresh(deposit)
     notifier = NotificationService(bot)
     sent_msg_id = await notifier.notify_new_deposit(user_telegram_id=db_user.telegram_id, username=db_user.username, amount_usd=str(amount_usd), tx_number=tx_number, deposit_id=deposit.id, photo_file_id=photo_file_id, reply_markup=deposit_decision_kb(deposit.id))

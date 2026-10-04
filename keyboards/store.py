@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from services.i18n_service import I18nService
+from services.premium_emoji import button_kwargs, button_text
 
 from keyboards.style_utils import style_for_callback
 
@@ -58,7 +59,14 @@ def store_home_kb(
 
     from services.button_customization_service import ButtonCustomizationService as BC
 
-    def _bc(action: str, default_label: str, style=None, web_app=None, url=None):
+    def _bc(action: str, default_label: str, style=None, web_app=None, url=None, icon=None):
+        # أزرار الأقسام الديناميكية تحمل أيقونتها المميزة مباشرة (لا مفتاح تخصيص لها).
+        if action.startswith("cat:") and icon:
+            return InlineKeyboardButton(
+                text=default_label, callback_data=action,
+                style=style, web_app=web_app, url=url,
+                icon_custom_emoji_id=icon,
+            )
         mapping = {
             "num_hub": "store.numbers",
             "webapp": "store.webapp",
@@ -94,7 +102,7 @@ def store_home_kb(
             elif entry.is_url:
                 url_rows.append(_bc(entry.action, default_label, None, url=entry.action))
             elif entry.action.startswith("cat:"):
-                category_rows.append(_bc(entry.action, default_label, "success"))
+                category_rows.append(_bc(entry.action, default_label, "success", icon=entry.icon_custom_emoji_id))
             elif entry.action.startswith("store:section:"):
                 section_rows.append(_bc(entry.action, default_label, "success"))
             else:
@@ -132,8 +140,13 @@ def store_home_kb(
 
     for category in categories or []:
         b.button(
-            text=f"{category.emoji} {category.name_ar}",
+            text=button_text(
+                category.name_ar,
+                category.emoji,
+                getattr(category, "custom_emoji_id", None),
+            ),
             callback_data=f"cat:{category.id}", style="success",
+            **button_kwargs(getattr(category, "custom_emoji_id", None)),
         )
 
     for key in SECTION_LABELS:
@@ -222,8 +235,9 @@ def store_products_kb(
             price = _server_price(product, server)
         rows.append([
             InlineKeyboardButton(
-                text=f"🛒 {name} · {price}$",
+                text=f"🛒 {button_text(name, None, getattr(product, 'custom_emoji_id', None))} · {price}$",
                 callback_data=f"prod:{product.id}", style="success",
+                **button_kwargs(getattr(product, "custom_emoji_id", None)),
             )
         ])
     rows.append([

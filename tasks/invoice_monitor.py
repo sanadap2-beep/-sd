@@ -47,6 +47,81 @@ def _invoice_amount_label(invoice: AutoInvoice) -> str:
     return f"{invoice.amount_original} USDT"
 
 
+def _actual_paid(info: dict) -> tuple | tuple[None, None]:
+    """المبلغ الفعلي المستلم (عملة الدفع) أو (None, None) عند غيابه."""
+    from decimal import Decimal, InvalidOperation
+
+    raw = info.get("amount")
+    if raw in (None, ""):
+        return None, None
+    try:
+        return Decimal(str(raw)), (info.get("currency") or "USDT")
+    except (InvalidOperation, ValueError, TypeError):
+        return None, None
+
+
+def _needs_review(invoice: AutoInvoice, info: dict) -> bool:
+    """هل الدفع غير مطابق ويحتاج مراجعة؟ mismatch دائماً نعم."""
+    from decimal import Decimal
+
+    if str(info.get("raw_status") or "").lower() == "mismatch":
+        return True
+    actual, _currency = _actual_paid(info)
+    if actual is None:
+        return False
+    try:
+        expected = Decimal(str(invoice.amount_original))
+    except Exception:
+        return True
+    if expected <= 0:
+        return True
+    # تسامح 0.5% لرسوم الشبكة والتقريب — ما تجاوزه مراجعة.
+    ratio = actual / expected
+    return ratio < Decimal("0.995") or ratio > Decimal("1.005")
+
+
+async def _process_review_invoice(session, invoice: AutoInvoice, info: dict, bot):
+    """دفع غير مطابق: حفظ المبلغ الفعلي + حالة REVIEW + تنبيه الطرفين."""
+    if invoice.status == AutoInvoiceStatus.REVIEW:
+        return
+    actual, currency = _actual_paid(info)
+    invoice.actual_amount = str(actual) if actual is not None else None
+    invoice.actual_currency = currency
+    invoice.raw_data = json.dumps(info, ensure_ascii=False, default=str)
+    invoice.status = AutoInvoiceStatus.REVIEW
+    await session.commit()
+
+    user = await session.get(User, invoice.user_id)
+    notifier = NotificationService(bot)
+    if user:
+        try:
+            await notifier.notify_user(
+                user.telegram_id,
+                "🔍 <b>دفعتك قيد المراجعة</b>\n\n"
+                f"🆔 الفاتورة: #{invoice.id}\n"
+                f"💵 المتوقع: <b>{invoice.amount_original} {invoice.currency}</b>\n"
+                f"💰 المستلم: <b>{invoice.actual_amount or '—'} {invoice.actual_currency or ''}</b>\n\n"
+                "سيراجع فريقنا الدفع ويضيف المستحق لرصيدك قريباً.",
+            )
+        except Exception:
+            pass
+    try:
+        await notifier.notify_admin(
+            "🔍 <b>فاتورة تلقائية تحتاج مراجعة</b>\n\n"
+            f"🆔 الفاتورة: #{invoice.id} · 👤 user_id={invoice.user_id}\n"
+            f"💵 المتوقع: <b>{invoice.amount_original} {invoice.currency}</b>\n"
+            f"💰 المستلم فعلياً: <b>{invoice.actual_amount or '—'} {invoice.actual_currency or ''}</b>\n"
+            f"💵 يقابلها تقريباً: <b>{invoice.amount_usd}$</b>\n\n"
+            "الاعتماد/الرفض من: لوحة الأدمن ← طلبات الشحن ← فواتير للمراجعة."
+        )
+    except Exception:
+        pass
+    logger.info(
+        "فاتورة #%s دخلت المراجعة (متوقع %s، فعلي %s)",
+        invoice.id, invoice.amount_original, invoice.actual_amount,
+    )
+
+
 async def check_pending_invoices(bot):
     """
     مهمة رئيسية تُشغَّل كل 30 ثانية.
@@ -100,6 +175,11 @@ async def _check_usdt_invoice(session, invoice: AutoInvoice, bot):
 async def _process_paid_usdt_invoice(session, invoice: AutoInvoice, info: dict, bot):
     """يعالج فاتورة USDT مدفوعة."""
     if invoice.status == AutoInvoiceStatus.PAID:
+        return
+
+    # P0: الدفع غير المطابق (زائد/ناقص) لا يُعتمد تلقائياً — مراجعة إدارية.
+    if _needs_review(invoice, info):
+        await _process_review_invoice(session, invoice, info, bot)
         return
 
     amount_label = _invoice_amount_label(invoice)
@@ -214,6 +294,11 @@ async def _expire_invoice(session, invoice: AutoInvoice, bot):
             await _process_paid_usdt_invoice(session, invoice, info, bot)
             return
         if plisio_client.is_failed_status(status):
+            # دفع جزئي وصل رغم الفشل/الانتهاء؟ → مراجعة بدل الدفن.
+            actual, _cur = _actual_paid(info)
+            if actual is not None and actual > 0:
+                await _process_review_invoice(session, invoice, info, bot)
+                return
             await _process_failed_invoice(session, invoice, bot, "فشل الدفع")
             return
 

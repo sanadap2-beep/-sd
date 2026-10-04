@@ -394,7 +394,11 @@ async def shamcash_manual_tx_received(
     data = await state.get_data()
     amount_usd = Decimal(data["amount_usd"])
     photo_file_id = data["photo_file_id"]
-    tx_number = message.text.strip()
+    from services.input_validation_service import InputValidationService as _IVS
+    tx_number = _IVS.message_text(message)
+    if not tx_number:
+        await message.answer("⚠️ أرسل رقم العملية كنص.")
+        return
 
     if await _proof_already_submitted(session, tx_number):
         await message.answer("⚠️ رقم العملية مستخدم مسبقاً أو قيد المراجعة.")
@@ -410,7 +414,13 @@ async def shamcash_manual_tx_received(
         status=DepositStatus.PENDING,
     )
     session.add(deposit)
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        await message.answer("⚠️ رقم العملية مستخدم مسبقاً أو قيد المراجعة.")
+        await state.clear()
+        return
     await session.refresh(deposit)
 
     notifier = NotificationService(bot)
@@ -564,7 +574,11 @@ async def usdt_manual_tx_received(
     amount_usd = Decimal(data["amount_usd"])
     photo_file_id = data["photo_file_id"]
     network = data["network"]
-    tx_hash = message.text.strip()
+    from services.input_validation_service import InputValidationService as _IVS2
+    tx_hash = _IVS2.message_text(message)
+    if not tx_hash:
+        await message.answer("⚠️ أرسل TX Hash كنص.")
+        return
 
     if await _proof_already_submitted(session, tx_hash):
         await message.answer("⚠️ TX Hash مستخدم مسبقاً أو قيد المراجعة.")
@@ -580,7 +594,13 @@ async def usdt_manual_tx_received(
         status=DepositStatus.PENDING,
     )
     session.add(deposit)
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        await message.answer("⚠️ TX Hash مستخدم مسبقاً أو قيد المراجعة.")
+        await state.clear()
+        return
     await session.refresh(deposit)
 
     notifier = NotificationService(bot)
@@ -726,9 +746,14 @@ async def _create_shamcash_auto_invoice(
             currency=currency,
         )
     except SamApiError as e:
-        logger.error(f"فشل إنشاء فاتورة Sam API: {e}")
+        import uuid as _uuid
+
+        from services.html_guard import esc
+
+        err_code = _uuid.uuid4().hex[:8]
+        logger.error(f"فشل إنشاء فاتورة Sam API [{err_code}]: {e}")
         await target.answer(
-            f"❌ فشل إنشاء الفاتورة:\n<code>{e}</code>\n\n"
+            f"❌ فشل إنشاء الفاتورة (رمز: <code>{err_code}</code>)\n\n"
             "حاول مجدداً لاحقاً أو استخدم طريقة دفع أخرى.",
             reply_markup=back_to_main_kb(),
         )
@@ -846,7 +871,11 @@ async def shamcash_auto_tx_received(
 ):
     if not await _require_payment_method(message, "shamcash_auto", state):
         return
-    tx_ref = message.text.strip()
+    from services.input_validation_service import InputValidationService as _IVS3
+    tx_ref = _IVS3.message_text(message)
+    if not tx_ref:
+        await message.answer("⚠️ أرسل المرجع كنص.")
+        return
     if not tx_ref:
         await message.answer("⚠️ أرسل رقم العملية.")
         return
@@ -902,9 +931,12 @@ async def shamcash_auto_tx_received(
         await state.clear()
         return
     except SamApiError as e:
-        logger.error(f"فشل التحقق من فاتورة Sam API: {e}")
+        import uuid as _uuid2
+
+        err_code = _uuid2.uuid4().hex[:8]
+        logger.error(f"فشل التحقق من فاتورة Sam API [{err_code}]: {e}")
         await message.answer(
-            f"❌ فشل التحقق:\n<code>{e}</code>\n\nتأكد من رقم العملية وحاول مجدداً.",
+            f"❌ فشل التحقق (رمز: <code>{err_code}</code>)\n\nتأكد من رقم العملية وحاول مجدداً.",
         )
         return
 

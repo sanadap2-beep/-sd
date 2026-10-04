@@ -355,6 +355,7 @@ class PlisioClient(PaymentGatewayBase):
 
         return {
             "status": mapped_status,
+            "raw_status": raw_status,
             "uuid": _clean_text(result.get("id") or result.get("txn_id"))
             or external_id,
             "amount": result.get("amount") or result.get("actual_sum"),

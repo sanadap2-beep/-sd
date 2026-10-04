@@ -13,6 +13,14 @@ class InputValidationError(ValueError):
 
 class InputValidationService:
     @staticmethod
+    def message_text(message) -> str:
+        """نص رسالة آمن: "" إن كانت صورة/ستيكر/بلا نص (يمنع None.strip())."""
+        text = getattr(message, "text", None)
+        if not isinstance(text, str):
+            return ""
+        return text.strip()
+
+    @staticmethod
     def text(value: str | None, *, min_length: int = 1, max_length: int = 2000) -> str:
         normalized = (value or "").strip()
         if not min_length <= len(normalized) <= max_length:
@@ -64,11 +72,18 @@ class InputValidationService:
         return InputValidationService.integer(value, minimum=1)
 
     @staticmethod
-    def url(value: str | None) -> str:
+    def url(value: str | None, *, allow_private: bool = False, allowed_schemes=("https",)) -> str:
         candidate = InputValidationService.text(value, min_length=8, max_length=500)
         parsed = urlparse(candidate)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise InputValidationError("الرابط غير صالح.")
+        if parsed.scheme not in allowed_schemes or not parsed.netloc:
+            raise InputValidationError("الرابط غير صالح (يُسمح بـ HTTPS فقط).")
+        if not allow_private:
+            try:
+                from services.ssrf_guard import validate_url
+
+                return validate_url(candidate, allow_http=("http" in allowed_schemes))
+            except Exception as exc:
+                raise InputValidationError(f"الرابط مرفوض أمنياً: {exc}") from exc
         return candidate
 
     @staticmethod

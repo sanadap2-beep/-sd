@@ -62,14 +62,16 @@ async def store_home(callback: CallbackQuery, session, db_user, state: FSMContex
     ]
     # الأقسام الديناميكية تظهر بعد الأقسام الذكية (حسب ترتيبها في الإدارة).
     for category in categories:
+        cid = getattr(category, "custom_emoji_id", None)
         entries.append(
             StoreEntry(
                 key=f"cat:{category.id}",
-                label=f"{category.emoji} {category.name_ar}",
+                label=category.name_ar if cid else f"{category.emoji} {category.name_ar}",
                 action=f"cat:{category.id}",
                 is_active=True,
                 sort_order=40 + min(max(category.sort_order, 0), 55),
                 is_builtin=True,
+                icon_custom_emoji_id=cid,
             )
         )
     entries.sort(key=lambda item: (item.sort_order, item.key))
