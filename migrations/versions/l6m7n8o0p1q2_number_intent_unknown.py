@@ -17,8 +17,11 @@ branch_labels = None
 depends_on = None
 
 
-def _pg_add_enum_value(type_name: str, value: str) -> None:
+def _pg_add_enum_value(type_name: str, value: str, table: str, column: str) -> None:
     """ALTER TYPE ... ADD VALUE لا يعمل داخل معاملة — اتصال autocommit منفصل."""
+    import logging
+
+    _log = logging.getLogger("alembic.runtime.migration")
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
@@ -30,6 +33,20 @@ def _pg_add_enum_value(type_name: str, value: str) -> None:
     )
     try:
         with eng.connect() as conn:
+            cols = conn.execute(
+                sa.text(
+                    "SELECT udt_name FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = :c"
+                ),
+                {"t": table, "c": column},
+            ).fetchall()
+            typs = conn.execute(
+                sa.text("SELECT typname FROM pg_type WHERE typname = :t"),
+                {"t": type_name},
+            ).fetchall()
+            _log.warning("PROBE %s.%s udt=%s pg_type=%s", table, column, cols, typs)
+            if not typs:
+                return
             conn.execute(
                 sa.text(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{value}'")
             )
@@ -53,7 +70,7 @@ def upgrade() -> None:
     # PostgreSQL يخزن SAEnum كنوع أصلي — أضف القيمة الجديدة صراحة.
     if bind.dialect.name == "postgresql":
         try:
-            _pg_add_enum_value("orderstatus", "unknown")
+            _pg_add_enum_value("orderstatus", "unknown", "number_orders", "status")
         except Exception:
             pass
 
