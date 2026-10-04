@@ -517,7 +517,7 @@ def upgrade() -> None:
     if not _has_column(bind, "number_orders", "insurance_claimed"):
         op.add_column(
             "number_orders",
-            sa.Column("insurance_claimed", sa.Boolean(), nullable=False, server_default="0"),
+            sa.Column("insurance_claimed", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
     if not _has_column(bind, "unified_orders", "key_swaps"):
         op.add_column(

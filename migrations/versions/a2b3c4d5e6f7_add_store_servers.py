@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.Column("emoji", sa.String(length=8), nullable=False, server_default="🖥"),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("margin_percent", sa.Numeric(18, 4), nullable=True),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)")),
     )

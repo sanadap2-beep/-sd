@@ -23,12 +23,29 @@ depends_on = None
 MONEY = sa.Numeric(18, 4)
 
 
+def _pg_add_enum_value(type_name: str, value: str) -> None:
+    """ALTER TYPE ... ADD VALUE لا يعمل داخل معاملة — اتصال autocommit منفصل."""
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    from sqlalchemy import create_engine
+
+    eng = create_engine(str(bind.engine.url), isolation_level="AUTOCOMMIT")
+    try:
+        with eng.connect() as conn:
+            conn.execute(
+                sa.text(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{value}'")
+            )
+    finally:
+        eng.dispose()
+
+
 def upgrade() -> None:
     # القيمة الجديدة ai_usage في transactions: SQLite يخزن نصاً فلا يلزم
     # شيء، أما PostgreSQL فيحتاج ALTER TYPE لإضافة قيمة للـ enum.
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE transactiontype ADD VALUE IF NOT EXISTS 'ai_usage'")
+        _pg_add_enum_value("transactiontype", "ai_usage")
 
     op.create_table(
         "ai_sections",

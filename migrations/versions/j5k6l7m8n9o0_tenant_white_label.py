@@ -60,7 +60,7 @@ def _create_tenant_tables() -> None:
             "subscription_status": sa.Column("subscription_status", sa.String(16), nullable=False, server_default="active"),
             "subscription_due_at": sa.Column("subscription_due_at", sa.DateTime(), nullable=True),
             "suspended_reason": sa.Column("suspended_reason", sa.String(255), nullable=True),
-            "webhook_set": sa.Column("webhook_set", sa.Boolean(), nullable=False, server_default="0"),
+            "webhook_set": sa.Column("webhook_set", sa.Boolean(), nullable=False, server_default=sa.false()),
             "updated_at": sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
         }
         for name, col in new_cols.items():

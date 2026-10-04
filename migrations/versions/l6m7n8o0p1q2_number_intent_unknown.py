@@ -17,6 +17,23 @@ branch_labels = None
 depends_on = None
 
 
+def _pg_add_enum_value(type_name: str, value: str) -> None:
+    """ALTER TYPE ... ADD VALUE لا يعمل داخل معاملة — اتصال autocommit منفصل."""
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    from sqlalchemy import create_engine
+
+    eng = create_engine(str(bind.engine.url), isolation_level="AUTOCOMMIT")
+    try:
+        with eng.connect() as conn:
+            conn.execute(
+                sa.text(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{value}'")
+            )
+    finally:
+        eng.dispose()
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     insp = sa.inspect(bind)
@@ -33,7 +50,7 @@ def upgrade() -> None:
     # PostgreSQL يخزن SAEnum كنوع أصلي — أضف القيمة الجديدة صراحة.
     if bind.dialect.name == "postgresql":
         try:
-            op.execute("ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'unknown'")
+            _pg_add_enum_value("orderstatus", "unknown")
         except Exception:
             pass
 
