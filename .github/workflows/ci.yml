@@ -86,6 +86,26 @@ jobs:
       - name: Dump postgres logs on failure
         if: failure()
         run: docker logs ci-pg 2>&1 | tail -n 40
+      - name: Diagnose effective DB URL
+        run: |
+          python - <<'EOF'
+          import re
+          from sqlalchemy.engine import make_url
+          from config import settings
+          from database.migrations import _sync_url
+          raw = settings.DATABASE_URL
+          print("raw prefix:", raw[:32])
+          print("raw len:", len(raw))
+          u = make_url(_sync_url())
+          print("driver:", u.drivername, "| user:", u.username,
+                "| host:", u.host, "| port:", u.port, "| db:", u.database,
+                "| pwlen:", len(u.password or ""))
+          from sqlalchemy import create_engine, text
+          eng = create_engine(_sync_url())
+          with eng.connect() as c:
+              print("engine connect OK:", c.execute(text("select 1")).scalar())
+          eng.dispose()
+          EOF
       - name: Migrations from empty database
         run: |
           python -c "import asyncio; from database.seed import init_db; asyncio.run(init_db())"
