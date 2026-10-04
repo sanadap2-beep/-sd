@@ -31,7 +31,7 @@ def upgrade() -> None:
                 if "custom_emoji_id" not in _column_names(table):
                     with op.batch_alter_table(table) as batch:
                         batch.add_column(
-                            sa.Column("custom_emoji_id", sa.String(32), nullable=True)
+                            sa.Column("custom_emoji_id", sa.String(64), nullable=True)
                         )
         except Exception:
             pass

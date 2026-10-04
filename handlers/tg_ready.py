@@ -17,6 +17,7 @@ from keyboards.tg_ready import (
 from services.balance_service import BalanceService, InsufficientBalanceError
 from services.currency_service import CurrencyService
 from services.notification_service import NotificationService
+from services.order_confirmation_service import OrderConfirmationService
 from services.tg_ready_service import TgReadyService, reveal_payload
 
 router = Router(name="tg_ready")
@@ -143,15 +144,24 @@ async def tg_ready_buy(callback: CallbackQuery, session, db_user, bot):
     remaining = [c for c in await TgReadyService.stock_overview(session) if c["key"] == key]
     left = remaining[0]["stock"] if remaining else 0
 
+    try:
+        from services.balance_service import BalanceService as _BS
+
+        _balance_after = await _BS.get_balance(session, db_user.id)
+    except Exception:  # noqa: BLE001
+        _balance_after = None
     await callback.message.answer(
-        f"✅ <b>تم الشراء بنجاح!</b>\n\n"
-        f"{item.flag} <b>{item.country_name_ar}</b>\n"
-        f"📱 الرقم: <code>{item.phone_number}</code>\n"
-        f"💰 السعر: <b>{price}$</b>\n"
-        f"📦 المتبقي من هذه الدولة: <b>{left}</b>\n\n"
-        "افتح تيليجرام وأدخل الرقم واطلب الكود، ثم اضغط «📩 طلب الكود» "
-        "وسيصلك الكود والرمز السري.\n\n"
-        "⚠️ لا يُعاد الرصيد في هذا القسم.",
+        OrderConfirmationService.tg_ready(
+            item=item,
+            country_name=item.country_name_ar,
+            flag=getattr(item, "flag", None) or "\U0001f30d",
+            phone_number=item.phone_number,
+            price_usd=price,
+            balance_after=_balance_after,
+            stock_left=left,
+            language=getattr(db_user, "language_code", "ar") or "ar",
+        )
+        + "\n\n\u26a0\ufe0f \u0644\u0627 \u064a\u0639\u0627\u062f \u0627\u0644\u0631\u0635\u064a\u062f \u0641\u064a \u0647\u0630\u0627 \u0627\u0644\u0642\u0633\u0645.",
         reply_markup=tg_ready_owned_kb(item.id),
     )
 

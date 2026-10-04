@@ -140,8 +140,13 @@ DEFAULT_SETTINGS = {
     # ── القنوات ──
     "public_channel_id": str(settings.PUBLIC_CHANNEL_ID),
     "backup_channel_id": str(settings.BACKUP_CHANNEL_ID),
+    # ── هوية المتجر (تظهر في رأس الشاشة الأولى) ──
+    "store_name": "LUX STORE",
+    "store_tagline": "متجرك الرقمي للألعاب، الأرقام، الرشق والاشتراكات",
     # ── رسالة الترحيب ──
-    "welcome_message": ("👋 أهلاً بك في البوت!\n\nاختر من القائمة للبدء."),
+    "welcome_message": (
+        "✨ <b>أهلاً بك {name} في بوت LUX STORE</b> ⚡️\n<i>متجرك الرقمي للألعاب، الأرقام، الرشق والاشتراكات</i>\n\n⚡ شحن سريع وآمن لجميع الخدمات\n💳 طرق دفع متعددة وسهلة\n🚀 تنفيذ طلباتك بأسرع وقت ممكن\n🛡 خدمة موثوقة ودعم جاهز لمساعدتك\n\n────────────────\nاختر الخدمة التي تريدها من القائمة بالأسفل 👇"
+    ),
 }
 
 DEFAULT_STARS_PACKAGES = [

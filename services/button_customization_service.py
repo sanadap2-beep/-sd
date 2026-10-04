@@ -43,7 +43,9 @@ class ButtonSection:
 # ══════════════ شجرة الأزرار ══════════════
 
 MAIN_MENU_BUTTONS = [
+    ButtonSpec("main.numbers", "📞 الأرقام", "success", "num_hub"),
     ButtonSpec("main.store", "🛍 المتجر", "success", "store:home"),
+    ButtonSpec("main.market", "🏪 سوق المستخدمين", "success", "market:home"),
     ButtonSpec("main.completed_orders", "🛡 طلبات منجزة ({count})", "success", "info:stats"),
     ButtonSpec("main.account", "👤 حسابي ({balance})", "primary", "menu:account"),
     ButtonSpec("main.deposit", "💰 شحن الرصيد", "primary", "menu:deposit"),
@@ -57,16 +59,23 @@ MAIN_MENU_BUTTONS = [
     ButtonSpec("main.support", "🛠 التواصل مع الدعم", None, "menu:support"),
 ]
 
+NUMBERS_BUTTONS = [
+    ButtonSpec("numbers.tg_ready", "⚡ أرقام تليجرام جاهزة", "success", "tgready:list"),
+    ButtonSpec("numbers.packages", "📦 باقات أرقام جاهزة", "primary", "num_packages"),
+]
+
 STORE_BUTTONS = [
     ButtonSpec("store.numbers", "📞 الأرقام", "success", "num_hub"),
+    ButtonSpec("store.smm", "🚀 الرشق", "primary", "store:section:smm"),
+    ButtonSpec("store.games", "🎮 شحن الألعاب", "success", "store:section:games"),
+    ButtonSpec("store.apps", "📱 شحن البرامج", "primary", "store:section:apps"),
+    ButtonSpec("store.balances", "💳 شحن الرصيد", "primary", "store:section:balances"),
+    ButtonSpec("store.subscriptions", "✨ الاشتراكات الرقمية", "success", "store:section:subscriptions"),
     ButtonSpec("store.featured", "⭐ مختارات المتجر", "primary", "store:section:featured"),
     ButtonSpec("store.deals", "🔥 عروض اليوم", "danger", "store:section:deals"),
     ButtonSpec("store.bestsellers", "🏆 الأكثر مبيعاً", "primary", "store:section:bestsellers"),
     ButtonSpec("store.instant", "⚡ تسليم فوري", "success", "store:section:instant"),
     ButtonSpec("store.cheap", "💸 أقل من 2$", "primary", "store:section:cheap"),
-    ButtonSpec("store.games", "🎮 ألعاب", "success", "store:section:games"),
-    ButtonSpec("store.smm", "📈 سوشيال ميديا", "primary", "store:section:smm"),
-    ButtonSpec("store.apps", "📦 تطبيقات واشتراكات", "primary", "store:section:apps"),
     ButtonSpec("store.webapp", "🌐 المتجر الإلكتروني", "success", "webapp"),
     ButtonSpec("store.search", "🔎 بحث بالمتجر", None, "menu:search"),
     ButtonSpec("store.cart", "🛒 السلة", "primary", "menu:cart"),
@@ -118,6 +127,7 @@ def _admin_sections() -> list[ButtonSection]:
 def button_tree() -> list[ButtonSection]:
     return [
         ButtonSection("main", "🏠 القائمة الرئيسية", MAIN_MENU_BUTTONS),
+        ButtonSection("numbers", "📞 قسم الأرقام", NUMBERS_BUTTONS),
         ButtonSection("store", "🛍 المتجر", STORE_BUTTONS),
         ButtonSection("extras", "🧩 الإضافات", EXTRAS_BUTTONS),
         ButtonSection("deposit", "💰 طرق الشحن", DEPOSIT_BUTTONS),
@@ -192,11 +202,20 @@ class ButtonCustomizationService:
 
     @staticmethod
     def resolve(key: str, default_label: str, default_style: str | None):
-        """Return (label, style, custom_emoji_id) with overrides applied."""
+        """Return (label, style, custom_emoji_id) with overrides applied.
+
+        عند ضبط إيموجي مميز نحذف الإيموجي النصي من بداية الاسم حتى لا يظهر
+        مرتين (الأيقونة المميزة + الإيموجي داخل النص). الحذف يتم وقت العرض لا
+        عند الحفظ، فتبقى التسميات الديناميكية (مثل رصيد الزبون) حيّة.
+        """
         entry = ButtonCustomizationService.overrides_sync().get(key, {}) or {}
         label = entry.get("label") or default_label
         style = entry.get("style", default_style)
         custom_emoji_id = entry.get("custom_emoji_id")
+        if custom_emoji_id:
+            from keyboards.emoji_button import strip_leading_emoji
+
+            label = strip_leading_emoji(label) or label
         return label, style, custom_emoji_id
 
     @staticmethod

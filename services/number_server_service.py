@@ -166,12 +166,14 @@ class NumberServerService:
         description: str | None = None,
         margin_percent=None,
         sort_order: int = 0,
+        custom_emoji_id: str | None = None,
     ) -> NumberServer:
         server = NumberServer(
             number_service_id=number_service_id,
             name_ar=name_ar,
             provider=provider,
             emoji=emoji or "🖥",
+            custom_emoji_id=custom_emoji_id,
             description=description,
             margin_percent=margin_percent,
             is_active=True,

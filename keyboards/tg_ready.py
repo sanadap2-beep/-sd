@@ -66,7 +66,7 @@ def admin_tg_ready_kb(
     b = InlineKeyboardBuilder()
     b.button(text="📤 رفع ملف أرقام جديد", callback_data="admin:tg_ready_upload")
     b.button(text="إضافة الكل", callback_data="admin:tg_ready_upload_all")
-    b.button(text=f"💰 نسبة الربح الحالية: {margin}% (تغيير)", callback_data="admin:tg_ready_margin")
+    b.button(text=f"💰 نسبة الربح الحالية: {margin}% (تغيير)", callback_data="admin:tg_ready_margin", style="primary")
     for c in countries:
         b.button(
             text=f"{c['flag']} {c['name']} — {c['stock']}",
@@ -85,7 +85,7 @@ def admin_tg_ready_country_kb(country_key: str, is_active: bool) -> InlineKeyboa
         b.button(text="⚪ إخفاء عن الزبائن", callback_data=f"admin:tg_ready_toggle:{country_key}")
     else:
         b.button(text="🟢 إظهار للزبائن", callback_data=f"admin:tg_ready_toggle:{country_key}")
-    b.button(text="🗑 حذف مخزون الدولة", callback_data=f"admin:tg_ready_del:{country_key}")
+    b.button(text="🗑 حذف مخزون الدولة", callback_data=f"admin:tg_ready_del:{country_key}", style="danger")
     b.button(text="🔙 المخزون", callback_data="admin:tg_ready")
     b.adjust(1)
     return b.as_markup()

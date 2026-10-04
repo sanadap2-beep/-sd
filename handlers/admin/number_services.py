@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from services.dynamic_service import DynamicService
+from keyboards.emoji_button import extract_custom_emoji
 from services.feature_service import FeatureService
 from services.availability_board_service import FEATURE_KEY as AVAIL_FEATURE, AvailabilityBoardService
 from services.number_catalog_service import normalize_country_code
@@ -86,10 +87,13 @@ async def nsvc_name_received(message: Message, state: FSMContext):
 
 @router.message(AdminNumberServiceStates.waiting_emoji)
 async def nsvc_emoji_received(message: Message, state: FSMContext):
-    emoji = message.text.strip()
+    emoji = (message.text or "").strip()
+    custom_emoji_id = extract_custom_emoji(message)
     if emoji == "-":
         emoji = "📱"
-    await state.update_data(nsvc_emoji=emoji)
+    if custom_emoji_id and len(emoji) > 8:
+        emoji = emoji[:8]
+    await state.update_data(nsvc_emoji=emoji, nsvc_custom_emoji=custom_emoji_id)
     await message.answer("🔢 أرسل كود الخدمة لدى <b>5sim</b>:\n(أو أرسل - للتخطي)")
     await state.set_state(AdminNumberServiceStates.waiting_fivesim_code)
 
@@ -156,6 +160,7 @@ async def nsvc_grizzly_received(message: Message, state: FSMContext, session):
         code=data["nsvc_code"],
         name_ar=data["nsvc_name"],
         emoji=data["nsvc_emoji"],
+        custom_emoji_id=data.get("nsvc_custom_emoji"),
         fivesim_code=fivesim,
         herosms_code=herosms,
         sms_activate_code=sms_activate,

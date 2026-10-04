@@ -3,14 +3,12 @@
 from aiogram.types import MessageEntity
 
 from services.premium_emoji import (
-    button_kwargs,
-    button_text,
     extract_custom_emoji_id,
     is_valid_custom_id,
     render,
-    store_button,
     utf16_len,
 )
+from keyboards.emoji_button import face, icon_button
 from services.rich_text import html_to_entities, plain_fallback, prem_slot
 
 
@@ -67,15 +65,12 @@ def test_extract_from_entities():
 
 
 def test_button_helpers():
-    assert button_kwargs("12345") == {"icon_custom_emoji_id": "12345"}
-    assert button_kwargs(None) == {}
-    assert button_kwargs("bad id!") == {}
-    # مع المميز: الاسم فقط (الأيقونة تحمله)
-    assert button_text("فري فاير", "🔥", "12345") == "فري فاير"
-    # بدونه: بادئة عادية بلا تكرار
-    assert button_text("🔥 فري فاير", "🔥", None) == "🔥 فري فاير"
-    assert button_text("فري فاير", "🔥", None) == "🔥 فري فاير"
-    btn = store_button("فري فاير", "🔥", "12345", callback_data="x")
+    text, icon = face("🔥 فري فاير", None, "12345")
+    assert text == "فري فاير"
+    assert icon == {"icon_custom_emoji_id": "12345"}
+    text, icon = face("فري فاير", "🔥", None)
+    assert text == "🔥 فري فاير" and icon == {}
+    btn = icon_button("فري فاير", emoji="🔥", custom_emoji_id="12345", callback_data="x")
     assert btn.text == "فري فاير"
     assert btn.icon_custom_emoji_id == "12345"
 

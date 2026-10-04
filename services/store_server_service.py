@@ -102,6 +102,7 @@ class StoreServerService:
         description: str | None = None,
         margin_percent: Decimal | None = None,
         sort_order: int = 0,
+        custom_emoji_id: str | None = None,
     ) -> StoreServer:
         server = StoreServer(
             scope=scope,
@@ -111,6 +112,7 @@ class StoreServerService:
             provider_value=provider_value,
             api_provider_id=api_provider_id,
             emoji=emoji,
+            custom_emoji_id=custom_emoji_id,
             description=description,
             margin_percent=margin_percent,
             is_active=True,

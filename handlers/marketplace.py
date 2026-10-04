@@ -47,6 +47,16 @@ _KIND_HINTS = {'digital_code': 'الكود يُحفظ مشفراً عندنا و
 def _lang(db_user) -> str:
     return getattr(db_user, 'language_code', 'ar') or 'ar'
 
+def _market_back_kb(language: str = "ar") -> InlineKeyboardMarkup:
+    """نهاية أي عملية في السوق لازم تعطي مخرج (بدونها رسالة ميتة)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛒 رجوع لسوق المستخدمين", callback_data="market:home", style="success")],
+            [InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="back_to_main")],
+        ]
+    )
+
+
 @router.callback_query(F.data == 'market:home')
 async def market_home(callback: CallbackQuery, db_user, session):
     if not await MarketplaceService.enabled():
@@ -70,7 +80,16 @@ async def market_profile_create(callback: CallbackQuery, state: FSMContext):
 
 @router.message(MarketProfileStates.waiting_alias)
 async def market_profile_alias(message: Message, state: FSMContext):
+    import re
+
     alias = (message.text or '').strip()
+    # تحقق فوري من الاسم المستعار حتى لا يكتشف المستخدم الخطأ بعد كتابة كلمة السر.
+    if not re.fullmatch(r"[A-Za-z0-9_\u0600-\u06FF]{3,24}", alias):
+        await message.answer(
+            "⚠️ الاسم المستعار يجب أن يكون 3-24 حرفاً (أرقام/حروف/_ فقط) بدون مسافات أو رموز.\n"
+            "أعد إرسال الاسم المستعار:"
+        )
+        return
     await state.update_data(alias=alias)
     await state.set_state(MarketProfileStates.waiting_password)
     await message.answer(I18nService.t('ux_marketplace_126_10', _auto_lang(locals())))
@@ -89,7 +108,22 @@ async def market_profile_password(message: Message, state: FSMContext, session, 
     except Exception:
         pass
     await state.clear()
-    await message.answer(f"{I18nService.t('ux_marketplace_149_12', _auto_lang(locals()))}{profile.alias}{I18nService.t('ux_marketplace_149_13', _auto_lang(locals()))}")
+    language = _lang(db_user)
+    await message.answer(
+        f"{I18nService.t('ux_marketplace_149_12', _auto_lang(locals()))}{profile.alias}{I18nService.t('ux_marketplace_149_13', _auto_lang(locals()))}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=I18nService.t('market_profile_created_button', language),
+                        callback_data='market:home',
+                        style="success",
+                    )
+                ],
+                [InlineKeyboardButton(text=I18nService.t('back_to_main', language), callback_data='back_to_main')],
+            ]
+        ),
+    )
 
 @router.callback_query(F.data.startswith('market_browse:'))
 async def browse(callback: CallbackQuery, session, db_user):
@@ -221,7 +255,7 @@ async def do_buy(callback: CallbackQuery, session, db_user, bot):
             await callback.message.edit_text(I18nService.t('market_secret_revealed', language, code=code) + I18nService.t('ux_marketplace_437_29', _auto_lang(locals())), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=I18nService.t('ux_marketplace_441_30', _auto_lang(locals())), callback_data=f'market_good:{transaction.id}', style="success")], [InlineKeyboardButton(text=I18nService.t('ux_marketplace_442_31', _auto_lang(locals())), callback_data=f'market_bad:{transaction.id}', style="success")]]))
             await notifier.notify_admin(f'✅ العملية #{transaction.id} سُلّمت آلياً.\nبانتظار تأكيد المشتري أو فتح نزاع.')
             return
-    await callback.message.edit_text(I18nService.t('market_bought', language, tx_id=transaction.id) + I18nService.t('ux_marketplace_454_32', _auto_lang(locals())))
+    await callback.message.edit_text(I18nService.t('market_bought', language, tx_id=transaction.id) + I18nService.t('ux_marketplace_454_32', _auto_lang(locals())), reply_markup=_market_back_kb(language))
     try:
         await bot.send_message(transaction.seller_id, f"{I18nService.t('ux_marketplace_459_33', _auto_lang(locals()))}{(listing.title if listing else '—')}{I18nService.t('ux_marketplace_459_34', _auto_lang(locals()))}{transaction.seller_price_usd}{I18nService.t('ux_marketplace_459_35', _auto_lang(locals()))}{transaction.buyer_id}</code>")
     except Exception:
@@ -242,7 +276,7 @@ async def buyer_confirms_good(callback: CallbackQuery, session, db_user, bot):
     if not ok:
         await callback.answer(I18nService.t('ux_marketplace_482_39', _auto_lang(locals())), show_alert=True)
         return
-    await callback.message.edit_text(f"{I18nService.t('ux_marketplace_485_40', _auto_lang(locals()))}{tx_id}{I18nService.t('ux_marketplace_485_41', _auto_lang(locals()))}{tx.seller_price_usd}{I18nService.t('ux_marketplace_485_42', _auto_lang(locals()))}{tx.commission_usd}$</b>.")
+    await callback.message.edit_text(f"{I18nService.t('ux_marketplace_485_40', _auto_lang(locals()))}{tx_id}{I18nService.t('ux_marketplace_485_41', _auto_lang(locals()))}{tx.seller_price_usd}{I18nService.t('ux_marketplace_485_42', _auto_lang(locals()))}{tx.commission_usd}$</b>.", reply_markup=_market_back_kb(_lang(db_user)))
     try:
         await bot.send_message(tx.seller_id, f"{I18nService.t('ux_marketplace_491_43', _auto_lang(locals()))}{tx_id}{I18nService.t('ux_marketplace_491_44', _auto_lang(locals()))}{tx.seller_price_usd}$</b>")
     except Exception:
@@ -264,7 +298,7 @@ async def buyer_reports_bad(callback: CallbackQuery, session, db_user, bot):
         return
     tx = await session.get(MarketTransaction, tx_id)
     listing = await session.get(MarketListing, tx.listing_id) if tx else None
-    await callback.message.edit_text(f"{I18nService.t('ux_marketplace_529_47', _auto_lang(locals()))}{tx_id}{I18nService.t('ux_marketplace_529_48', _auto_lang(locals()))}")
+    await callback.message.edit_text(f"{I18nService.t('ux_marketplace_529_47', _auto_lang(locals()))}{tx_id}{I18nService.t('ux_marketplace_529_48', _auto_lang(locals()))}", reply_markup=_market_back_kb(_lang(db_user)))
     await NotificationService(bot).notify_admin(f"⚠️ <b>بلاغ معلومات خاطئة في سوق المستخدمين</b>\n\n🆔 العملية: #{tx_id}\n📄 الإعلان: {(listing.title if listing else '—')}\n👤 البائع: <code>{(tx.seller_id if tx else '—')}</code>\n🛒 المشتري: <code>{db_user.id}</code>\n💰 المبلغ المحجوز: {(tx.total_charged_usd if tx else '—')}$\n\nاختر استرجاع المال للشاري أو الانتظار للتحقق.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='↩️ إعادة المال للشاري', callback_data=f'mkt_refund:{tx_id}', style="danger")], [InlineKeyboardButton(text='⏳ الانتظار للتحقق', callback_data=f'mkt_wait:{tx_id}')], [InlineKeyboardButton(text='🔎 فتح العملية', callback_data=f'mkt_tx:{tx_id}')]]))
     await callback.answer(I18nService.t('ux_marketplace_548_49', _auto_lang(locals())))
 
@@ -384,10 +418,10 @@ async def sell_photos_done(callback: CallbackQuery, state: FSMContext, session, 
     else:
         await notifier.notify_admin(text)
     if auto:
-        await callback.message.edit_text(I18nService.t('ux_marketplace_745_64', _auto_lang(locals())))
+        await callback.message.edit_text(I18nService.t('ux_marketplace_745_64', _auto_lang(locals())), reply_markup=_market_back_kb(_lang(db_user)))
         await callback.answer(I18nService.t('ux_marketplace_746_65', _auto_lang(locals())))
     else:
-        await callback.message.edit_text(I18nService.t('market_published', _lang(db_user)))
+        await callback.message.edit_text(I18nService.t('market_published', _lang(db_user)), reply_markup=_market_back_kb(_lang(db_user)))
         await callback.answer(I18nService.t('ux_marketplace_749_66', _auto_lang(locals())))
 
 @router.callback_query(F.data == 'market_mine')

@@ -138,6 +138,12 @@ from tasks.order_monitor import (
     cleanup_balance_locks,
 )
 from tasks.unified_order_monitor import check_unified_orders
+from tasks.cart_reminder import cart_reminder_cycle
+from tasks.dormant_users import dormant_users_cycle
+from tasks.inventory_guard import inventory_guard_cycle
+from tasks.loyalty_chain import loyalty_chain_cycle
+from tasks.weekly_admin_report import weekly_admin_report_cycle
+from tasks.provider_health import provider_health_cycle
 from tasks.invoice_monitor import check_pending_invoices
 from tasks.watch_job import check_product_watches
 from tasks.backup_job import daily_backup
@@ -757,6 +763,75 @@ async def start_scheduler(throttle_mw=None) -> AsyncIOScheduler:
         weekly_challenge_cycle,
         "interval",
         hours=1,
+    )
+
+    # تذكير السلة المتروكة: دورة كل ساعة، والمهلة داخل الخدمة (افتراضياً ٦ ساعات).
+    scheduler.add_job(
+        cart_reminder_cycle,
+        "interval",
+        minutes=max(
+            30,
+            await FeatureService.config_int("cart_reminder", "check_interval_minutes", 60),
+        ),
+        args=[bot],
+    )
+
+    # العملاء النائمون: تذكير «اشتقنا لك» مرة واحدة لكل مستخدم غائب.
+    scheduler.add_job(
+        dormant_users_cycle,
+        "interval",
+        hours=max(
+            1,
+            await FeatureService.config_int("dormant_users", "check_interval_hours", 24),
+        ),
+        args=[bot],
+    )
+
+    # صحة أرصدة المزودين: تنبيه مبكر + مدة الصمود قبل توقف البيع.
+    scheduler.add_job(
+        provider_health_cycle,
+        "interval",
+        hours=max(
+            1,
+            await FeatureService.config_int(
+                "provider_health_watch", "check_interval_hours", 6
+            ),
+        ),
+        args=[bot],
+    )
+
+    # التقرير الأسبوعي للأدمن: كل اثنين التاسعة صباحاً (يُمنع التكرار بمفتاح الأسبوع).
+    scheduler.add_job(
+        weekly_admin_report_cycle,
+        "cron",
+        day_of_week=(
+            await FeatureService.config("weekly_admin_report", "day_of_week", "mon")
+        ),
+        hour=max(0, min(23, await FeatureService.config_int("weekly_admin_report", "hour", 9))),
+        minute=0,
+        args=[bot],
+    )
+
+    # سلسلة الولاء: كوبون خصم متصاعد لمن أكثر الطلب هذا الشهر.
+    scheduler.add_job(
+        loyalty_chain_cycle,
+        "interval",
+        hours=max(
+            1,
+            await FeatureService.config_int("loyalty_chain", "check_interval_hours", 6),
+        ),
+        args=[bot],
+    )
+
+    # حارس المخزون: تنبيه عند النفاد + إخفاء تلقائي + إعادة تلقائية.
+    scheduler.add_job(
+        inventory_guard_cycle,
+        "interval",
+        minutes=max(
+            5,
+            await FeatureService.config_int("stock_guard", "check_interval_minutes", 30),
+        ),
+        args=[bot],
     )
 
     # auto_failover: تلاشي عدادات الفشل تدريجياً حسب إعداد الميزة.

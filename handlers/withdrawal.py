@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from keyboards.main_menu import back_to_main_kb
 from services.settings_service import SettingsService
 from services.notification_service import NotificationService
+from keyboards.common import flow_cancel_kb
 from services.withdrawal_service import WithdrawalError, WithdrawalService
 from states.states import WithdrawStates
 
@@ -76,7 +77,8 @@ async def withdraw_currency(callback: CallbackQuery, state: FSMContext):
     await state.set_state(WithdrawStates.waiting_amount)
     await callback.message.edit_text(
         f"💰 أرسل مبلغ السحب بالدولار.\nالحد الأدنى: <b>{minimum}$</b>\n"
-        "إذا اخترت ليرة سورية سيتم تحويله حسب سعر الصرف اليومي."
+        "إذا اخترت ليرة سورية سيتم تحويله حسب سعر الصرف اليومي.",
+        reply_markup=flow_cancel_kb(),
     )
     await callback.answer()
 
@@ -87,7 +89,7 @@ async def withdraw_network(callback: CallbackQuery, state: FSMContext):
     await state.update_data(currency="USD", network=network)
     minimum = await WithdrawalService.min_amount_usd()
     await state.set_state(WithdrawStates.waiting_amount)
-    await callback.message.edit_text(f"💰 أرسل مبلغ السحب بالدولار.\nالحد الأدنى: <b>{minimum}$</b>")
+    await callback.message.edit_text(f"💰 أرسل مبلغ السحب بالدولار.\nالحد الأدنى: <b>{minimum}$</b>", reply_markup=flow_cancel_kb())
     await callback.answer()
 
 

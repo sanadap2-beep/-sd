@@ -9,7 +9,7 @@ import random
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from database.models import User
 from keyboards.referral_guard import human_check_markup
@@ -84,7 +84,14 @@ async def human_check_answer(
             await _pay_referral_bonus(session, db_user, bot)
         await state.clear()
         await callback.answer("✅ تم التحقق بنجاح!", show_alert=True)
-        await callback.message.edit_text("✅ تم التحقق بنجاح! يمكنك الآن استخدام المتجر.")
+        await callback.message.edit_text(
+            "✅ تم التحقق بنجاح! يمكنك الآن استخدام المتجر.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="back_to_main", style="success")]
+                ]
+            ),
+        )
         return
 
     # ── فشل: تسجيل محاولة ──

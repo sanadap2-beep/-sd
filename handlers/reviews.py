@@ -111,4 +111,12 @@ async def review_skip_comment(
         return
     await state.clear()
     await callback.answer("✅ تم حفظ تقييمك.", show_alert=True)
-    await callback.message.edit_text(f"✅ تم حفظ تقييمك: {'⭐' * review.rating}")
+    await callback.message.edit_text(
+        f"✅ تم حفظ تقييمك: {'⭐' * review.rating}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="📋 طلباتي", callback_data="my_uni_orders:0", style="success")],
+                [InlineKeyboardButton(text="🔙 القائمة الرئيسية", callback_data="back_to_main")],
+            ]
+        ),
+    )

@@ -2,6 +2,7 @@
 أوامر البداية والقائمة الرئيسية، ومعالجة روابط الشراء السريعة القادمة من القناة العامة.
 """
 
+import logging
 from decimal import Decimal
 from html import escape
 
@@ -10,8 +11,11 @@ from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
+logger = logging.getLogger(__name__)
+
 from keyboards.main_menu import build_main_menu
 from keyboards.common import check_subscription_kb
+from services.branding_service import BrandingService
 from services.referral_guard_service import ReferralGuardService
 from keyboards.numbers import confirm_purchase_kb
 from providers.countries import get_number_service_by_code
@@ -41,12 +45,17 @@ async def _build_menu(session, db_user):
     completed_orders = await _completed_orders_count(session, db_user.id)
     show_ai = await _ai_section_visible(session)
     show_whatsapp = await FeatureService.enabled("whatsapp_section")
+    # سوق المستخدمين يظهر فقط إذا كانت ميزة الوساطة مفعّلة من لوحة الأدمن.
+    from services.marketplace_service import MarketplaceService
+
+    show_marketplace = await MarketplaceService.enabled()
     return build_main_menu(
         number_services=[],
         categories=[],
         balance_usd=f"{db_user.balance:.2f}",
         language=language,
         balance_display=balance_display,
+        show_marketplace=show_marketplace,
         show_agent=show_agent,
         agent_percent=agent_percent,
         completed_orders_count=completed_orders,
@@ -99,14 +108,59 @@ async def _completed_orders_count(session, user_id: int | None = None) -> int:
     return int(number_count or 0) + int(unified_count or 0)
 
 
+async def _pending_orders_hint(session, db_user) -> str:
+    """سطر «طلباتك قيد التنفيذ» حتى لا ينسى الزبون طلباً لم يكتمل."""
+    try:
+        from sqlalchemy import func, select
+
+        from database.models import (
+            NumberOrder,
+            OrderStatus,
+            UnifiedOrder,
+            UnifiedOrderStatus,
+        )
+
+        unified = await session.scalar(
+            select(func.count(UnifiedOrder.id)).where(
+                UnifiedOrder.user_id == db_user.id,
+                UnifiedOrder.status.in_(
+                    (UnifiedOrderStatus.PENDING, UnifiedOrderStatus.PROCESSING)
+                ),
+            )
+        )
+        numbers = await session.scalar(
+            select(func.count(NumberOrder.id)).where(
+                NumberOrder.user_id == db_user.id,
+                NumberOrder.status == OrderStatus.PENDING,
+            )
+        )
+        total = int(unified or 0) + int(numbers or 0)
+    except Exception:  # noqa: BLE001 — سطر تجميلي لا يُسقط الشاشة الأولى
+        return ""
+    if total <= 0:
+        return ""
+    if str(getattr(db_user, "language_code", "ar") or "ar").startswith("en"):
+        return f"\n\u23f3 <b>{total}</b> order(s) still in progress — follow them from \u00abMy Account\u00bb."
+    return f"\n\u23f3 \u0644\u062f\u064a\u0643 <b>{total}</b> \u0637\u0644\u0628 \u0642\u064a\u062f \u0627\u0644\u062a\u0646\u0641\u064a\u0630 \u2014 \u062a\u0627\u0628\u0639\u0647\u0627 \u0645\u0646 \u00ab\u062d\u0633\u0627\u0628\u064a \u2190 \u0637\u0644\u0628\u0627\u062a\u064a\u00bb."
+
+
 async def _main_header(session, db_user) -> str:
-    """رأس القائمة الرئيسية مع عرض الرصيد بالدولار وما يعادله بالعملة المحلية."""
+    """رأس القائمة الرئيسية: هوية المتجر + الميزات + الرصيد بعملته المحلية."""
     balance_text = await CurrencyService.format_dual(db_user.balance, db_user, session)
-    return I18nService.t(
-        "main_menu_header",
-        db_user.language_code,
-        balance=balance_text,
-    )
+    hint = await _pending_orders_hint(session, db_user)
+    try:
+        text = await BrandingService.main_menu_header(
+            balance_text,
+            getattr(db_user, "language_code", "ar") or "ar",
+        )
+    except Exception:  # noqa: BLE001 — لا تُسقط الشاشة الأولى بسبب نص تجميلي
+        logger.exception("تعذر بناء رأس القائمة الرئيسية، استخدام النص الافتراضي")
+        text = I18nService.t(
+            "main_menu_header",
+            db_user.language_code,
+            balance=balance_text,
+        )
+    return f"{text}{hint}" if hint else text
 
 
 async def _alternatives_kb(session, service, missing_code: str):
@@ -277,12 +331,25 @@ async def cmd_start(message: Message, command: CommandObject, session, db_user, 
 async def back_to_main(callback: CallbackQuery, session, db_user):
     """زر الرجوع للقائمة الرئيسية."""
     await callback.answer()
+    await _render_main_menu(callback, session, db_user)
+
+
+async def _render_main_menu(target, session, db_user) -> None:
+    """رسم الشاشة الرئيسية (رسالة الحالية أو رسالة جديدة عند الفشل)."""
     menu_kb = await _build_menu(session, db_user)
     header = await _main_header(session, db_user)
     try:
-        await callback.message.edit_text(header, reply_markup=menu_kb)
+        await target.message.edit_text(header, reply_markup=menu_kb)
     except Exception:
-        await callback.message.answer(header, reply_markup=menu_kb)
+        await target.message.answer(header, reply_markup=menu_kb)
+
+
+@router.callback_query(F.data == "flow:cancel")
+async def flow_cancel(callback: CallbackQuery, session, db_user, state: FSMContext):
+    """إلغاء عملية جارية (إدخال معرّف/رابط/مبلغ) والرجوع للقائمة الرئيسية."""
+    await state.clear()
+    await callback.answer("❌ تم إلغاء العملية.")
+    await _render_main_menu(callback, session, db_user)
 
 
 async def _try_pay_referral_bonus(session, user, bot):

@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from database.models import Category, Product, ProductStatus, SubCategory, Tenant, UnifiedOrder, User
 from services.html_guard import esc
-from services.premium_emoji import store_button
+from keyboards.emoji_button import icon_button
 from services.rich_text import prem_slot, send_rich
 from services.tenant_order_service import TenantOrderError, TenantOrderService
 from states.states import TenantBuyStates
@@ -79,7 +79,8 @@ async def tenant_store(callback: CallbackQuery, session, tenant: Tenant):
         await callback.answer("المتجر فارغ حالياً.", show_alert=True)
         return
     rows = [
-        [store_button(c.name_ar, c.emoji or "📦", getattr(c, "custom_emoji_id", None), callback_data=f"t:cat:{c.id}")]
+        [icon_button(c.name_ar, emoji=c.emoji or "📦", custom_emoji_id=getattr(c, "custom_emoji_id", None), callback_data=f"t:cat:{c.id}")]
+
         for c in cats
     ]
     rows.append([InlineKeyboardButton(text="🔙 الرئيسية", callback_data="t:home")])
@@ -105,7 +106,8 @@ async def tenant_category(callback: CallbackQuery, session, tenant: Tenant):
     )
     subs = [s for s in result.scalars().all() if getattr(s, "is_active", True)]
     rows = [
-        [store_button(s.name_ar, "📁", getattr(s, "custom_emoji_id", None), callback_data=f"t:sub:{s.id}")]
+        [icon_button(s.name_ar, emoji="📁", custom_emoji_id=getattr(s, "custom_emoji_id", None), callback_data=f"t:sub:{s.id}")]
+
         for s in subs
     ]
     # منتجات مباشرة بدون قسم فرعي؟ نعرضها أيضاً
@@ -114,7 +116,8 @@ async def tenant_category(callback: CallbackQuery, session, tenant: Tenant):
         if p.sub_category_id in {s.id for s in subs}:
             continue
         rows.append(
-            [store_button(p.name_ar, "📦", getattr(p, "custom_emoji_id", None), callback_data=f"t:prod:{p.id}")]
+            [icon_button(p.name_ar, emoji="📦", custom_emoji_id=getattr(p, "custom_emoji_id", None), callback_data=f"t:prod:{p.id}")]
+
         )
     rows.append([InlineKeyboardButton(text="🔙 الأقسام", callback_data="t:store")])
     await callback.answer()
@@ -164,7 +167,8 @@ async def tenant_sub(callback: CallbackQuery, session, tenant: Tenant):
         await callback.answer("لا منتجات هنا بعد.", show_alert=True)
         return
     rows = [
-        [store_button(p.name_ar, "📦", getattr(p, "custom_emoji_id", None), callback_data=f"t:prod:{p.id}")]
+        [icon_button(p.name_ar, emoji="📦", custom_emoji_id=getattr(p, "custom_emoji_id", None), callback_data=f"t:prod:{p.id}")]
+
         for p in prods[:30]
     ]
     rows.append([InlineKeyboardButton(text="🔙 الأقسام", callback_data="t:store")])

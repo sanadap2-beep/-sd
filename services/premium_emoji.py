@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 
-from aiogram.types import InlineKeyboardButton, Message, MessageEntity
+from aiogram.types import Message, MessageEntity
 
 logger = logging.getLogger(__name__)
 
@@ -117,43 +117,6 @@ async def edit_rendered(message: Message, *segments: Segment, reply_markup=None)
     except Exception:
         logger.warning("تعذر تعديل رسالة بإيموجي مميز")
         return False
-
-
-def button_kwargs(custom_emoji_id: str | None) -> dict:
-    """معامل الأيقونة لزر إنلاين — فارغ إن لم يوجد مميز."""
-    if is_valid_custom_id(custom_emoji_id):
-        return {"icon_custom_emoji_id": str(custom_emoji_id)}
-    return {}
-
-
-def button_text(name: str, emoji: str | None, custom_emoji_id: str | None) -> str:
-    """نص الزر: الاسم فقط عند وجود أيقونة مميزة (حتى لا تتكرر)،
-    وإلا «الإيموجي + الاسم» مع تجنب التكرار."""
-    name = (name or "").strip()
-    if is_valid_custom_id(custom_emoji_id):
-        return name
-    mark = (emoji or "").strip()
-    if mark and not (name.startswith(mark) or name.endswith(mark)):
-        return f"{mark} {name}".strip()
-    return name
-
-
-def store_button(
-    name: str,
-    emoji: str | None,
-    custom_emoji_id: str | None,
-    **kwargs,
-) -> InlineKeyboardButton:
-    """زر متجر: أيقونة مميزة + اسم، أو الإيموجي العادي كبادئة (بدون تكرار)."""
-    name = (name or "").strip()
-    if is_valid_custom_id(custom_emoji_id):
-        return InlineKeyboardButton(
-            text=name, icon_custom_emoji_id=str(custom_emoji_id), **kwargs
-        )
-    mark = (emoji or "").strip()
-    if mark and not (name.startswith(mark) or name.endswith(mark)):
-        return InlineKeyboardButton(text=f"{mark} {name}".strip(), **kwargs)
-    return InlineKeyboardButton(text=name, **kwargs)
 
 
 def name_segments(

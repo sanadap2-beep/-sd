@@ -145,6 +145,14 @@ async def deposit_accept(callback: CallbackQuery, session, bot):
     except Exception:
         logger.exception(f'فشل صرف مكافأة شحن لإيداع #{deposit.id}')
         bonus = Decimal('0')
+    try:
+        from services.welcome_coupon_service import WelcomeCouponService
+
+        await WelcomeCouponService.grant_for_first_deposit(
+            session, user=user, deposit=deposit, bot=bot
+        )
+    except Exception:
+        logger.exception(f'فشل منح كوبون ترحيبي لإيداع #{deposit.id}')
     notifier = NotificationService(bot)
     await notifier.notify_deposit_approved(
         user_telegram_id=user.telegram_id,

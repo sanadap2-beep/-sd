@@ -1,5 +1,6 @@
 """Cart flow for collecting several products before checkout."""
 
+from decimal import Decimal
 from html import escape
 
 from aiogram import F, Router
@@ -15,6 +16,7 @@ from services.currency_service import CurrencyService
 from services.feature_service import FeatureService
 from services.i18n_service import I18nService
 from services.operation_lock_service import OperationBusyError, OperationLockService
+from services.order_confirmation_service import OrderConfirmationService
 from states.states import UserCartStates
 
 router = Router(name="cart")
@@ -157,20 +159,31 @@ async def cart_checkout(callback: CallbackQuery, session, db_user: User, state: 
     completed = result["completed"]
     failed = result["failed"]
     saved = result["total_saved_usd"]
-    lines = [f"🧾 <b>نتيجة السلة</b>\n✅ تم تنفيذ: {len(completed)}"]
-    if saved > 0:
-        lines.append(f"🎟 وفّرت خصماً إجمالياً: <b>{saved:g}$</b>")
-    if failed:
-        lines.append(f"⚠️ بقيت {len(failed)} عناصر للمحاولة لاحقاً.")
-        for item, error in failed[:5]:
-            lines.append(f"• {escape(item.product.name_ar)}: {escape(error)}")
     deliveries = [
         checkout.delivery_value for _item, checkout in completed if checkout.delivery_value
     ]
-    if deliveries:
-        lines.append("\n🎁 <b>بيانات التسليم:</b>")
-        lines.extend(f"<code>{escape(value)}</code>" for value in deliveries)
-    await callback.message.edit_text("\n".join(lines), reply_markup=cart_kb([]))
+    charged = None
+    try:
+        charged = sum(
+            (checkout.order.price_usd for _item, checkout in completed), Decimal("0")
+        )
+    except Exception:  # noqa: BLE001
+        charged = None
+    text = OrderConfirmationService.cart(
+        completed=len(completed),
+        failed=len(failed),
+        saved_usd=saved if saved > 0 else None,
+        charged_usd=charged if charged else None,
+        deliveries=deliveries or None,
+        language=getattr(db_user, "language_code", "ar") or "ar",
+    )
+    if failed:
+        reasons = "\n".join(
+            f"• {escape(item.product.name_ar)}: {escape(error)}"
+            for item, error in failed[:5]
+        )
+        text += f"\n\n⚠️ <b>لم يتم تنفيذ:</b>\n{reasons}"
+    await callback.message.edit_text(text, reply_markup=cart_kb([]))
 
 
 @router.callback_query(F.data == "cart:clear")

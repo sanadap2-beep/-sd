@@ -13,7 +13,13 @@ def _discount_label(promotion) -> str:
 def promotions_kb(promotions) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for promotion in promotions:
-        name = promotion.product.name_ar if promotion.product else promotion.name
+        # ``promotion.product`` علاقة: إن لم تكن محمّلة مسبقاً يرفع الوصول
+        # إليها MissingGreenlet داخل AsyncSession — نتراجع لاسم العرض بدل
+        # إسقاط الشاشة كلها.
+        try:
+            name = promotion.product.name_ar if promotion.product else promotion.name
+        except Exception:  # noqa: BLE001
+            name = promotion.name
         builder.button(
             text=f"🔥 {name[:26]} {_discount_label(promotion)}",
             callback_data=f"prod:{promotion.product_id}", style="success",

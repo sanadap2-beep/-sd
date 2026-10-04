@@ -191,6 +191,8 @@ async def order_complete(callback: CallbackQuery, session, bot):
             order.user.telegram_id,
             order.product.name_ar if order.product else "خدمة",
             f"🆔 رقم الطلب: #{order.id}\nتم تأكيد التنفيذ من الإدارة.",
+            order_id=order.id,
+            product_id=order.product_id,
         )
     await callback.answer("✅ تم تعليم الطلب كمكتمل.")
     await _render_order_detail(callback, session, order)

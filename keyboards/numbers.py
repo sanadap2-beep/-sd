@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.models import Country, NumberService
+from keyboards.emoji_button import face
 
 # تحديد 25 دولة في كل صفحة (صف بمربعين)
 COUNTRIES_PER_PAGE = 25
@@ -30,9 +31,12 @@ def number_services_kb(
     """قائمة خدمات الأرقام (واتساب، تيليجرام.. إلخ)."""
     b = InlineKeyboardBuilder()
     for svc in services:
+        _text, _icon = face(
+            f"أرقام {svc.name_ar}", svc.emoji, getattr(svc, "custom_emoji_id", None)
+        )
         b.button(
-            text=f"{svc.emoji} أرقام {svc.name_ar}",
-            callback_data=f"num_svc:{svc.code}", style="success",
+            text=_text,
+            callback_data=f"num_svc:{svc.code}", style="success", **_icon,
         )
     b.button(
         text="🔙 رجوع للقائمة الرئيسية",
@@ -45,22 +49,45 @@ def number_services_kb(
 def numbers_hub_kb(
     services: list[NumberService],
     back_to_store: bool = True,
+    tg_ready: bool = False,
+    packages: bool = False,
+    language: str = "ar",
 ) -> InlineKeyboardMarkup:
     """قسم «الأرقام» الموحّد: كل خدمات الأرقام (واتساب/تيليجرام/جديدة).
 
     أي خدمة أرقام يضيفها الأدمن من «إدارة خدمات الأرقام» تظهر هنا
-    تلقائياً دون تعديل الكود.
+    تلقائياً دون تعديل الكود، ويضاف إليها:
+    - «أرقام تليجرام الجاهزة» إذا كان فيها مخزون متاح.
+    - «باقات أرقام جاهزة» إذا كانت الميزة مفعّلة.
     """
+    from services.button_customization_service import ButtonCustomizationService as BC
+    from services.i18n_service import I18nService
+
     b = InlineKeyboardBuilder()
     for svc in services:
-        b.button(
-            text=f"{svc.emoji} أرقام {svc.name_ar}",
-            callback_data=f"num_svc:{svc.code}", style="success",
+        _text, _icon = face(
+            f"أرقام {svc.name_ar}", svc.emoji, getattr(svc, "custom_emoji_id", None)
         )
+        b.button(
+            text=_text,
+            callback_data=f"num_svc:{svc.code}", style="success", **_icon,
+        )
+    if packages:
+        b.add(BC.apply(
+            "numbers.packages",
+            I18nService.t("numbers_packages", language),
+            "num_packages", "primary",
+        ))
+    if tg_ready:
+        b.add(BC.apply(
+            "numbers.tg_ready",
+            I18nService.t("numbers_tg_ready", language),
+            "tgready:list", "success",
+        ))
     if back_to_store:
         b.button(text="🔙 رجوع للمتجر", callback_data="store:home")
     else:
-        b.button(text="🔙 رجوع", callback_data="back_to_main")
+        b.button(text="🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main")
     b.adjust(1)
     return b.as_markup()
 
@@ -157,7 +184,7 @@ def countries_price_kb(
         # نختصر الاسم الطويل حتى لا يُقص السعر مع العرض بصفين
         if len(name) > 18:
             name = name[:17] + "…"
-        ref = entry.cid if entry.cid else entry.code
+        ref = getattr(entry, "cid", None) or entry.code
         b.button(
             text=f"{entry.flag} {name} — {price_str}$",
             callback_data=f"num_country:{service_code}:{ref}{suffix}", style="success",
@@ -349,7 +376,7 @@ def order_actions_kb(order_id: int) -> InlineKeyboardMarkup:
     )
     b.button(
         text="🔄 شراء رقم آخر",
-        callback_data="num_hub",
+        callback_data="num_hub", style="success",
     )
     b.button(
         text="🏠 القائمة الرئيسية",
@@ -372,7 +399,7 @@ def code_received_kb(order_id: int) -> InlineKeyboardMarkup:
     )
     b.button(
         text="🔄 شراء رقم آخر",
-        callback_data="num_hub",
+        callback_data="num_hub", style="success",
     )
     b.button(
         text="🏠 القائمة الرئيسية",

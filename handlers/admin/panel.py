@@ -17,20 +17,34 @@ router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
 
 
+async def _pulse_block(session) -> str:
+    """سطرا النبضة — أي فشل يُرجع نصاً فارغاً بدل إسقاط اللوحة."""
+    try:
+        from services.admin_pulse_service import AdminPulseService
+
+        return AdminPulseService.render(await AdminPulseService.summary(session))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 @router.message(Command("admin"))
-async def admin_entry(message: Message):
+async def admin_entry(message: Message, session):
+    pulse = await _pulse_block(session)
     await message.answer(
         "🛠 <b>لوحة تحكم الأدمن</b>\n\n"
-        "اختر أحد التبويبات الرئيسية للوصول السريع بدون ازدحام.",
+        + (f"{pulse}\n\n" if pulse else "")
+        + "اختر أحد التبويبات الرئيسية للوصول السريع بدون ازدحام.",
         reply_markup=admin_main_kb(),
     )
 
 
 @router.callback_query(F.data == "admin:main")
-async def admin_main_callback(callback: CallbackQuery):
+async def admin_main_callback(callback: CallbackQuery, session):
+    pulse = await _pulse_block(session)
     await callback.message.edit_text(
         "🛠 <b>لوحة تحكم الأدمن</b>\n\n"
-        "اختر تبويباً رئيسياً لإدارة القسم المطلوب بدل قائمة طويلة مزدحمة.",
+        + (f"{pulse}\n\n" if pulse else "")
+        + "اختر تبويباً رئيسياً لإدارة القسم المطلوب بدل قائمة طويلة مزدحمة.",
         reply_markup=admin_main_kb(),
     )
     await callback.answer()

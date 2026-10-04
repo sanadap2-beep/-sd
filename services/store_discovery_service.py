@@ -71,7 +71,12 @@ class StoreDiscoveryService:
         if section == "featured":
             query = base.where(Product.is_featured.is_(True)).order_by(Product.sort_order, Product.id)
         elif section == "bestsellers":
-            query = base.order_by(Product.total_sold.desc(), Product.id)
+            # الأكثر مبيعاً حقاً: منتجات بيعت فعلاً. إن لم يُبع شيء بعد
+            # (متجر جديد) نتراجع لترتيب المبيعات العام بدل صفحة فارغة.
+            query = (
+                base.where(Product.total_sold > 0)
+                .order_by(Product.total_sold.desc(), Product.id)
+            )
         elif section == "cheap":
             max_price = Decimal(str(await FeatureService.config_decimal("full_store_hub", "cheap_max_usd", 2.0)))
             query = base.where(Product.price_usd <= max_price).order_by(Product.price_usd, Product.id)
@@ -91,13 +96,28 @@ class StoreDiscoveryService:
             query = base.join(Product.sub_category).join(SubCategory.category).where(
                 Category.type == CategoryType.APPS
             ).order_by(Product.total_sold.desc(), Product.id)
+        elif section == "balances":
+            # شحن الرصيد: أرصدة الألعاب والتطبيقات والمتاجر.
+            query = base.join(Product.sub_category).join(SubCategory.category).where(
+                Category.type == CategoryType.BALANCES
+            ).order_by(Product.total_sold.desc(), Product.id)
+        elif section == "subscriptions":
+            # الاشتراكات الرقمية: ChatGPT/شاهد/VPN ... إلخ.
+            query = base.join(Product.sub_category).join(SubCategory.category).where(
+                Category.type == CategoryType.SUBSCRIPTIONS
+            ).order_by(Product.total_sold.desc(), Product.id)
         elif section == "deals":
             promotions = await PromotionService.get_active_promotions(session, limit=limit)
             return [promo.product for promo in promotions if promo.product and promo.product.status == ProductStatus.ACTIVE]
         else:
             query = base.order_by(Product.sort_order, Product.id)
 
-        return list((await session.execute(query.limit(limit))).scalars().unique().all())
+        rows = list((await session.execute(query.limit(limit))).scalars().unique().all())
+        if not rows and section == "bestsellers":
+            # لا مبيعات مسجّلة بعد → نفس الترتيب بلا شرط (صفحة غير فارغة).
+            fallback = base.order_by(Product.total_sold.desc(), Product.id)
+            rows = list((await session.execute(fallback.limit(limit))).scalars().unique().all())
+        return rows
 
     @staticmethod
     async def instant_stock_count(session, product: Product) -> int | None:
