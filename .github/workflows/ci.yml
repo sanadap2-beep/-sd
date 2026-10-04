@@ -42,24 +42,12 @@ jobs:
   postgres-migrations:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: botdb
-          POSTGRES_USER: bot
-          POSTGRES_PASSWORD: ci_secret_pw
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U bot -d botdb"
-          --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       BOT_TOKEN: "123456:TEST_TOKEN_FOR_CI_1234567890"
       BOT_USERNAME: test_bot
       ADMIN_IDS: "1"
       ADMIN_NOTIFY_CHAT_ID: "-1001"
-      DATABASE_URL: postgresql+asyncpg://bot:ci_secret_pw@localhost:5432/botdb
+      DATABASE_URL: postgresql+asyncpg://postgres:ci_secret_pw@localhost:5433/botdb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -69,6 +57,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Start PostgreSQL (host port 5433 avoids runner-local conflicts)
+        run: |
+          docker run -d --name ci-pg \
+            -e POSTGRES_PASSWORD=ci_secret_pw \
+            -e POSTGRES_DB=botdb \
+            -p 5433:5432 postgres:16-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          python - <<'EOF'
+          import time
+          import psycopg
+          for i in range(60):
+              try:
+                  with psycopg.connect(
+                      host="localhost", port=5433, user="postgres",
+                      password="ci_secret_pw", dbname="botdb",
+                      connect_timeout=3,
+                  ) as c:
+                      print("PG ready:", c.execute("select version()").fetchone()[0].split(",")[0])
+                      break
+              except Exception as e:
+                  print(f"[{i}] waiting: {type(e).__name__}: {e}")
+                  time.sleep(2)
+          else:
+              raise SystemExit("PostgreSQL never became ready")
+          EOF
+      - name: Dump postgres logs on failure
+        if: failure()
+        run: docker logs ci-pg 2>&1 | tail -n 40
       - name: Migrations from empty database
         run: |
           python -c "import asyncio; from database.seed import init_db; asyncio.run(init_db())"
