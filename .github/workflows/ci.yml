@@ -105,16 +105,6 @@ jobs:
           with eng.connect() as c:
               print("engine connect OK:", c.execute(text("select 1")).scalar())
           eng.dispose()
-          # replicate the migration helper byte-for-byte
-          from sqlalchemy.engine import make_url as _mu
-          uobj = _mu(_sync_url())
-          s2 = str(uobj)
-          print("roundtrip identical:", s2 == _sync_url())
-          print("roundtrip repr:", repr(s2[:60]))
-          eng2 = create_engine(s2, isolation_level="AUTOCOMMIT")
-          with eng2.connect() as c:
-              print("autocommit engine OK:", c.execute(text("select 1")).scalar())
-          eng2.dispose()
           EOF
       - name: Migrations from empty database
         run: |

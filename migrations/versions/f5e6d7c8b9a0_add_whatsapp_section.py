@@ -26,7 +26,10 @@ def _pg_add_enum_value(type_name: str, value: str) -> None:
         return
     from sqlalchemy import create_engine
 
-    eng = create_engine(str(bind.engine.url), isolation_level="AUTOCOMMIT")
+    eng = create_engine(
+        bind.engine.url.render_as_string(hide_password=False),
+        isolation_level="AUTOCOMMIT",
+    )
     try:
         with eng.connect() as conn:
             conn.execute(
