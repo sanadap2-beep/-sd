@@ -460,6 +460,7 @@ def admin_product_detail_kb(product, sub_category_id: int) -> InlineKeyboardMark
     b.button(text="💵 هامش ربح المنتج (%)", callback_data=f"admin:prod_margin:{product.id}", style="primary")
     b.button(text="📝 شرح/وصف الخدمة", callback_data=f"admin:prod_edit_desc:{product.id}")
     b.button(text="✏️ تعديل الاسم", callback_data=f"admin:prod_edit_name:{product.id}")
+    b.button(text="✨ إيموجي مميز", callback_data=f"admin:prem:prod:{product.id}")
     b.button(text="🔌 تعديل آيدي المزود", callback_data=f"admin:prod_edit_svc_id:{product.id}")
     b.button(text="🔁 مزود احتياطي", callback_data=f"admin:prod_routes:{product.id}", style="success")
     b.button(text="🗑 حذف", callback_data=f"admin:prod_delete:{product.id}", style="danger")

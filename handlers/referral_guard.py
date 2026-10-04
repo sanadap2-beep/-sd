@@ -100,10 +100,24 @@ async def human_check_answer(
         await ReferralGuardService.apply_penalty(session, db_user, bot)
         await state.clear()
         await callback.answer(
-            "🚫 تجاوزت الحد الأقصى للمحاولات. تم إيقاف حسابك.",
+            "⚠️ تجاوزت الحد الأقصى للمحاولات. جُمّدت مكافأة الإحالة فقط.",
             show_alert=True,
         )
-        await callback.message.edit_text("🚫 تم حظرك بسبب تكرار المحاولات الفاشلة.")
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        await callback.message.edit_text(
+            "⚠️ <b>تجاوزت الحد الأقصى للمحاولات.</b>\n\n"
+            "لم يُحظر حسابك — فقط جُمّدت مكافأة الإحالة لهذا الحساب.\n"
+            "يمكنك متابعة استخدام البوت بشكل طبيعي.\n\n"
+            "إن كنت إنساناً وتحتاج مساعدة اضغط الدعم بالأسفل.\n"
+            "If you are human and need help, contact support below.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🆘 الدعم / Support", callback_data="menu:support")],
+                    [InlineKeyboardButton(text="🔁 إعادة المحاولة / Retry", callback_data="menu:main")],
+                ]
+            ),
+        )
         return
 
     # ── إعادة عرض اختبار جديد ──

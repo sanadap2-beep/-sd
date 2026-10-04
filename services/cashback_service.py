@@ -87,7 +87,28 @@ class CashbackService:
                 cashback_usd=cashback_usd,
             )
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            from sqlalchemy.exc import IntegrityError as _IE
+
+            await session.rollback()
+            # سباق استدعاءين متزامنين لنفس الطلب — الرصيد آمن بفضل idempotency
+            # في add_balance، نعيد قراءة السجل الموجود بدل ضجيج خطأ.
+            try:
+                existing_result2 = await session.execute(
+                    select(CashbackLog).where(
+                        CashbackLog.user_id == user_id,
+                        CashbackLog.order_id == order_id,
+                        CashbackLog.order_type == order_type,
+                    )
+                )
+                existing2 = existing_result2.scalar_one_or_none()
+                if existing2 is not None:
+                    return existing2.cashback_usd
+            except Exception:
+                pass
+            return cashback_usd
 
         logger.info(f"كاشباك {cashback_usd}$ للمستخدم {user_id} عن طلب {order_type} #{order_id}")
 

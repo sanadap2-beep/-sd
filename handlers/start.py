@@ -42,7 +42,7 @@ async def _build_menu(session, db_user):
     agent_percent = str(
         await FeatureService.config("agent_program", "default_percent", 10)
     )
-    completed_orders = await _completed_orders_count(session)
+    completed_orders = await _completed_orders_count(session, db_user.id)
     show_ai = await _ai_section_visible(session)
     show_whatsapp = await FeatureService.enabled("whatsapp_section")
     # سوق المستخدمين يظهر فقط إذا كانت ميزة الوساطة مفعّلة من لوحة الأدمن.
@@ -79,19 +79,30 @@ async def _ai_section_visible(session) -> bool:
     return bool(count)
 
 
-async def _completed_orders_count(session) -> int:
-    """إجمالي الطلبات المنجزة لزر الإنجازات في القائمة الرئيسية."""
+async def _completed_orders_count(session, user_id: int | None = None) -> int:
+    """طلبات المستخدم المنجزة لزر الإنجازات — لا إجمالي المنصة.
+
+    الإصلاح: كان يحسب إجمالي كل المستخدمين فيعرض رقماً مضللاً كأنه إنجازك.
+    """
     from sqlalchemy import func, select
     from database.models import NumberOrder, OrderStatus, UnifiedOrder, UnifiedOrderStatus
 
+    if user_id is None:
+        return 0
     number_count = (
         await session.execute(
-            select(func.count(NumberOrder.id)).where(NumberOrder.status == OrderStatus.COMPLETED)
+            select(func.count(NumberOrder.id)).where(
+                NumberOrder.status == OrderStatus.COMPLETED,
+                NumberOrder.user_id == user_id,
+            )
         )
     ).scalar_one()
     unified_count = (
         await session.execute(
-            select(func.count(UnifiedOrder.id)).where(UnifiedOrder.status == UnifiedOrderStatus.COMPLETED)
+            select(func.count(UnifiedOrder.id)).where(
+                UnifiedOrder.status == UnifiedOrderStatus.COMPLETED,
+                UnifiedOrder.user_id == user_id,
+            )
         )
     ).scalar_one()
     return int(number_count or 0) + int(unified_count or 0)

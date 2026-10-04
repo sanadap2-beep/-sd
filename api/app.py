@@ -89,32 +89,82 @@ class InMemoryRateLimitMiddleware(BaseHTTPMiddleware):
     """
 
     _hits: dict[str, deque[float]] = defaultdict(deque)
+    _last_cleanup: float = 0.0
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith(("/health", "/app", "/admin-assets", "/setup")):
+        if request.url.path.startswith(("/health", "/app", "/admin-assets", "/wh/")):
             return await call_next(request)
+        # /setup تحت حد صارم مستقل (5/ساعة لكل IP) بدل الاستثناء الكامل
+        if request.url.path.startswith("/setup"):
+            return await self._dispatch_setup(request, call_next)
         if settings.API_RATE_LIMIT_PER_MINUTE <= 0:
             return await call_next(request)
 
-        identity = request.headers.get("x-reseller-key") or request.headers.get("authorization")
-        if not identity:
-            forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            identity = forwarded or (request.client.host if request.client else "unknown")
-        key = f"{request.url.path}:{identity}"
+        # الهوية للحد العام: IP الحقيقي فقط — لا نثق بـ X-Forwarded-For القابل للتزوير
+        # ولا بمفتاح قابل للتدوير. المفتاح له حد مستقل إضافي بالأسفل.
+        client_ip = request.client.host if request.client else "unknown"
         now = time.monotonic()
+        self._maybe_cleanup(now)
         window = 60.0
-        max_hits = max(settings.API_RATE_LIMIT_PER_MINUTE, settings.API_RATE_LIMIT_BURST)
+        per_minute = max(1, settings.API_RATE_LIMIT_PER_MINUTE)
+        burst = max(per_minute, settings.API_RATE_LIMIT_BURST)
+        # حد انزلاقي: per_minute للمستدام + burst للذروة
+        key = f"{request.url.path}:{client_ip}"
         hits = self._hits[key]
         while hits and hits[0] <= now - window:
             hits.popleft()
-        if len(hits) >= max_hits:
+        # bucket بسيط: اسمح حتى burst لكن ارفض ما فوق per_minute عند الازدحام المستمر
+        sustained = sum(1 for t in hits if t > now - window)
+        limit = burst if len(hits) < burst else per_minute
+        if sustained >= limit:
             return JSONResponse(
                 {"detail": "rate limit exceeded"},
                 status_code=429,
                 headers={"Retry-After": "60"},
             )
         hits.append(now)
+        # حد إضافي لكل مفتاح reseller لمنع إساءة مفتاح واحد
+        reseller_key = request.headers.get("x-reseller-key") or request.headers.get("authorization")
+        if reseller_key:
+            rkey = f"key:{reseller_key[:32]}"
+            rhits = self._hits[rkey]
+            while rhits and rhits[0] <= now - window:
+                rhits.popleft()
+            if len(rhits) >= burst:
+                return JSONResponse(
+                    {"detail": "rate limit exceeded"},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                )
+            rhits.append(now)
         return await call_next(request)
+
+    async def _dispatch_setup(self, request: Request, call_next):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        key = f"/setup:{client_ip}"
+        hits = self._hits[key]
+        while hits and hits and hits[0] <= now - 3600:
+            hits.popleft()
+        if len(hits) >= 5:
+            return JSONResponse({"detail": "too many attempts"}, status_code=429)
+        hits.append(now)
+        # تأخير متزايد ضد brute-force
+        await asyncio.sleep(min(2.0, 0.3 * len(hits)))
+        return await call_next(request)
+
+    @classmethod
+    def _maybe_cleanup(cls, now: float) -> None:
+        if now - cls._last_cleanup < 300:
+            return
+        cls._last_cleanup = now
+        cutoff = now - 3600
+        for k in list(cls._hits.keys()):
+            dq = cls._hits[k]
+            while dq and dq[0] <= cutoff:
+                dq.popleft()
+            if not dq:
+                cls._hits.pop(k, None)
 
 
 app.add_middleware(InMemoryRateLimitMiddleware)
@@ -190,11 +240,37 @@ async def save_setup(setup_key: str, payload: SetupPayload):
         if not _setup_is_valid(setup_key):
             raise HTTPException(status_code=404, detail="setup link expired")
         token = payload.bot_token.strip()
-        if not re.fullmatch(r"\\d{5,15}:[A-Za-z0-9_-]{20,}", token):
+        if not re.fullmatch(r"\d{5,15}:[A-Za-z0-9_-]{20,}", token):
             raise HTTPException(status_code=400, detail="invalid Telegram bot token")
         _save_local_token(token)
         _mark_setup_used()
         return {"status": "saved"}
+
+
+@app.post("/wh/{token_hash}", include_in_schema=False)
+async def tenant_webhook(token_hash: str, request: Request):
+    """يستقبل تحديثات تيليجرام لكل بوت فرعي ويغذيها لوقت تشغيل المستأجرين."""
+    import re as _re
+
+    if not _re.fullmatch(r"[0-9a-f]{64}", (token_hash or "").lower()):
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid update")
+    if not isinstance(payload, dict) or "update_id" not in payload:
+        raise HTTPException(status_code=400, detail="invalid update")
+    try:
+        from services.tenant_runtime import feed_update
+
+        result = await feed_update(token_hash.lower(), payload)
+    except Exception:
+        raise HTTPException(status_code=500, detail="handler failure")
+    if not result.get("ok"):
+        reason = result.get("reason", "rejected")
+        status = 429 if reason == "rate limited" else 200
+        return JSONResponse({"ok": False, "reason": reason}, status_code=status)
+    return {"ok": True}
 
 
 @app.get("/health/live")
@@ -204,11 +280,45 @@ def live():
 
 @app.get("/health/ready")
 async def ready(session=Depends(get_session)):
+    checks: dict = {}
     try:
         await session.execute(select(1))
-        return {"status": "ok", "database": "ok"}
+        checks["database"] = "ok"
     except Exception as exc:
         raise HTTPException(status_code=503, detail="database unavailable") from exc
+    # Redis اختياري لكن الجاهزية تبلغ عنه بصراحة.
+    try:
+        from config import settings as _settings
+
+        if _settings.REDIS_URL:
+            import redis.asyncio as _redis
+
+            client = _redis.from_url(_settings.REDIS_URL, socket_timeout=3)
+            try:
+                await client.ping()
+                checks["redis"] = "ok"
+            finally:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
+        else:
+            checks["redis"] = "not_configured"
+    except Exception:
+        checks["redis"] = "unavailable"
+    # المزودون: عدد المهيأ منهم (لا اتصال شبكي هنا — الفحص الحي في لوحة الصحة).
+    try:
+        from providers.manager import provider_manager
+
+        available = provider_manager.get_available_providers()
+        checks["providers_configured"] = len(available)
+    except Exception:
+        checks["providers_configured"] = 0
+    status = "ok" if checks.get("redis") != "unavailable" else "degraded"
+    code = 200 if status == "ok" else 503
+    if code != 200:
+        raise HTTPException(status_code=code, detail=checks)
+    return {"status": status, **checks}
 
 
 @app.get("/", include_in_schema=False)

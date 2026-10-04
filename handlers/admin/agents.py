@@ -30,8 +30,13 @@ router.callback_query.filter(IsAdmin())
 def _user_label(user: User | None, fallback_id: int) -> str:
     if user is None:
         return f"#{fallback_id}"
-    name = user.full_name or f"@{user.username}" if user.username else f"#{user.telegram_id}"
-    return f"{name} (<code>{user.telegram_id}</code>)"
+    from html import escape as _escape
+
+    if user.username:
+        name = user.full_name or f"@{user.username}"
+    else:
+        name = f"#{user.telegram_id}"
+    return f"{_escape(name)} (<code>{user.telegram_id}</code>)"
 
 
 async def _list_text(session) -> str:

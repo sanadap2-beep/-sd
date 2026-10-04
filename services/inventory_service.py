@@ -87,6 +87,7 @@ class InventoryService:
         price_usd,
         quantity: int = 1,
         promotion_id: int | None = None,
+        tenant_id: int = 0,
     ) -> tuple[UnifiedOrder, str, dict | None]:
         """يسلّم أول عنصر متاح ويخصم الرصيد في معاملة واحدة."""
         if quantity != 1:
@@ -150,6 +151,7 @@ class InventoryService:
             user.total_orders = (user.total_orders or 0) + 1
             order = UnifiedOrder(
                 user_id=user_id,
+                tenant_id=tenant_id,
                 product_id=product_id,
                 promotion_id=promotion_id,
                 external_order_id=None,
@@ -173,6 +175,7 @@ class InventoryService:
             session.add(
                 Transaction(
                     user_id=user_id,
+                    tenant_id=tenant_id,
                     type=TransactionType.PURCHASE,
                     amount=-price_usd,
                     balance_after=user.balance,

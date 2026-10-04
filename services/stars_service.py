@@ -120,8 +120,8 @@ class StarsService:
             amount=amount_usd,
             tx_type=TransactionType.STARS_DEPOSIT,
             description=(f"شحن بنجوم تليجرام - {payment.total_amount} نجمة"),
-            related_table="stars_payments",
-            related_id=package.id,
+            related_table=None,
+            related_id=None,
             payment_reference=(f"telegram_stars:{payment.telegram_payment_charge_id}"),
         )
 

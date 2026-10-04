@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     ADMIN_NOTIFY_CHAT_ID: int
     PUBLIC_CHANNEL_ID: int = 0
     BACKUP_CHANNEL_ID: int = 0
+    # مجلد النسخ المحلية الكبيرة + مفتاح تشفيرها (يفترض مفتاح المخزون عند غيابه).
+    BACKUP_DIR: str = "./backups"
+    BACKUP_ENCRYPTION_KEY: str = ""
 
     # ── مزودو الأرقام ──
     FIVESIM_API_KEY: str = ""
@@ -92,6 +95,9 @@ class Settings(BaseSettings):
     # ── Mini App / API ──
     WEBAPP_URL: str = ""
     ADMIN_WEBAPP_URL: str = ""
+    # Public HTTPS base for tenant bot webhooks, e.g. https://api.example.com
+    # يُستخدم لبناء مسار /wh/<hash> لكل بوت فرعي. فارغ = تعطيل تسجيل webhooks.
+    PUBLIC_BASE_URL: str = ""
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8080
     # One-time local setup key; supplied by the launcher, never committed.

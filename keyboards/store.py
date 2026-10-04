@@ -62,7 +62,14 @@ def store_home_kb(
     from services.button_customization_service import ButtonCustomizationService as BC
 
     def _bc(action: str, default_label: str, style=None, web_app=None, url=None,
-            key: str | None = None, callback: str | None = None):
+            key: str | None = None, callback: str | None = None, icon: str | None = None):
+        # أزرار الأقسام الديناميكية تحمل أيقونتها المميزة مباشرة (لا مفتاح تخصيص لها).
+        if action.startswith("cat:") and icon:
+            return InlineKeyboardButton(
+                text=default_label, callback_data=callback or action,
+                style=style, web_app=web_app, url=url,
+                icon_custom_emoji_id=icon,
+            )
         mapping = {
             "num_hub": "store.numbers",
             "webapp": "store.webapp",
@@ -109,7 +116,8 @@ def store_home_kb(
                 # تظهر أولاً سواء حُلّت إلى فئة أو بقيت قسماً ذكياً.
                 primary_rows.append(_bc(entry.action, default_label, "success", key=bc_key))
             elif entry.action.startswith("cat:"):
-                category_rows.append(_bc(entry.action, default_label, "success", key=bc_key))
+                category_rows.append(_bc(entry.action, default_label, "success", key=bc_key,
+                                        icon=getattr(entry, "icon_custom_emoji_id", None)))
             elif entry.action.startswith("store:section:"):
                 section_rows.append(_bc(entry.action, default_label, "success", key=bc_key))
             else:
@@ -252,10 +260,14 @@ def store_products_kb(
             price = price_map[product.id]
         else:
             price = _server_price(product, server)
+        _text, _icon = face(
+            f"🛒 {name} · {price}$",
+            None, getattr(product, "custom_emoji_id", None),
+        )
         rows.append([
             InlineKeyboardButton(
-                text=f"🛒 {name} · {price}$",
-                callback_data=f"prod:{product.id}", style="success",
+                text=_text,
+                callback_data=f"prod:{product.id}", style="success", **_icon,
             )
         ])
     rows.append([

@@ -51,7 +51,7 @@ def upgrade() -> None:
     # حماية الإحالة من البوتات.
     op.add_column(
         "users",
-        sa.Column("referral_check_pending", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("referral_check_pending", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     op.add_column(
         "users",
@@ -61,7 +61,7 @@ def upgrade() -> None:
     # تمييز المنتجات المنشأة تلقائياً.
     op.add_column(
         "products",
-        sa.Column("is_auto_published", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("is_auto_published", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
 
 

@@ -19,10 +19,47 @@ branch_labels = None
 depends_on = None
 
 
+def _pg_add_enum_value(type_name: str, value: str, table: str, column: str) -> None:
+    """ALTER TYPE ... ADD VALUE لا يعمل داخل معاملة — اتصال autocommit منفصل."""
+    import logging
+
+    _log = logging.getLogger("alembic.runtime.migration")
+    bind = op.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    from sqlalchemy import create_engine
+
+    eng = create_engine(
+        bind.engine.url.render_as_string(hide_password=False),
+        isolation_level="AUTOCOMMIT",
+    )
+    try:
+        with eng.connect() as conn:
+            cols = conn.execute(
+                sa.text(
+                    "SELECT udt_name FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = :c"
+                ),
+                {"t": table, "c": column},
+            ).fetchall()
+            typs = conn.execute(
+                sa.text("SELECT typname FROM pg_type WHERE typname = :t"),
+                {"t": type_name},
+            ).fetchall()
+            _log.warning("PROBE %s.%s udt=%s pg_type=%s", table, column, cols, typs)
+            if not typs:
+                return
+            conn.execute(
+                sa.text(f"ALTER TYPE {type_name} ADD VALUE IF NOT EXISTS '{value}'")
+            )
+    finally:
+        eng.dispose()
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE transactiontype ADD VALUE IF NOT EXISTS 'wa_subscription'")
+        _pg_add_enum_value("transactiontype", "wa_subscription", "transactions", "type")
 
     op.create_table(
         "wa_subscriptions",

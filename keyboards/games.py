@@ -115,9 +115,13 @@ def products_kb(
             price = price_map[p.id]
         else:
             price = _server_product_price(p, server)
+        _text, _icon = face(
+            f"🛒 {_short_name(p.name_ar)} - {price}$",
+            None, getattr(p, "custom_emoji_id", None),
+        )
         b.button(
-            text=f"{_short_name(p.name_ar)} - {price}$",
-            callback_data=f"prod:{p.id}", style="success",
+            text=_text,
+            callback_data=f"prod:{p.id}", style="success", **_icon,
         )
     if back_sub_id is not None:
         back_callback = f"subcat:{back_sub_id}"

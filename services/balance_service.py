@@ -65,6 +65,7 @@ class BalanceService:
         related_table: str | None = None,
         related_id: int | None = None,
         payment_reference: str | None = None,
+        tenant_id: int = 0,
     ) -> User:
         if not amount.is_finite() or amount <= 0:
             raise ValueError("المبلغ يجب أن يكون رقماً موجباً ومنتهياً")
@@ -117,6 +118,7 @@ class BalanceService:
                     related_table=related_table,
                     related_id=related_id,
                     payment_reference=payment_reference,
+                    tenant_id=tenant_id,
                 )
             )
 
@@ -155,26 +157,42 @@ class BalanceService:
         related_table: str | None = None,
         related_id: int | None = None,
         is_purchase: bool = False,
+        tenant_id: int = 0,
     ) -> User:
         if not amount.is_finite() or amount <= 0:
             raise ValueError("المبلغ يجب أن يكون رقماً موجباً ومنتهياً")
 
         async with cls._get_lock(user_id):
-            user = await session.get(User, user_id)
-            if user is None:
-                raise ValueError(f"المستخدم {user_id} غير موجود")
+            from sqlalchemy import update as _update
 
-            if user.balance < amount:
+            # تحديث ذري: ينجح فقط إذا الرصيد كافٍ — يغلق سباق العمليات
+            # (bot + api حاويتان على Postgres مشترك) حيث القفل داخل العملية لا يكفي.
+            values: dict = {User.balance: User.balance - amount}
+            if is_purchase:
+                values[User.total_spent_usd] = User.total_spent_usd + amount
+                values[User.total_orders] = User.total_orders + 1
+            result = await session.execute(
+                _update(User)
+                .where(User.id == user_id, User.balance >= amount)
+                .values(values)
+                .execution_options(synchronize_session=False)
+            )
+            if (result.rowcount or 0) == 0:
+                # ميز بين غير موجود وغير كافٍ لرسالة أدق
+                user = await session.get(User, user_id)
+                if user is None:
+                    raise ValueError(f"المستخدم {user_id} غير موجود")
                 raise InsufficientBalanceError(
                     f"رصيد غير كافٍ: المتاح {user.balance}$، المطلوب {amount}$"
                 )
 
-            user.balance = user.balance - amount
-
-            if is_purchase:
-                user.total_spent_usd = user.total_spent_usd + amount
-                user.total_orders = user.total_orders + 1
-
+            # أبطل كاش نسخة المستخدم فقط حتى لا يفلش ORM نسخة قديمة فوق التحديث الذري
+            # (expire_all كان يُبطل كائنات المتصل مثل Product/Order في checkout ويكسر الـ flush)
+            user = await session.get(User, user_id)
+            try:
+                await session.refresh(user, attribute_names=["balance", "total_spent_usd", "total_orders"])
+            except Exception:
+                pass
             session.add(
                 Transaction(
                     user_id=user_id,
@@ -184,6 +202,7 @@ class BalanceService:
                     description=description,
                     related_table=related_table,
                     related_id=related_id,
+                    tenant_id=tenant_id,
                 )
             )
 
@@ -205,28 +224,77 @@ class BalanceService:
         separate calls. A crash between those calls could destroy a user's
         balance. Locks are acquired in a stable order to avoid deadlocks.
         """
+        return await cls.transfer_with_fee(
+            session, from_user_id, to_user_id, amount, fee_amount=Decimal("0"),
+            fee_description=None,
+        )
+
+    @classmethod
+    async def transfer_with_fee(
+        cls,
+        session,
+        from_user_id: int,
+        to_user_id: int,
+        amount: Decimal,
+        fee_amount: Decimal = Decimal("0"),
+        fee_description: str | None = None,
+    ) -> tuple[User, User, Transfer]:
+        """تحويل ذري واحد: العمولة + الصافي في commit واحد بلا حالة وسطية.
+
+        total = amount + fee يُخصم من المرسل، amount يصل المستلم، fee إيراد منصة
+        (صف دفتر ثالث). أي عطل قبل الـ commit لا يخصم شيئاً إطلاقاً.
+        """
         if not amount.is_finite() or amount <= 0:
             raise ValueError("المبلغ يجب أن يكون رقماً موجباً ومنتهياً")
+        if fee_amount is None:
+            fee_amount = Decimal("0")
+        if fee_amount < 0 or not fee_amount.is_finite():
+            raise ValueError("العمولة غير صالحة")
         if from_user_id == to_user_id:
             raise ValueError("لا يمكنك التحويل لنفسك")
 
+        from sqlalchemy import update as _update
+
+        total = amount + fee_amount
         first_id, second_id = sorted((from_user_id, to_user_id))
         first_lock = cls._get_lock(first_id)
         second_lock = cls._get_lock(second_id)
 
         async with first_lock:
             async with second_lock:
+                result = await session.execute(
+                    _update(User)
+                    .where(User.id == from_user_id, User.balance >= total)
+                    .values(balance=User.balance - total)
+                    .execution_options(synchronize_session=False)
+                )
+                if (result.rowcount or 0) == 0:
+                    source = await session.get(User, from_user_id)
+                    if source is None:
+                        raise ValueError("المستخدم غير موجود")
+                    raise InsufficientBalanceError(
+                        f"رصيد غير كافٍ: المتاح {source.balance}$، المطلوب {total}$"
+                    )
+                await session.execute(
+                    _update(User)
+                    .where(User.id == to_user_id)
+                    .values(balance=User.balance + amount)
+                    .execution_options(synchronize_session=False)
+                )
                 source = await session.get(User, from_user_id)
                 recipient = await session.get(User, to_user_id)
+                try:
+                    if source is not None:
+                        await session.refresh(source, attribute_names=["balance"])
+                except Exception:
+                    pass
+                try:
+                    if recipient is not None:
+                        await session.refresh(recipient, attribute_names=["balance"])
+                except Exception:
+                    pass
                 if source is None or recipient is None:
                     raise ValueError("المستخدم غير موجود")
-                if source.balance < amount:
-                    raise InsufficientBalanceError(
-                        f"رصيد غير كافٍ: المتاح {source.balance}$، المطلوب {amount}$"
-                    )
-
-                source.balance -= amount
-                recipient.balance += amount
 
                 transfer = Transfer(
                     from_user_id=from_user_id,
@@ -236,28 +304,39 @@ class BalanceService:
                 session.add(transfer)
                 await session.flush()
 
-                session.add_all(
-                    [
+                rows = [
+                    Transaction(
+                        user_id=from_user_id,
+                        type=TransactionType.TRANSFER_OUT,
+                        amount=-(amount),
+                        balance_after=source.balance,
+                        related_table="transfers",
+                        related_id=transfer.id,
+                        description=f"تحويل إلى {recipient.telegram_id}",
+                    ),
+                    Transaction(
+                        user_id=to_user_id,
+                        type=TransactionType.TRANSFER_IN,
+                        amount=amount,
+                        balance_after=recipient.balance,
+                        related_table="transfers",
+                        related_id=transfer.id,
+                        description=f"تحويل من {source.telegram_id}",
+                    ),
+                ]
+                if fee_amount > 0:
+                    rows.append(
                         Transaction(
                             user_id=from_user_id,
-                            type=TransactionType.TRANSFER_OUT,
-                            amount=-amount,
+                            type=TransactionType.PURCHASE,
+                            amount=-fee_amount,
                             balance_after=source.balance,
                             related_table="transfers",
                             related_id=transfer.id,
-                            description=f"تحويل إلى {recipient.telegram_id}",
-                        ),
-                        Transaction(
-                            user_id=to_user_id,
-                            type=TransactionType.TRANSFER_IN,
-                            amount=amount,
-                            balance_after=recipient.balance,
-                            related_table="transfers",
-                            related_id=transfer.id,
-                            description=f"تحويل من {source.telegram_id}",
-                        ),
-                    ]
-                )
+                            description=fee_description or "عمولة تحويل",
+                        )
+                    )
+                session.add_all(rows)
                 await session.commit()
                 await session.refresh(source)
                 await session.refresh(recipient)

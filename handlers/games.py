@@ -15,6 +15,7 @@ from aiogram import Router, F
 from aiogram.filters import Filter, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from database.models import User, UserFavorite, UnifiedOrder, UnifiedOrderStatus, TransactionType, Product, ProductStatus, ProductFulfillmentType, StoreServer, ApiProvider
@@ -400,7 +401,15 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar", serv
 
     # العنوان والشرح من قاعدة البيانات → تهريب إلزامي، وإلا حرف «<» في اسم
     # خدمة مسحوب من المزود يكسر شاشة القسم كلها.
-    header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
+    from services.rich_text import prem_slot, send_rich
+
+    sub_prem = getattr(sub_cat, "custom_emoji_id", None)
+    if sub_prem:
+        header = f"{prem_slot()} {catalog_header(sub_cat.name_ar, sub_cat.description)}"
+        premiums = [(sub_prem, sub_cat.emoji or "✨")]
+    else:
+        header = catalog_header(button_label(sub_cat.name_ar, sub_cat.emoji), sub_cat.description)
+        premiums = None
     products = await DynamicService.get_active_products(session, sub_cat.id)
 
     if server is not None:
@@ -455,9 +464,15 @@ async def _show_subcategory(target, session, sub_cat, language: str = "ar", serv
         text = f"{header}{I18nService.t('ux_games_276_16', language)}"
         markup = back_to_main_kb(language)
     if isinstance(target, CallbackQuery):
-        await target.message.edit_text(text, reply_markup=markup)
+        if premiums:
+            await send_rich(target.message, text, premiums, markup, edit=True)
+        else:
+            await target.message.edit_text(text, reply_markup=markup)
     else:
-        await target.answer(text, reply_markup=markup)
+        if premiums:
+            await send_rich(target, text, premiums, markup)
+        else:
+            await target.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith('cat:'))
@@ -472,12 +487,26 @@ async def _render_category_page(callback: CallbackQuery, session, category_id: i
         await callback.answer(I18nService.t('ux_games_236_12', _auto_lang(locals())), show_alert=True)
         return
     language = _auto_lang(locals())
-    header = f"{esc(category.emoji)} {catalog_header(category.name_ar, category.description)}"
+    from services.rich_text import prem_slot, send_rich
+
+    cat_prem = getattr(category, "custom_emoji_id", None)
+    if cat_prem:
+        header_html = f"{prem_slot()} {catalog_header(category.name_ar, category.description)}"
+        premiums = [(cat_prem, category.emoji or "✨")]
+    else:
+        header = f"{esc(category.emoji)} {catalog_header(category.name_ar, category.description)}"
+        header_html, premiums = header, None
     sub_cats = await DynamicService.get_active_root_sub_categories(session, category_id)
     if not sub_cats:
-        await callback.message.edit_text(f"{header}{I18nService.t('ux_games_246_13', language)}", reply_markup=back_to_main_kb())
+        empty_html = f"{header_html}{I18nService.t('ux_games_246_13', language)}"
+        if premiums:
+            await send_rich(callback.message, empty_html, premiums, back_to_main_kb(), edit=True)
+        else:
+            await callback.message.edit_text(empty_html, reply_markup=back_to_main_kb())
         return
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from keyboards.emoji_button import face
     page_size = 10
     total = len(sub_cats)
     start = (page - 1) * page_size
@@ -486,7 +515,11 @@ async def _render_category_page(callback: CallbackQuery, session, category_id: i
     rows: list[list] = []
     row: list = []
     for _i, sub in enumerate(page_cats, start=1):
-        row.append(InlineKeyboardButton(text=sub.name_ar, callback_data=f"subcat:{sub.id}", style="success"))
+        _text, _icon = face(
+            sub.name_ar, None, getattr(sub, "custom_emoji_id", None)
+        )
+        row.append(InlineKeyboardButton(text=_text, callback_data=f"subcat:{sub.id}", style="success",
+                                        **_icon))
         if _i % 2 == 0:
             rows.append(row)
             row = []
@@ -500,10 +533,13 @@ async def _render_category_page(callback: CallbackQuery, session, category_id: i
         nav_row.append(InlineKeyboardButton(text="» »", callback_data=f"cat_page:{category_id}:{page+1}", style="primary"))
     rows.append(nav_row)
     rows.append([InlineKeyboardButton(text="🔙 رجوع للقائمة", callback_data="back_to_main")])
-    text = f"{header}{I18nService.t('ux_games_252_14', language)}"
+    text = f"{header_html}{I18nService.t('ux_games_252_14', language)}"
     if page > 1:
         text += f"\n📄 الصفحة {page} من {(total - 1)//page_size + 1}"
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    if premiums:
+        await send_rich(callback.message, text, premiums, InlineKeyboardMarkup(inline_keyboard=rows), edit=True)
+    else:
+        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
 
 
@@ -599,15 +635,32 @@ async def catalog_label_selected(message: Message, session, db_user=None, state:
         await state.update_data(server_id=None)
     await _show_subcategory(message, session, sub_cat, language)
 
-def _product_head(product, icon: str) -> str:
+def _product_head(product, icon: str) -> tuple[str, list | None]:
     """سطر عنوان صفحة المنتج (الاسم + شرح الأدمن/المزود) مُهرّباً.
 
     أسماء الخدمات المسحوبة من المزود مليئة بـ ``<`` و``&`` (مثل
     ``Followers < 1h & HQ``)؛ بدون تهريب ترفض تيليجرام الرسالة كلها.
+    يرجع (html, premiums): premiums تحوي (custom_id, fallback) إن كان
+    للمنتج إيموجي مميز، وعندها يُرسل النص عبر send_rich لا edit_text.
     """
+    from services.rich_text import prem_slot
+
     desc = (getattr(product, "custom_description", None) or getattr(product, "description", None) or "").strip()
     desc_line = f"\n<i>{esc(desc)}</i>" if desc else ""
-    return f"{icon} <b>{esc(product.name_ar)}</b>{desc_line}"
+    prem = getattr(product, "custom_emoji_id", None)
+    if prem:
+        return f"{prem_slot()} <b>{esc(product.name_ar)}</b>{desc_line}", [(prem, icon or "✨")]
+    return f"{icon} <b>{esc(product.name_ar)}</b>{desc_line}", None
+
+
+async def _edit_product_page(message, html: str, premiums, reply_markup=None):
+    """يعدّل رسالة صفحة منتج مع دعم الإيموجي المميز."""
+    if premiums:
+        from services.rich_text import send_rich
+
+        await send_rich(message, html, premiums, reply_markup, edit=True)
+    else:
+        await message.edit_text(html, reply_markup=reply_markup)
 
 
 @router.callback_query(F.data.startswith('prod:'))
@@ -640,7 +693,7 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
             live_price = await live_sell_price(product, session)
             back_cb = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
             head_icon = "🎮" if product.requires_player_id or (sub_cat and any(g in sub_cat.name_ar.lower() for g in ("pubg", "ببجي", "بوبجي", "لعبة", "game"))) else ("📱" if product.requires_link else "📦")
-            head = _product_head(product, head_icon)
+            head, head_prem = _product_head(product, head_icon)
             from services.smm_price_service import format_details_kb
             service = await session.get(
                 __import__("database.models", fromlist=["ProviderService"]).ProviderService,
@@ -672,7 +725,7 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
             details_text += price_line
             b_kb = InlineKeyboardBuilder()
             b_kb.button(text="🔙 رجوع", callback_data=back_cb)
-            await callback.message.edit_text(details_text, reply_markup=b_kb.as_markup())
+            await _edit_product_page(callback.message, details_text, head_prem, b_kb.as_markup())
             await state.update_data(product_id=product_id, price_override=str(live_price))
             # prompt for the required field
             if product.requires_player_id:
@@ -687,9 +740,9 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         det = await service_details(product, session)
         live_price = await live_sell_price(product, session)
         back_callback = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
-        head = _product_head(product, '🎮' if product.requires_player_id else '📈')
+        head, head_prem = _product_head(product, '🎮' if product.requires_player_id else '📈')
         details_kb = format_details_kb(det, live_price, back_callback)
-        await callback.message.edit_text(head, reply_markup=details_kb)
+        await _edit_product_page(callback.message, head, head_prem, details_kb)
         await state.update_data(product_id=product_id, price_override=str(live_price))
         if product.requires_player_id:
             # شحن الألعاب: لا يُنفَّذ الطلب عند المزود بلا Player ID.
@@ -715,35 +768,37 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     confirm_q = I18nService.t('confirm_purchase_q', language)
     custom_placeholder = product.custom_input_placeholder or ""
     if product.requires_player_id:
-        head = _product_head(product, '🎮')
+        head, head_prem = _product_head(product, '🎮')
         target_label = await _target_field_label(product, session)
         prompt = f"{target_label or I18nService.t('send_player_id', language)}"
         if custom_placeholder:
             prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
-        await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt, reply_markup=flow_cancel_kb(language))
+        await _edit_product_page(callback.message, f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt, head_prem, flow_cancel_kb(language))
         await state.set_state(GamesOrderStates.waiting_player_id)
     elif product.requires_link:
-        head = _product_head(product, '📈')
+        head, head_prem = _product_head(product, '📈')
         if product.requires_quantity:
             prompt = I18nService.t('send_link', language)
             if custom_placeholder:
                 prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
-            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + prompt, reply_markup=flow_cancel_kb(language))
+            await _edit_product_page(callback.message, f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b> / 1000{_eta_line(product, language)}\n' + I18nService.t('quantity_limits', language, min_q=product.min_quantity, max_q=product.max_quantity) + '\n\n' + prompt, head_prem, flow_cancel_kb(language))
             await state.set_state(SMMOrderStates.waiting_link)
         else:
             prompt = I18nService.t('send_link', language)
             if custom_placeholder:
                 prompt = f"{prompt}\n<i>{esc(custom_placeholder)}</i>"
-            await callback.message.edit_text(f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt, reply_markup=flow_cancel_kb(language))
+            await _edit_product_page(callback.message, f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>{_eta_line(product, language)}\n\n' + prompt, head_prem, flow_cancel_kb(language))
             await state.update_data(quantity=1)
             await state.set_state(SMMOrderStates.waiting_link)
     else:
-        head = _product_head(product, '📦')
+        head, head_prem = _product_head(product, '📦')
         stock_line = await _stock_line(session, product, language)
-        await callback.message.edit_text(
+        await _edit_product_page(
+            callback.message,
             f'{head}\n💰 {price_label}: <b>{esc(price_display)}</b>'
             f'{_eta_line(product, language)}{stock_line}\n\n{confirm_q}',
-            reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0),
+            head_prem,
+            product_confirm_kb(product_id, sub_cat.id if sub_cat else 0),
         )
 
 @router.message(GamesOrderStates.waiting_player_id)

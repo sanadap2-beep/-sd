@@ -209,12 +209,31 @@ class LoyaltyService:
             raise LoyaltyError("عدد النقاط غير كافٍ للاستبدال.")
 
         async with BalanceService._get_lock(user_id):
-            user = await session.get(User, user_id)
-            if user is None:
-                raise LoyaltyError("المستخدم غير موجود")
-            if (user.loyalty_points or 0) < points:
+            from sqlalchemy import update as _update
+
+            # خصم ذري للنقاط + إضافة الرصيد — يمنع السباق بين العمليات
+            res = await session.execute(
+                _update(User)
+                .where(User.id == user_id, User.loyalty_points >= points)
+                .values(
+                    loyalty_points=User.loyalty_points - points,
+                    balance=User.balance + amount,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if (res.rowcount or 0) == 0:
+                user = await session.get(User, user_id)
+                if user is None:
+                    raise LoyaltyError("المستخدم غير موجود")
                 raise LoyaltyError("رصيد نقاطك غير كافٍ.")
 
+            try:
+                _u = await session.get(User, user_id)
+                if _u is not None:
+                    await session.refresh(_u, attribute_names=["loyalty_points", "balance"])
+            except Exception:
+                pass
+            user = await session.get(User, user_id)
             event = LoyaltyEvent(
                 user_id=user_id,
                 event_key=f"redeem:{user_id}:{uuid4().hex}",
@@ -222,8 +241,6 @@ class LoyaltyService:
                 points=-points,
                 description=f"استبدال {points} نقطة مقابل {amount}$",
             )
-            user.loyalty_points -= points
-            user.balance += amount
             session.add(event)
             await session.flush()
             session.add(

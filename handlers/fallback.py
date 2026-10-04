@@ -25,8 +25,13 @@ async def menu_main_alias(callback: CallbackQuery, session, db_user):
 
 @router.callback_query(F.data == "noop")
 async def noop_handler(callback: CallbackQuery):
-    """التقاط ضغطات أرقام الصفحات والعناوين بهدوء دون إرسال إشعار للأدمن."""
-    await callback.answer()
+    """التقاط ضغطات أرقام الصفحات والعناوين — تلميح بدل الصمت."""
+    data = ""
+    try:
+        # إن كان الزر يحمل رقم صفحة بصيغة page:X/Y نعرضه، وإلا تلميح عام
+        await callback.answer("📄 زر عرض فقط — استخدم أسهم التنقل.", show_alert=False)
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data)

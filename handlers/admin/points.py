@@ -295,7 +295,7 @@ async def save_grant(message: Message, state: FSMContext, session, db_user, bot)
     except ValueError:
         return await message.answer("⚠️ أرسل رقمين صحيحين.")
 
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    result = await session.execute(select(User).where(User.telegram_id == telegram_id, User.tenant_id == 0))
     user = result.scalar_one_or_none()
     if user is None:
         await state.clear()

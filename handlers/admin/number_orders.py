@@ -30,6 +30,7 @@ _STATUS_LABELS = {
     OrderStatus.EXPIRED: "⌛ منتهي",
     OrderStatus.CANCELLED: "❌ ملغى",
     OrderStatus.REFUNDED: "↩️ مسترجع",
+    OrderStatus.UNKNOWN: "❓ بانتظار التسوية",
 }
 
 
@@ -144,7 +145,7 @@ async def number_order_refund_ask(callback: CallbackQuery, session):
     if order is None:
         await callback.answer("⚠️ الطلب غير موجود.", show_alert=True)
         return
-    if order.status != OrderStatus.PENDING:
+    if order.status not in (OrderStatus.PENDING, OrderStatus.UNKNOWN):
         await callback.answer(
             "⚠️ لا يمكن استرجاع هذا الطلب بحالته الحالية.",
             show_alert=True,
@@ -172,12 +173,47 @@ async def number_order_refund(
         await callback.answer("⚠️ الطلب غير موجود.", show_alert=True)
         return
 
-    if order.status != OrderStatus.PENDING:
+    if order.status not in (OrderStatus.PENDING, OrderStatus.UNKNOWN):
         await callback.answer(
             "⚠️ لا يمكن استرجاع هذا الطلب بحالته الحالية.",
             show_alert=True,
         )
         return
+
+    # P0: شرط الخصم الأصلي — لا رصيد مجاني لنية لم تُخصم.
+    from sqlalchemy import select as _select
+
+    from database.models import Transaction as _Transaction
+    from database.models import TransactionType as _TxType
+
+    debit = (
+        await session.execute(
+            _select(_Transaction).where(
+                _Transaction.user_id == order.user_id,
+                _Transaction.type == _TxType.PURCHASE,
+                _Transaction.amount < 0,
+                _Transaction.related_table == "number_orders",
+                _Transaction.related_id == order.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if debit is None:
+        # توافق قديم: خصومات ما قبل نية الطلب بلا ربط — اسمح مع تسجيل.
+        legacy = (
+            await session.execute(
+                _select(_Transaction).where(
+                    _Transaction.user_id == order.user_id,
+                    _Transaction.type == _TxType.PURCHASE,
+                    _Transaction.amount == -order.price_sell_usd,
+                )
+            )
+        ).scalar_one_or_none()
+        if legacy is None:
+            await callback.answer(
+                "⛔ لا توجد حركة خصم لهذا الطلب — الاسترجاع مرفوض.",
+                show_alert=True,
+            )
+            return
 
     try:
         await provider_manager.cancel_order(order.provider, order.provider_order_id)

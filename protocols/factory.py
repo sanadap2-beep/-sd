@@ -32,6 +32,15 @@ from protocols.smm_v2 import SmmV2Protocol
 logger = logging.getLogger(__name__)
 
 
+def _reveal_key(provider: ApiProvider) -> str:
+    try:
+        from services.encryption_service import EncryptionService
+
+        return EncryptionService.reveal_provider_key(provider)
+    except Exception:
+        return getattr(provider, "api_key", "") or ""
+
+
 class ProtocolFactory:
     """
     مصنع البروتوكولات.
@@ -123,7 +132,7 @@ class ProtocolFactory:
         return cls.create(
             protocol_type=provider.protocol_type,
             api_url=provider.api_url,
-            api_key=provider.api_key,
+            api_key=_reveal_key(provider),
             custom_config=custom_config,
         )
 

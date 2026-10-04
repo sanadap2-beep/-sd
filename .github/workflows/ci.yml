@@ -1,0 +1,114 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BOT_TOKEN: "123456:TEST_TOKEN_FOR_CI_1234567890"
+      BOT_USERNAME: test_bot
+      ADMIN_IDS: "1"
+      ADMIN_NOTIFY_CHAT_ID: "-1001"
+      DATABASE_URL: sqlite+aiosqlite:////tmp/ci-bot.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install (locked runtime + dev tools)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Compile check
+        run: python -m compileall -q .
+      - name: Ruff (syntax/runtime-breaking only; full F-lint is advisory)
+        run: python -m ruff check . --select E9
+      - name: Ruff full report (informational)
+        continue-on-error: true
+        run: python -m ruff check . --select E,F --statistics
+      - name: Fast subset (money guards + limits)
+        run: |
+          python -m pytest tests/test_p0_money_guards.py tests/test_api_rate_limit.py -q
+      - name: pip-audit (informational)
+        continue-on-error: true
+        run: |
+          python -m pip_audit --desc on -r requirements.txt || true
+
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BOT_TOKEN: "123456:TEST_TOKEN_FOR_CI_1234567890"
+      BOT_USERNAME: test_bot
+      ADMIN_IDS: "1"
+      ADMIN_NOTIFY_CHAT_ID: "-1001"
+      DATABASE_URL: postgresql+asyncpg://postgres:ci_secret_pw@localhost:5433/botdb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Start PostgreSQL (host port 5433 avoids runner-local conflicts)
+        run: |
+          docker run -d --name ci-pg \
+            -e POSTGRES_PASSWORD=ci_secret_pw \
+            -e POSTGRES_DB=botdb \
+            -p 5433:5432 postgres:16-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          python - <<'EOF'
+          import time
+          import psycopg
+          for i in range(60):
+              try:
+                  with psycopg.connect(
+                      host="localhost", port=5433, user="postgres",
+                      password="ci_secret_pw", dbname="botdb",
+                      connect_timeout=3,
+                  ) as c:
+                      print("PG ready:", c.execute("select version()").fetchone()[0].split(",")[0])
+                      break
+              except Exception as e:
+                  print(f"[{i}] waiting: {type(e).__name__}: {e}")
+                  time.sleep(2)
+          else:
+              raise SystemExit("PostgreSQL never became ready")
+          EOF
+      - name: Dump postgres logs on failure
+        if: failure()
+        run: docker logs ci-pg 2>&1 | tail -n 40
+      - name: Diagnose effective DB URL
+        run: |
+          python - <<'EOF'
+          import re
+          from sqlalchemy.engine import make_url
+          from config import settings
+          from database.migrations import _sync_url
+          raw = settings.DATABASE_URL
+          print("raw prefix:", raw[:32])
+          print("raw len:", len(raw))
+          u = make_url(_sync_url())
+          print("driver:", u.drivername, "| user:", u.username,
+                "| host:", u.host, "| port:", u.port, "| db:", u.database,
+                "| pwlen:", len(u.password or ""))
+          from sqlalchemy import create_engine, text
+          eng = create_engine(_sync_url())
+          with eng.connect() as c:
+              print("engine connect OK:", c.execute(text("select 1")).scalar())
+          eng.dispose()
+          EOF
+      - name: Migrations from empty database
+        run: |
+          python -c "import asyncio; from database.seed import init_db; asyncio.run(init_db())"
+      - name: Money guards on PostgreSQL
+        run: |
+          python -m pytest tests/test_p0_money_guards.py -q

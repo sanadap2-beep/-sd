@@ -3,9 +3,38 @@
 العملة الداخلية: دولار أمريكي (USD).
 """
 
+import asyncio
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
+
+
+async def with_retry(func, *, attempts: int = 3, base_delay: float = 2.0, transient_only: bool = True):
+    """إعادة محاولة موحدة لكل المزودين: 429/503/timeout فقط مع backoff."""
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await func()
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            transient = (
+                "429" in msg or "503" in msg or "timeout" in msg
+                or "connection" in msg or "temporar" in msg
+            )
+            if transient_only and not transient:
+                raise
+            if attempt >= attempts:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning("إعادة محاولة المزود (%s/%s) بعد %ss: %s", attempt, attempts, delay, exc)
+            await asyncio.sleep(delay)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("with_retry: no attempts")
 
 
 @dataclass

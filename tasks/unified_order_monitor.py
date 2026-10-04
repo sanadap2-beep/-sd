@@ -45,7 +45,9 @@ async def check_unified_orders(bot):
                         UnifiedOrderStatus.PENDING,
                         UnifiedOrderStatus.PROCESSING,
                     ]
-                )
+                ),
+                # طلبات البوتات الفرعية تعالجها مراقبة المستأجرين الخاصة بها
+                UnifiedOrder.tenant_id == 0,
             )
             .options(
                 selectinload(UnifiedOrder.product).selectinload(
@@ -281,10 +283,12 @@ async def _handle_partial(session, order, user, product_name, notifier, remains)
 
 async def _handle_failed(session, order, user, product_name, notifier):
     """يعالج الطلب الفاشل ويسترجع الرصيد."""
+    # نفس إصلاح الذرية: flush بدل commit قبل الاسترجاع حتى لا يعلق
+    # طلب بوضع نهائي بلا استرجاع عند عطل بين الـ commits.
     order.status = UnifiedOrderStatus.FAILED
     order.status_message = "فشل التنفيذ"
     order.completed_at = datetime.utcnow()
-    await session.commit()
+    await session.flush()
 
     await BalanceService.add_balance(
         session,

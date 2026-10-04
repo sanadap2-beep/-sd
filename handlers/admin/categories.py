@@ -275,7 +275,7 @@ async def cat_emoji_selected(
     data = await state.get_data()
 
     if emoji_choice == "custom":
-        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:\n(إيموجي واحد فقط)")
+        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:\n(حرف عادي، أو إيموجي مميز ⭐ من حزم Premium كرسالة)")
         return
 
     if emoji_choice == "default":
@@ -973,7 +973,7 @@ async def subcat_emoji_selected(callback: CallbackQuery, state: FSMContext):
     emoji_choice = callback.data.split(":", 2)[2]
 
     if emoji_choice == "custom":
-        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:")
+        await callback.message.edit_text("✏️ أرسل إيموجي مخصص:\n(حرف عادي، أو إيموجي مميز ⭐ من حزم Premium كرسالة)")
         return
 
     if emoji_choice == "default":
@@ -1003,9 +1003,10 @@ async def subcat_custom_emoji_received(message: Message, state: FSMContext):
         emoji = emoji[:8]
 
     await state.update_data(emoji=emoji, custom_emoji_id=custom_emoji_id)
+    label = "الإيموجي المميز ✨" if custom_emoji_id else f"الإيموجي: {emoji}"
 
     await message.answer(
-        f"✅ الإيموجي: {emoji}\n\n"
+        f"✅ {label}\n\n"
         "الخطوة 3️⃣ من 4️⃣\n\n"
         "📝 أرسل وصف القسم (اختياري):\n"
         "أرسل نصاً أو - للتخطي"

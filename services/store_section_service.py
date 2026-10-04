@@ -73,6 +73,8 @@ class StoreEntry:
     is_active: bool
     sort_order: int
     is_builtin: bool = True
+    # أيقونة إيموجي مميز لزر الدخول (تُعرض بدل بادئة الإيموجي العادي).
+    icon_custom_emoji_id: str | None = None
     # مفتاح تخصيص الزر في لوحة الأدمن (لون/نص/إيموجي). يُستخدم عندما يُحَلّ
     # القسم إلى فئة حتى لا يفقد الزر إعدادات التخصيص.
     bc_key: str | None = None
@@ -327,14 +329,16 @@ class StoreSectionService:
             type_value = getattr(getattr(category, "type", None), "value", None)
             if type_value in covered_types:
                 continue
+            cid = getattr(category, "custom_emoji_id", None)
             rest.append(
                 StoreEntry(
                     key=f"cat:{category.id}",
-                    label=f"{category.emoji} {category.name_ar}",
+                    label=category.name_ar if cid else f"{category.emoji} {category.name_ar}",
                     action=f"cat:{category.id}",
                     is_active=True,
                     sort_order=40 + min(max(getattr(category, "sort_order", 0) or 0, 0), 55),
                     is_builtin=True,
+                    icon_custom_emoji_id=cid,
                 )
             )
 

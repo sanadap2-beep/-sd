@@ -50,9 +50,34 @@ async def check_pending_orders(bot):
     notifier = NotificationService(bot)
     async with async_session_maker() as session:
         result = await session.execute(
-            select(NumberOrder).where(NumberOrder.status == OrderStatus.PENDING)
+            select(NumberOrder).where(
+                NumberOrder.status == OrderStatus.PENDING,
+                NumberOrder.tenant_id == 0,
+            )
         )
         orders = list(result.scalars().all())
+        # طلبات UNKNOWN القديمة: تنبيه الأدمن مرة واحدة (لا إجراء تلقائي).
+        unknown_cutoff = datetime.utcnow() - timedelta(minutes=30)
+        unknown_result = await session.execute(
+            select(NumberOrder).where(
+                NumberOrder.status == OrderStatus.UNKNOWN,
+                NumberOrder.tenant_id == 0,
+                NumberOrder.purchased_at <= unknown_cutoff,
+            )
+        )
+        for uorder in unknown_result.scalars().all():
+            try:
+                if (uorder.status_message or "").endswith("|admin_notified"):
+                    continue
+                await notifier.notify_admin(
+                    "❓ <b>تذكير: طلب رقم UNKNOWN بلا تسوية</b>\n\n"
+                    f"🆔 #{uorder.id} · 👤 user_id={uorder.user_id}\n"
+                    f"💰 {uorder.price_sell_usd}$ مخصومة — سوِّها (إكمال/استرجاع) من لوحة الطلبات."
+                )
+                uorder.status_message = (uorder.status_message or "") + "|admin_notified"
+                await session.commit()
+            except Exception as e:
+                logger.error(f"خطأ تنبيه UNKNOWN {uorder.id}: {e}")
         if not orders:
             return
 
@@ -250,8 +275,11 @@ async def _update_countdown(bot, order):
 
 
 async def _expire_and_refund(session, order, notifier, bot):
+    # إصلاح ذرية: لا commit منفصل قبل الاسترجاع. نضبط الحالة ثم نسترجع
+    # في commit واحد عبر add_balance — عطل قبلها يُبقي الطلب PENDING
+    # فتعيد المراقبة معالجته، وعطل بعدها يعني المبلغ رجع فعلاً.
     order.status = OrderStatus.EXPIRED
-    await session.commit()
+    await session.flush()
 
     try:
         await provider_manager.cancel_order(order.provider, order.provider_order_id)

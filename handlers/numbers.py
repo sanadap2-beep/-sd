@@ -8,6 +8,7 @@
 
 import json
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from decimal import ROUND_UP, Decimal
 
@@ -1040,6 +1041,29 @@ async def confirm_buy(
         )
         return
 
+    # P0 نمط «نية الطلب أولاً»: سجل PENDING قبل الخصم بمفتاح عدم تكرار،
+    # فأي انهيار يترك أثراً قابلاً للتسوية بدل خصم بلا طلب.
+    import uuid as _uuid
+
+    intent_key = f"num:{db_user.id}:{service_code}:{country_code}:{_uuid.uuid4().hex}"
+    intent_provider = strict_provider or preferred_provider or cheapest_provider
+    order = NumberOrder(
+        user_id=db_user.id,
+        provider=intent_provider,
+        provider_order_id=f"pending:{intent_key}",
+        service=service_code,
+        country_code=country_code,
+        phone_number="pending",
+        price_provider_usd=cost_usd,
+        price_sell_usd=sell_price,
+        status=OrderStatus.PENDING,
+        status_message="نية شراء — بانتظار تنفيذ المزود",
+        idempotency_key=intent_key,
+    )
+    session.add(order)
+    await session.commit()
+    await session.refresh(order)
+
     try:
         await BalanceService.deduct_balance(
             session,
@@ -1047,12 +1071,18 @@ async def confirm_buy(
             sell_price,
             TransactionType.PURCHASE,
             description=f"شراء رقم {service.name_ar} - {country.name_ar}",
+            related_table="number_orders",
+            related_id=order.id,
             is_purchase=True,
         )
     except InsufficientBalanceError:
+        order.status = OrderStatus.CANCELLED
+        order.status_message = "أُلغيت النية: رصيد غير كافٍ"
+        await session.commit()
         await callback.message.answer("⚠️ رصيدك غير كافٍ.")
         return
 
+    buy_timed_out = False
     try:
         if strict_provider is None:
             buy_result = await provider_manager.buy_number(
@@ -1070,12 +1100,17 @@ async def confirm_buy(
                 strict_provider=strict_provider,
             )
     except ProviderUnavailableError as e:
+        order.status = OrderStatus.CANCELLED
+        order.status_message = f"لا مزود متاح: {str(e)[:200]}"
+        await session.commit()
         await BalanceService.add_balance(
             session,
             db_user.id,
             sell_price,
             TransactionType.REFUND,
             description="استرجاع - فشل شراء الرقم",
+            related_table="number_orders",
+            related_id=order.id,
         )
         reason = (str(e) or "").strip()
         if len(reason) > 300:
@@ -1090,13 +1125,24 @@ async def confirm_buy(
             reply_markup=number_failure_kb(service_code, country.id, server_id),
         )
         return
-    except Exception:
+    except (asyncio.TimeoutError, TimeoutError) as e:
+        # المهلة بعد احتمال قبول المزود: لا استرجاع ولا failover تلقائي —
+        # حالة UNKNOWN للتسوية (قد يكون الرقم صدر فعلاً).
+        buy_timed_out = True
+        logger.warning("مهلة شراء الرقم للمستخدم %s (نية #%s): %s", db_user.id, order.id, e)
+    except Exception as e:
+        logger.exception("خطأ غير متوقع أثناء شراء الرقم (نية #%s)", order.id)
+        order.status = OrderStatus.CANCELLED
+        order.status_message = f"خطأ داخلي: {str(e)[:200]}"
+        await session.commit()
         await BalanceService.add_balance(
             session,
             db_user.id,
             sell_price,
             TransactionType.REFUND,
             description="استرجاع - فشل شراء الرقم",
+            related_table="number_orders",
+            related_id=order.id,
         )
         from keyboards.nav import number_failure_kb as _nfkb
 
@@ -1106,25 +1152,40 @@ async def confirm_buy(
         )
         return
 
+    if buy_timed_out:
+        order.status = OrderStatus.UNKNOWN
+        order.status_message = "UNKNOWN: انتهت المهلة بعد احتمال قبول المزود — بانتظار التسوية"
+        await session.commit()
+        notifier = NotificationService(bot)
+        await notifier.notify_admin(
+            "❓ <b>طلب رقم بحالة UNKNOWN</b>\n\n"
+            f"🆔 النية #{order.id} · 👤 {db_user.telegram_id}\n"
+            f"{service.emoji} {service.name_ar} · 🌍 {country.name_ar}\n"
+            f"💰 {sell_price}$ مخصومة بلا تأكيد — راجع المزود ثم استرجع أو أكمل يدوياً."
+        )
+        await callback.message.answer(
+            "⏳ <b>طلبك قيد المراجعة</b>\n\n"
+            "انتهت مهلة الاتصال بالمزود بعد إرسال الطلب — قد يكون الرقم صدر فعلاً.\n"
+            "لم نسترجع المبلغ تلقائياً حمايةً لك. سيراجع فريقنا طلبك "
+            f"(#{order.id}) خلال دقائق."
+        )
+        return
+
+    order.provider = buy_result.provider
+    order.provider_order_id = buy_result.provider_order_id
+    order.phone_number = buy_result.phone_number
+    order.price_provider_usd = buy_result.cost_usd
+    order.status_message = None
+
     await PriceLockService.consume(quote_token)
     await _log_rate_limit(session, db_user.id)
 
     timeout_minutes = await _get_order_timeout()
     expires_at = datetime.utcnow() + timedelta(minutes=timeout_minutes)
 
-    order = NumberOrder(
-        user_id=db_user.id,
-        provider=buy_result.provider,
-        provider_order_id=buy_result.provider_order_id,
-        service=service_code,
-        country_code=country_code,
-        phone_number=buy_result.phone_number,
-        price_provider_usd=buy_result.cost_usd,
-        price_sell_usd=sell_price,
-        status=OrderStatus.PENDING,
-        expires_at=expires_at,
-    )
-    session.add(order)
+    # النية موجودة مسبقاً — نملأ بيانات التنفيذ الحقيقية فقط.
+    order.expires_at = expires_at
+    order.status = OrderStatus.PENDING
     await session.commit()
     await session.refresh(order)
 

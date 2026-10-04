@@ -140,7 +140,15 @@ class GenericJsonProtocol(BaseProtocol):
         if not endpoint:
             raise ProtocolError("مسار API غير مضبوط لهذا الإجراء")
         if endpoint.startswith("http://") or endpoint.startswith("https://"):
-            return endpoint
+            try:
+                from services.ssrf_guard import SsrfError, validate_url
+
+                return validate_url(endpoint, allow_http=False)
+            except SsrfError as exc:
+                raise ProtocolError(f"رابط مزود محظور أمنياً: {exc}") from exc
+            except Exception:
+                # إن تعذر الفحص (DNS) نرفض الرابط المطلق احترازياً
+                raise ProtocolError("رابط مزود مطلق مرفوض أمنياً")
         return f"{self.api_url}/{endpoint.lstrip('/')}"
 
     async def _request(

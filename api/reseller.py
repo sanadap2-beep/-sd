@@ -1,12 +1,15 @@
 """Wholesale reseller API authenticated by dedicated hashed keys."""
 
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.orm import selectinload
 
 from api.deps import get_session
 from api.schemas import ResellerOrderIn
-from database.models import Product, ProductStatus, UnifiedOrder
+from database.models import Product, ProductStatus, Transaction, TransactionType, UnifiedOrder, User
+from services.balance_service import BalanceService, InsufficientBalanceError
 from services.checkout_service import CheckoutError, CheckoutService
 from services.reseller_api_service import ResellerAPIService, ResellerAuthError
 
@@ -58,6 +61,25 @@ async def reseller_order(
     reseller=Depends(get_reseller_account),
     session=Depends(get_session),
 ):
+    # عدم التكرار: نفس المفتاح يعيد الطلب الأصلي بدل طلب جديد.
+    if payload.idempotency_key:
+        ref = f"reseller:{reseller.id}:{payload.idempotency_key.strip()}"
+        existing = (
+            await session.execute(
+                select(Transaction).where(Transaction.payment_reference == ref)
+            )
+        ).scalar_one_or_none()
+        if existing is not None and existing.related_id:
+            order = await session.get(UnifiedOrder, existing.related_id)
+            if order is not None:
+                return {
+                    "order_id": order.id,
+                    "status": order.status.value,
+                    "price_usd": order.price_usd,
+                    "discount_usd": Decimal("0"),
+                    "external_order_id": order.external_order_id,
+                    "duplicate": True,
+                }
     try:
         result = await CheckoutService.purchase(
             session,
@@ -68,6 +90,56 @@ async def reseller_order(
         )
     except CheckoutError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # هامش الريسيلر يُطبَّق فعلاً (لا للعرض فقط): يُخصم بعد نجاح الشراء
+    # على السعر النهائي، مع سجل دفتر مرتبط بالطلب لمنع التكرار.
+    markup_pct = Decimal(str(reseller.markup_percent or 0))
+    if markup_pct > 0 and result.order.price_usd > 0:
+        markup = (result.order.price_usd * markup_pct / Decimal("100")).quantize(
+            Decimal("0.0001")
+        )
+        if markup > 0:
+            dup = (
+                await session.execute(
+                    select(Transaction).where(
+                        Transaction.user_id == reseller.user_id,
+                        Transaction.type == TransactionType.PURCHASE,
+                        Transaction.related_table == "unified_orders",
+                        Transaction.related_id == result.order.id,
+                        Transaction.description.like("هامش ريسيلر%"),
+                    )
+                )
+            ).scalar_one_or_none()
+            if dup is None:
+                try:
+                    await BalanceService.deduct_balance(
+                        session,
+                        reseller.user_id,
+                        markup,
+                        TransactionType.PURCHASE,
+                        description=f"هامش ريسيلر {markup_pct}% للطلب #{result.order.id}",
+                        related_table="unified_orders",
+                        related_id=result.order.id,
+                    )
+                except InsufficientBalanceError:
+                    pass
+    if payload.idempotency_key:
+        session.add(
+            Transaction(
+                user_id=reseller.user_id,
+                type=TransactionType.PURCHASE,
+                amount=Decimal("0"),
+                balance_after=(await session.get(User, reseller.user_id)).balance,
+                related_table="unified_orders",
+                related_id=result.order.id,
+                payment_reference=f"reseller:{reseller.id}:{payload.idempotency_key.strip()}",
+                description=f"طلب ريسيلر #{result.order.id}",
+            )
+        )
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
     return {
         "order_id": result.order.id,
         "status": result.order.status.value,

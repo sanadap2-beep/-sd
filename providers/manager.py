@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from database.models import Country, NumberService, ProviderName, ProviderStatus
+from providers.base import with_retry
 from providers.fivesim import FiveSimProvider
 from providers.herosms import HeroSMSProvider
 from providers.sms_activate import SMSActivateProvider
@@ -324,8 +325,12 @@ class ProviderManager:
                 max_price = (estimated_price * Decimal("1.05")).quantize(
                     Decimal("0.0001")
                 )
-                purchased = await instance.buy_number(
-                    country_code, service_code, max_price=max_price
+                purchased = await with_retry(
+                    lambda: instance.buy_number(
+                        country_code, service_code, max_price=max_price
+                    ),
+                    attempts=2,
+                    base_delay=2.0,
                 )
                 try:
                     from services.number_stock_guard import record_success

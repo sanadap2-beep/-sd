@@ -23,6 +23,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from database.models import EscrowStatus, MarketListing, MarketListingPhoto, MarketListingStatus, MarketTransaction, User
 from keyboards.main_menu import back_to_main_kb
 from services.feature_service import FeatureService
+from services.html_guard import esc
 from services.i18n_service import I18nService
 from services.market_profile_service import MarketProfileError, MarketProfileService
 from services.marketplace_service import MarketplaceService, MarketError
@@ -173,7 +174,7 @@ async def view_listing(callback: CallbackQuery, session, db_user):
     seller_profile = await MarketProfileService.get(session, listing.seller_id)
     seller_stats = MarketProfileService.stats(seller_profile)
     rows = []
-    rows.append([InlineKeyboardButton(text=f"👤 ملف البائع: {seller_stats['alias']}", callback_data=f'market_seller:{listing.seller_id}:{listing.id}', style="success")])
+    rows.append([InlineKeyboardButton(text=f"👤 ملف البائع: {esc(seller_stats['alias'])[:40]}", callback_data=f'market_seller:{listing.seller_id}:{listing.id}', style="success")])
     if listing.seller_id == db_user.id:
         rows.append([InlineKeyboardButton(text='🗑 سحب إعلاني', callback_data=f'market_cancel:{listing.id}', style="danger")])
     else:
@@ -182,7 +183,7 @@ async def view_listing(callback: CallbackQuery, session, db_user):
             rows.append([InlineKeyboardButton(text=I18nService.t('market_buy_with_points', language), callback_data=f'market_askbuy:{listing.id}:points', style="primary")])
     rows.append([InlineKeyboardButton(text='⬅️', callback_data='market_browse:all:0')])
     delivery_note = '🔐 <b>تسليم فوري وآلي</b> — الكود مشفر عندنا ويصلك لحظة الدفع.' if listing.secret_payload else '🤝 <b>بوساطة الإدارة</b> — أموالك محجوزة حتى يؤكد الأدمن التسليم.'
-    await callback.message.edit_text(f"{_KIND_LABELS.get(listing.kind, '📦')} <b>{listing.title}</b>\n\n📝 {(listing.description or '—')[:1500]}{I18nService.t('ux_marketplace_277_19', _auto_lang(locals()))}{total}{I18nService.t('ux_marketplace_277_20', _auto_lang(locals()))}{seller_stats['alias']}</b> · {seller_stats['tier']}{I18nService.t('ux_marketplace_277_21', _auto_lang(locals()))}{seller_stats['success_rate']}%</b> ({seller_stats['successful_sales']}{I18nService.t('ux_marketplace_277_22', _auto_lang(locals()))}{seller_stats['failed_sales']}{I18nService.t('ux_marketplace_277_23', _auto_lang(locals()))}{listing.view_count}\n\n{delivery_note}\n\n" + ('' if enough else f"{I18nService.t('ux_marketplace_285_24', _auto_lang(locals()))}{balance}{I18nService.t('ux_marketplace_285_25', _auto_lang(locals()))}{total}{I18nService.t('ux_marketplace_285_26', _auto_lang(locals()))}"), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.message.edit_text(f"{_KIND_LABELS.get(listing.kind, '📦')} <b>{esc(listing.title)}</b>\n\n📝 {esc((listing.description or '—')[:1500])}{I18nService.t('ux_marketplace_277_19', _auto_lang(locals()))}{total}{I18nService.t('ux_marketplace_277_20', _auto_lang(locals()))}{esc(seller_stats['alias'])}</b> · {esc(seller_stats['tier'])}{I18nService.t('ux_marketplace_277_21', _auto_lang(locals()))}{seller_stats['success_rate']}%</b> ({seller_stats['successful_sales']}{I18nService.t('ux_marketplace_277_22', _auto_lang(locals()))}{seller_stats['failed_sales']}{I18nService.t('ux_marketplace_277_23', _auto_lang(locals()))}{listing.view_count}\n\n{delivery_note}\n\n" + ('' if enough else f"{I18nService.t('ux_marketplace_285_24', _auto_lang(locals()))}{balance}{I18nService.t('ux_marketplace_285_25', _auto_lang(locals()))}{total}{I18nService.t('ux_marketplace_285_26', _auto_lang(locals()))}"), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('market_seller:'))
@@ -193,17 +194,17 @@ async def seller_profile_view(callback: CallbackQuery, session):
     profile = await MarketProfileService.get(session, seller_id)
     stats = MarketProfileService.stats(profile)
     active = list((await session.execute(select(MarketListing).where(MarketListing.seller_id == seller_id, MarketListing.status == MarketListingStatus.APPROVED).order_by(MarketListing.published_at.desc()).limit(5))).scalars().all())
-    lines = ['👤 <b>ملف البائع</b>', '', f"الاسم المستعار: <b>{stats['alias']}</b>", f"المستوى: {stats['tier']}", f"✅ مبيعات ناجحة: <b>{stats['successful_sales']}</b>", f"⚠️ فشل/نزاعات: <b>{stats['failed_sales']}</b>", f"📊 نسبة النجاح: <b>{stats['success_rate']}%</b>"]
+    lines = ['👤 <b>ملف البائع</b>', '', f"الاسم المستعار: <b>{esc(stats['alias'])}</b>", f"المستوى: {esc(stats['tier'])}", f"✅ مبيعات ناجحة: <b>{stats['successful_sales']}</b>", f"⚠️ فشل/نزاعات: <b>{stats['failed_sales']}</b>", f"📊 نسبة النجاح: <b>{stats['success_rate']}%</b>"]
     if active:
         lines.append('\n📦 <b>معروضات نشطة من هذا البائع:</b>')
         for item in active:
             total = await MarketplaceService.total_price(item)
-            lines.append(f'• #{item.id} {item.title[:32]} — {total}$')
+            lines.append(f'• #{item.id} {esc(item.title[:32])} — {total}$')
     else:
         lines.append('\nلا توجد معروضات نشطة أخرى حالياً.')
     rows = []
     for item in active[:5]:
-        rows.append([InlineKeyboardButton(text=f'فتح #{item.id} {item.title[:20]}', callback_data=f'market_view:{item.id}', style="success")])
+        rows.append([InlineKeyboardButton(text=f'فتح #{item.id} {esc(item.title[:20])}', callback_data=f'market_view:{item.id}', style="success")])
     if back_listing_id:
         rows.append([InlineKeyboardButton(text='⬅️ رجوع للمعروض', callback_data=f'market_view:{back_listing_id}')])
     rows.append([InlineKeyboardButton(text='⬅️ السوق', callback_data='market:home')])
@@ -407,7 +408,7 @@ async def sell_photos_done(callback: CallbackQuery, state: FSMContext, session, 
     notifier = NotificationService(bot)
     photos = (await session.execute(select(MarketListingPhoto).where(MarketListingPhoto.listing_id == listing.id))).scalars().all()
     auto = listing.status == MarketListingStatus.APPROVED
-    text = ('✅ <b>إعلان سوق نُشر تلقائياً لبائع موثوق</b>\n\n' if auto else '🏪 <b>إعلان جديد بانتظار موافقتك</b>\n\n') + f"🆔 الإعلان: #{listing.id}\n📦 النوع: {_KIND_LABELS.get(listing.kind, listing.kind)}\n📄 العنوان: <b>{listing.title}</b>\n💵 سعر البائع: {listing.seller_price_usd}$\n👤 البائع: <code>{listing.seller_id}</code> (@{db_user.username or '-'})\n📸 صور: {len(photos)}\n" + ('🔐 يحتوي كوداً مشفراً\n' if listing.secret_payload else '') + (f'🧾 إثبات ملكية: <code>{listing.ownership_proof}</code>\n' if listing.ownership_proof else '') + f"\n📝 <b>الوصف:</b>\n{(listing.description or '—')[:800]}\n\n" + ('تم نشره تلقائياً حسب سجل ثقة البائع.' if auto else 'افتح «🏪 سوق المستخدمين» من لوحة الأدمن لتحديد العمولة والنشر.')
+    text = ('✅ <b>إعلان سوق نُشر تلقائياً لبائع موثوق</b>\n\n' if auto else '🏪 <b>إعلان جديد بانتظار موافقتك</b>\n\n') + f"🆔 الإعلان: #{listing.id}\n📦 النوع: {esc(_KIND_LABELS.get(listing.kind, listing.kind))}\n📄 العنوان: <b>{esc(listing.title)}</b>\n💵 سعر البائع: {listing.seller_price_usd}$\n👤 البائع: <code>{listing.seller_id}</code> (@{esc(db_user.username) or '-'})\n📸 صور: {len(photos)}\n" + ('🔐 يحتوي كوداً مشفراً\n' if listing.secret_payload else '') + (f'🧾 إثبات ملكية: <code>{esc(listing.ownership_proof)}</code>\n' if listing.ownership_proof else '') + f"\n📝 <b>الوصف:</b>\n{esc((listing.description or '—')[:800])}\n\n" + ('تم نشره تلقائياً حسب سجل ثقة البائع.' if auto else 'افتح «🏪 سوق المستخدمين» من لوحة الأدمن لتحديد العمولة والنشر.')
     for photo in photos[:1]:
         try:
             await notifier.notify_admin_photo(photo.file_id, text)

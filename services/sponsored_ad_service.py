@@ -37,17 +37,19 @@ class SponsoredAdService:
 
     @staticmethod
     def render(ad: SponsoredAd) -> str:
+        from services.html_guard import esc
+
         parts = [
             "📢 <b>إعلان</b>",
             "",
-            f"<b>{ad.title}</b>",
-            ad.body,
+            f"<b>{esc(ad.title)}</b>",
+            esc(ad.body),
         ]
         if ad.item_type:
-            parts.append(f"🏷 النوع: {ad.item_type}")
+            parts.append(f"🏷 النوع: {esc(ad.item_type)}")
         if ad.price_text:
-            parts.append(f"💰 السعر: {ad.price_text}")
-        parts.append(f"📞 التواصل: {ad.contact}")
+            parts.append(f"💰 السعر: {esc(ad.price_text)}")
+        parts.append(f"📞 التواصل: {esc(ad.contact)}")
         if ad.ends_at:
             parts.append(f"⏳ صالح حتى: {ad.ends_at.strftime('%Y-%m-%d %H:%M')} UTC")
         return "\n".join(parts)

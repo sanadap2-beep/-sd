@@ -149,8 +149,13 @@ class DepositBonusService:
                 bonus,
                 TransactionType.COUPON_BONUS,
                 description=f"مكافأة شحن {deposit_amount_usd}$ بنسبة {best.bonus_percent}%",
-                related_table="deposit_bonus_rules",
-                related_id=best.id,
+                related_table=None,
+                related_id=None,
+                payment_reference=(
+                    f"deposit_bonus:{deposit_source}:{deposit_id}:{best.id}"
+                    if deposit_id is not None
+                    else None
+                ),
             )
         except Exception:
             logger.exception("فشل صرف مكافأة الشحن للمستخدم %s", user_id)
@@ -166,7 +171,19 @@ class DepositBonusService:
                 rule_id=best.id,
             )
         )
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            from sqlalchemy.exc import IntegrityError
+
+            await session.rollback()
+            # سباق: إيداع واحد منح مرتين بشكل متزامن — القيد الفريد يمنع التكرار.
+            # الرصيد آمن بفضل payment_reference الفريد لكل إيداع.
+            logger.warning(
+                "تجاهل مكافأة مكررة للمستخدم %s (مصدر %s id=%s)",
+                user_id, deposit_source, deposit_id,
+            )
+            return Decimal("0")
         logger.info("مكافأة شحن %s$ للمستخدم %s (إيداع %s)", bonus, user_id, deposit_amount_usd)
 
         if await FeatureService.config("deposit_bonuses", "notify_on_grant", True):

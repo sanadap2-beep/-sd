@@ -31,7 +31,7 @@ def upgrade() -> None:
         sa.Column("price_usd", sa.Numeric(18, 4), nullable=False, server_default="0"),
         sa.Column("last_cost_usd", sa.Numeric(18, 4), nullable=False, server_default="0"),
         sa.Column("margin_percent", sa.Numeric(18, 4), nullable=False, server_default="50"),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)")),
     )
     op.create_table(

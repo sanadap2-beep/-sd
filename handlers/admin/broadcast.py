@@ -47,37 +47,53 @@ async def broadcast_content_received(
     )
 
     sent, failed = 0, 0
-    for user in users:
-        try:
-            if message.photo:
-                await bot.send_photo(
-                    user.telegram_id,
-                    message.photo[-1].file_id,
-                    caption=message.caption,
-                )
-            elif message.video:
-                await bot.send_video(
-                    user.telegram_id,
-                    message.video.file_id,
-                    caption=message.caption,
-                )
-            elif message.document:
-                await bot.send_document(
-                    user.telegram_id,
-                    message.document.file_id,
-                    caption=message.caption,
-                )
-            else:
-                await bot.send_message(
-                    user.telegram_id,
-                    message.text or message.caption or "",
-                )
-            sent += 1
-        except Exception:
-            failed += 1
+    sem = asyncio.Semaphore(10)
 
-        if (sent + failed) % 30 == 0:
-            await asyncio.sleep(1)
+    async def _send_one(user):
+        nonlocal sent, failed
+        async with sem:
+            try:
+                if message.photo:
+                    await bot.send_photo(
+                        user.telegram_id,
+                        message.photo[-1].file_id,
+                        caption=message.caption,
+                    )
+                elif message.video:
+                    await bot.send_video(
+                        user.telegram_id,
+                        message.video.file_id,
+                        caption=message.caption,
+                    )
+                elif message.document:
+                    await bot.send_document(
+                        user.telegram_id,
+                        message.document.file_id,
+                        caption=message.caption,
+                    )
+                else:
+                    await bot.send_message(
+                        user.telegram_id,
+                        message.text or message.caption or "",
+                    )
+                sent += 1
+            except Exception:
+                failed += 1
+
+    # دفعات متوازية (10) بدل حلقة متسلسلة تحجز الـ loop لساعات
+    batch_size = 100
+    ids = list(users)
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i:i + batch_size]
+        await asyncio.gather(*[_send_one(u) for u in batch])
+        try:
+            await progress_msg.edit_text(
+                f"📢 جاري الإرسال... {min(i + batch_size, len(ids))}/{len(ids)}\n"
+                f"📤 نجح: {sent} | ❌ فشل: {failed}"
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(1)
 
     session.add(
         BroadcastLog(
