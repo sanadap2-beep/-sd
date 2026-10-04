@@ -56,7 +56,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
       - name: Start PostgreSQL (host port 5433 avoids runner-local conflicts)
         run: |
           docker run -d --name ci-pg \
