@@ -118,6 +118,7 @@ async def test_number_confirm_success_creates_pending_order_and_deducts_balance(
 
     assert len(orders) == 1
     assert orders[0].status == OrderStatus.PENDING
+    assert orders[0].status_message is None
     assert orders[0].phone_number == "+15550000001"
     assert user.balance == Decimal("8.5000")  # 1$ + default 50% margin
     assert callback.message.answers and "تم شراء الرقم" in callback.message.answers[0][0]
@@ -143,7 +144,10 @@ async def test_number_confirm_provider_failure_refunds_full_amount(monkeypatch):
         orders = (await session.execute(select(NumberOrder))).scalars().all()
         await session.refresh(user)
 
-    assert orders == []
+    # تبقى نية الشراء الملغاة قابلة للمراجعة بعد الاسترجاع؛ لا تختفِ كسجل.
+    assert len(orders) == 1
+    assert orders[0].status == OrderStatus.CANCELLED
+    assert "لا مزود متاح" in (orders[0].status_message or "")
     assert user.balance == Decimal("10.0000")
     assert any("تم استرجاع رصيدك" in text for text, _markup in callback.message.answers)
 

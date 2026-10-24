@@ -55,6 +55,9 @@ def test_known_initial_schema_is_upgraded_instead_of_stamped_as_head(
     inspector = inspect(engine)
     assert inspector.get_columns("users")
     assert "display_currency" in {column["name"] for column in inspector.get_columns("users")}
+    assert "status_message" in {
+        column["name"] for column in inspector.get_columns("number_orders")
+    }
     assert "cart_items" in inspector.get_table_names()
     assert "feature_flags" in inspector.get_table_names()
     expected_head = ScriptDirectory.from_config(_alembic_config(sync_url)).get_current_head()

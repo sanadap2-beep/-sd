@@ -449,6 +449,8 @@ class NumberOrder(Base):
     price_sell_usd: Mapped[Decimal] = mapped_column(MONEY)
 
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus), default=OrderStatus.PENDING)
+    # سبب/وصف حالة نية الشراء والتسوية؛ لا يخلط مع معرف رسالة تيليجرام أدناه.
+    status_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sms_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     full_sms_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
