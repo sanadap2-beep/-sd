@@ -1045,12 +1045,15 @@ async def confirm_buy(
     # فأي انهيار يترك أثراً قابلاً للتسوية بدل خصم بلا طلب.
     import uuid as _uuid
 
-    intent_key = f"num:{db_user.id}:{service_code}:{country_code}:{_uuid.uuid4().hex}"
+    # المفتاح عشوائي بالكامل، لذلك لا نحتاج تضمين أكواد خدمة/دولة قد تتجاوز
+    # حد VARCHAR(64) في حقول النية. يبقى المفتاح فريداً عالمياً وقابلاً للتتبع.
+    intent_key = f"num:{_uuid.uuid4().hex}"
+    pending_provider_order_id = f"pending:{intent_key}"
     intent_provider = strict_provider or preferred_provider or cheapest_provider
     order = NumberOrder(
         user_id=db_user.id,
         provider=intent_provider,
-        provider_order_id=f"pending:{intent_key}",
+        provider_order_id=pending_provider_order_id,
         service=service_code,
         country_code=country_code,
         phone_number="pending",

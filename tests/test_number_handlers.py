@@ -65,7 +65,7 @@ class FakeBuyResult:
     cost_usd: Decimal = Decimal("1.00")
 
 
-async def _seed_number_catalog(balance: str = "10"):
+async def _seed_number_catalog(balance: str = "10", *, country_code: str = "zz"):
     async with async_session_maker() as session:
         user = User(telegram_id=70001, username="buyer", balance=Decimal(balance))
         service = NumberService(
@@ -76,7 +76,7 @@ async def _seed_number_catalog(balance: str = "10"):
             is_active=True,
         )
         country = Country(
-            code="zz",
+            code=country_code,
             name_ar="دولة اختبار",
             flag="🏳️",
             fivesim_code="zz",
@@ -122,6 +122,43 @@ async def test_number_confirm_success_creates_pending_order_and_deducts_balance(
     assert orders[0].phone_number == "+15550000001"
     assert user.balance == Decimal("8.5000")  # 1$ + default 50% margin
     assert callback.message.answers and "تم شراء الرقم" in callback.message.answers[0][0]
+
+
+@pytest.mark.asyncio
+async def test_number_confirm_keeps_intent_identifiers_within_column_limits(monkeypatch):
+    """أكواد مزود طويلة يجب ألا تكسر حقول VARCHAR(64) الخاصة بالنية."""
+    user_id, service_code, country_code = await _seed_number_catalog(
+        "10",
+        country_code="herosms_south_africa_31",
+    )
+
+    async def fake_prices(service, country, session=None):
+        return {ProviderName.FIVESIM: Decimal("1.00")}
+
+    intent_values = {}
+
+    async def fake_buy(service, country, session=None, preferred_provider=None):
+        intent = (await session.execute(select(NumberOrder))).scalar_one()
+        intent_values["idempotency_key"] = intent.idempotency_key
+        intent_values["provider_order_id"] = intent.provider_order_id
+        return FakeBuyResult()
+
+    monkeypatch.setattr("handlers.numbers.provider_manager.get_cheapest_price", fake_prices)
+    monkeypatch.setattr("handlers.numbers.provider_manager.buy_number", fake_buy)
+    monkeypatch.setattr("services.notification_service.NotificationService.notify_admin", _noop)
+
+    async with async_session_maker() as session:
+        user = await session.get(User, user_id)
+        callback = DummyCallback(f"num_confirm:{service_code}:{country_code}:")
+        await confirm_buy(callback, session, user, DummyBot())
+        order = (await session.execute(select(NumberOrder))).scalar_one()
+
+    assert order.country_code == country_code
+    assert intent_values["idempotency_key"] is not None
+    assert intent_values["idempotency_key"].startswith("num:")
+    assert intent_values["provider_order_id"] == f"pending:{intent_values['idempotency_key']}"
+    assert len(intent_values["idempotency_key"]) <= 64
+    assert len(intent_values["provider_order_id"]) <= 64
 
 
 @pytest.mark.asyncio
