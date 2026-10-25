@@ -17,7 +17,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from database.engine import async_session_maker
 from database.models import User
 from handlers.referral_guard import human_check_answer, send_human_check
-from states.states import ReferralGuardStates
 
 
 class DummyMessage:
@@ -82,6 +81,9 @@ async def test_send_human_check_and_success_flow():
         await session.refresh(user)
         assert user.referral_check_pending is False
         assert user.is_activated is True
+        assert cb.message.edits[0][0] == "✅ تم التحقق بنجاح! يمكنك الآن استخدام المتجر."
+        keyboard = cb.message.edits[0][1]
+        assert keyboard.inline_keyboard[0][0].callback_data == "back_to_main"
 
 
 @pytest.mark.asyncio
