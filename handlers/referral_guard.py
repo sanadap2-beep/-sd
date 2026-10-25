@@ -103,8 +103,6 @@ async def human_check_answer(
             "⚠️ تجاوزت الحد الأقصى للمحاولات. جُمّدت مكافأة الإحالة فقط.",
             show_alert=True,
         )
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
         await callback.message.edit_text(
             "⚠️ <b>تجاوزت الحد الأقصى للمحاولات.</b>\n\n"
             "لم يُحظر حسابك — فقط جُمّدت مكافأة الإحالة لهذا الحساب.\n"
