@@ -83,6 +83,23 @@ def _is_hyper_store_provider(provider) -> bool:
         return False
 
 
+def _is_fazercards_service(service) -> bool:
+    """يتحقق من raw الكتالوج، لا من اسم العرض القابل للتغيير."""
+    raw = getattr(service, "raw", {}) or {}
+    if not isinstance(raw, dict):
+        return False
+    return str(raw.get("engine") or "").lower() in {
+        "fazercards",
+        "fazer_cards",
+        "fzr_cards",
+    }
+
+
+def _uses_per_item_pricing(provider, service) -> bool:
+    """عروض الألعاب الثابتة سعرها للحزمة، لا لكل ألف وحدة."""
+    return _is_hyper_store_provider(provider) or _is_fazercards_service(service)
+
+
 class ProviderSyncService:
     """خدمة تزامن الخدمات من المزودين."""
 
@@ -222,7 +239,12 @@ class ProviderSyncService:
                     raw_json = json.dumps(
                         service.raw,
                         ensure_ascii=False,
-                    )[:5000]
+                    )
+                    # حقول FazerCards وخيارات select جزء من عقد الشراء، لذلك
+                    # لا نقص JSON فتتعطل قراءته لاحقاً. الحقل Text ولا يفرض
+                    # حدّاً صغيراً؛ يبقى حدّ 5000 فقط للـ raw العام القديم.
+                    if not _is_fazercards_service(service):
+                        raw_json = raw_json[:5000]
 
                     # التعريب وقت السحب: كل خدمة مسحوبة تملك اسماً عربياً
                     # محفوظاً (للعرض والبيع والبحث)، والاسم الأصلي الإنجليزي
@@ -242,6 +264,11 @@ class ProviderSyncService:
                         existing.service_type = service.service_type
                         existing.rate = service.rate
                         existing.rate_usd = rate_usd
+                        existing.price_type = (
+                            ProviderPriceType.PER_ITEM
+                            if _uses_per_item_pricing(provider, service)
+                            else ProviderPriceType.PER_1000
+                        )
                         existing.min_quantity = service.min_quantity
                         existing.max_quantity = service.max_quantity
                         existing.description = service.description
@@ -268,7 +295,11 @@ class ProviderSyncService:
                             service_type=service.service_type,
                             rate=service.rate,
                             rate_usd=rate_usd,
-                            price_type=(ProviderPriceType.PER_ITEM if _is_hyper_store_provider(provider) else ProviderPriceType.PER_1000),
+                            price_type=(
+                                ProviderPriceType.PER_ITEM
+                                if _uses_per_item_pricing(provider, service)
+                                else ProviderPriceType.PER_1000
+                            ),
                             min_quantity=service.min_quantity,
                             max_quantity=service.max_quantity,
                             description=service.description,

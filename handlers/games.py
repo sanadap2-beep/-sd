@@ -7,6 +7,7 @@
 4) يُرسل الطلب للمزود تلقائياً
 5) يُتابع الطلب من order_monitor
 """
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -34,7 +35,34 @@ from services.settings_service import SettingsService
 from services.coupon_service import CouponService, CouponError
 from services.cashback_service import CashbackService
 from services.campaign_service import CampaignCodeError, CampaignService
+from services.provider_input_service import (
+    display_provider_target,
+    encode_provider_fields,
+    field_label_ar,
+)
 from database.models import ProviderService
+from services.feature_service import FeatureService
+from services.product_service import ProductService
+from services.promotion_service import PromotionService
+from services.currency_service import CurrencyService
+from services.i18n_service import I18nService
+from services.tiered_pricing_service import TieredPricingService
+from services.upsell_service import UpsellService
+from services.watch_service import WatchService
+from protocols.base import ProtocolError, ProtocolInsufficientFundsError
+from protocols.factory import ProtocolFactory
+from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
+from keyboards.common import after_order_kb, flow_cancel_kb
+from keyboards.games import (
+    sections_kb,
+    products_kb,
+    product_confirm_kb,
+    product_confirm_with_coupon_kb,
+    product_search_results_kb,
+    favorites_kb,
+    store_servers_kb,
+)
+from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
 
 
 async def _is_hyper_store_product(product, session) -> bool:
@@ -47,6 +75,21 @@ async def _is_hyper_store_product(product, session) -> bool:
             return False
         raw = json.loads(provider.custom_config or "{}")
         return raw.get("engine") in ("hyper_store", "hyper4store", "external_store")
+    except Exception:
+        return False
+
+
+async def _is_fazercards_product(product, session) -> bool:
+    """True إذا كان المنتج مربوطاً بكتالوج FazerCards للألعاب."""
+    try:
+        if not product.api_provider_id:
+            return False
+        provider = await session.get(ApiProvider, product.api_provider_id)
+        if provider is None:
+            return False
+        from protocols.fazercards import is_fazercards_provider
+
+        return is_fazercards_provider(provider)
     except Exception:
         return False
 
@@ -74,26 +117,126 @@ async def _target_field_label(product, session) -> str | None:
             key = str(f.get("key") or "").lower()
             if key in ("quantity", "qty") or not f.get("required", True):
                 continue
-            return str(f.get("label") or f.get("key"))
+            return str(f.get("label_ar") or field_label_ar(f.get("key"), f.get("label")))
         return None
     except Exception:
         return None
-from services.feature_service import FeatureService
-from services.product_service import ProductService
-from services.promotion_service import PromotionService
-from services.currency_service import CurrencyService
-from services.i18n_service import I18nService
-from services.tiered_pricing_service import TieredPricingService
-from services.upsell_service import UpsellService
-from services.watch_service import WatchService
-from protocols.base import ProtocolError, ProtocolInsufficientFundsError
-from protocols.factory import ProtocolFactory
-from states.states import GamesOrderStates, ProductSearchStates, SMMOrderStates
-from keyboards.common import after_order_kb, flow_cancel_kb
-from keyboards.games import sub_categories_kb, sections_kb, products_kb, product_confirm_kb, product_confirm_with_coupon_kb, product_search_results_kb, favorites_kb, store_servers_kb
-from keyboards.main_menu import insufficient_balance_kb, confirm_large_order_kb, back_to_main_kb
+
+
 logger = logging.getLogger(__name__)
 router = Router(name='games')
+
+
+async def _fazercards_input_fields(product, session) -> list[dict]:
+    """حقول العرض الديناميكية إن كان المنتج من FazerCards فقط.
+
+    نحصر المسار في هذا المحرك حتى لا نغيّر سلوك مزود قديم يضع ``fields`` في
+    raw_data بمعنى مختلف. الحقول محفوظة لحظة المزامنة، فلا نحتاج طلب HTTP
+    إضافياً أثناء تصفح العميل.
+    """
+    if not product.api_provider_id or not product.provider_service_ref_id:
+        return []
+    try:
+        provider = await session.get(ApiProvider, product.api_provider_id)
+        if provider is None:
+            return []
+        from protocols.fazercards import is_fazercards_provider
+
+        if not is_fazercards_provider(provider):
+            return []
+        service = await session.get(ProviderService, product.provider_service_ref_id)
+        raw = json.loads(service.raw_data or "{}") if service and service.raw_data else {}
+        if raw.get("engine") != "fazercards" or raw.get("family") != "topups":
+            return []
+        fields = raw.get("fields") if isinstance(raw.get("fields"), list) else []
+        normalized = []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            key = str(field.get("key") or "").strip()
+            if not key or key.lower() in {"quantity", "qty"}:
+                continue
+            if not field.get("required", True):
+                continue
+            normalized.append(
+                {
+                    "key": key,
+                    "label": str(field.get("label") or key),
+                    "label_ar": str(field.get("label_ar") or field_label_ar(key, field.get("label"))),
+                    "type": str(field.get("type") or "text").lower(),
+                    "options": field.get("options") if isinstance(field.get("options"), list) else [],
+                }
+            )
+        return normalized[:8]
+    except Exception:
+        logger.exception("تعذر قراءة حقول FazerCards للمنتج %s", getattr(product, "id", "?"))
+        return []
+
+
+def _field_option_values(field: dict) -> list[tuple[str, str]]:
+    """``[(value, label)]`` من خيارات select بأشكال API الشائعة."""
+    result: list[tuple[str, str]] = []
+    for option in field.get("options") or []:
+        if isinstance(option, dict):
+            value = option.get("value", option.get("id", option.get("key", option.get("label"))))
+            label = option.get("label", option.get("name", value))
+        else:
+            value = option
+            label = option
+        if value is None:
+            continue
+        value_text = str(value).strip()
+        if value_text:
+            result.append((value_text, str(label or value_text).strip()))
+    return result
+
+
+def _provider_field_prompt(field: dict, position: int, total: int) -> str:
+    label = str(field.get("label_ar") or field_label_ar(field.get("key"), field.get("label")))
+    text = f"🎮 <b>بيانات الشحن ({position}/{total})</b>\n\nأرسل: <b>{esc(label)}</b>"
+    options = _field_option_values(field)
+    if options:
+        shown = "، ".join(f"<code>{esc(value)}</code>" for value, _label in options[:12])
+        text += f"\n\nالقيم المتاحة: {shown}"
+    return text
+
+
+async def _start_fazercards_fields(message, state, product, session) -> bool:
+    """يبدأ جمع كل حقول FazerCards المطلوبة، ولو كان الحقل واحداً فقط."""
+    fields = await _fazercards_input_fields(product, session)
+    if not fields:
+        return False
+    await state.update_data(
+        fazercards_fields=fields,
+        fazercards_values={},
+        fazercards_field_index=0,
+    )
+    await message.answer(_provider_field_prompt(fields[0], 1, len(fields)))
+    await state.set_state(GamesOrderStates.waiting_provider_fields)
+    return True
+
+
+def _display_target(target: object) -> str:
+    return display_provider_target(target) or "—"
+
+
+async def _continue_after_game_target(message, state, session, product, target_display: str) -> None:
+    """يكمل تأكيد شراء لعبة بعد جمع Player ID أو حقول FazerCards المتعددة."""
+    server = await _server_from_state(session, state)
+    unit_price = await _server_unit_price(session, product, server)
+    if product.requires_quantity and product.min_quantity > 1:
+        await state.set_state(GamesOrderStates.waiting_quantity)
+        await message.answer(
+            f"📦 أرسل الكمية المطلوبة (من {product.min_quantity} إلى {product.max_quantity}):"
+        )
+        return
+    sub_cat = product.sub_category
+    await message.answer(
+        f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}"
+        f"{esc(target_display)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{unit_price}"
+        f"{I18nService.t('ux_games_406_23', _auto_lang(locals()))}",
+        reply_markup=product_confirm_kb(product.id, sub_cat.id if sub_cat else 0),
+    )
 
 
 class SmmAppLabelFilter(Filter):
@@ -687,9 +830,10 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     # والقيم كلها ديناميكية من المزود وقاعدة البيانات.
     if product.provider_service_ref_id and product.fulfillment_type == ProductFulfillmentType.API:
         from services.smm_price_service import service_details, format_details_kb, live_sell_price
-        # إذا كان المنتج من Hyper Store قسمّ ألعاب/تطبيقات/أرصدة/بطاقات — نعرض تفاصيل نظيفة
+        # متاجر الألعاب ذات الحقول الديناميكية (Hyper Store/FazerCards) لها تفاصيل نظيفة.
         is_hyper = await _is_hyper_store_product(product, session)
-        if is_hyper:
+        is_fazercards = await _is_fazercards_product(product, session)
+        if is_hyper or is_fazercards:
             live_price = await live_sell_price(product, session)
             back_cb = f"subcat:{sub_cat.id}" if sub_cat else "back_to_main"
             head_icon = "🎮" if product.requires_player_id or (sub_cat and any(g in sub_cat.name_ar.lower() for g in ("pubg", "ببجي", "بوبجي", "لعبة", "game"))) else ("📱" if product.requires_link else "📦")
@@ -704,7 +848,9 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
                 raw = _json.loads(service.raw_data) if isinstance(service.raw_data, str) else (service.raw_data or {})
                 fields = raw.get("fields", []) if isinstance(raw.get("fields"), list) else []
                 fields_str = ", ".join(
-                    f.get('label', '') for f in fields if isinstance(f, dict) and f.get('key') != 'quantity'
+                    str(f.get('label_ar') or field_label_ar(f.get('key'), f.get('label')))
+                    for f in fields
+                    if isinstance(f, dict) and f.get('key') != 'quantity'
                 )
                 qty_info = ""
                 for f in fields:
@@ -727,6 +873,8 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
             b_kb.button(text="🔙 رجوع", callback_data=back_cb)
             await _edit_product_page(callback.message, details_text, head_prem, b_kb.as_markup())
             await state.update_data(product_id=product_id, price_override=str(live_price))
+            if await _start_fazercards_fields(callback.message, state, product, session):
+                return
             # prompt for the required field
             if product.requires_player_id:
                 target_label = await _target_field_label(product, session)
@@ -744,6 +892,8 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
         details_kb = format_details_kb(det, live_price, back_callback)
         await _edit_product_page(callback.message, head, head_prem, details_kb)
         await state.update_data(product_id=product_id, price_override=str(live_price))
+        if await _start_fazercards_fields(callback.message, state, product, session):
+            return
         if product.requires_player_id:
             # شحن الألعاب: لا يُنفَّذ الطلب عند المزود بلا Player ID.
             # هذه الشاشة كانت تقفز للتأكيد مباشرة، فيُرسل الطلب بهدف فارغ
@@ -767,6 +917,8 @@ async def product_selected(callback: CallbackQuery, session, db_user: User, stat
     price_label = I18nService.t('price', language)
     confirm_q = I18nService.t('confirm_purchase_q', language)
     custom_placeholder = product.custom_input_placeholder or ""
+    if await _start_fazercards_fields(callback.message, state, product, session):
+        return
     if product.requires_player_id:
         head, head_prem = _product_head(product, '🎮')
         target_label = await _target_field_label(product, session)
@@ -831,16 +983,65 @@ async def player_id_received(message: Message, state: FSMContext, session, db_us
             await message.answer(f"⚠️ {esc(exc)}{I18nService.t('ux_games_397_20', _auto_lang(locals()))}")
             return
     await state.update_data(target=player_id, quantity=1)
-    server = await _server_from_state(session, state)
-    unit_price = await _server_unit_price(session, product, server)
-    # خدمات الرصيد (والكميات عموماً) تحتاج سؤالاً إضافياً عن الكميّة عندما لا تكون ثابتة = 1
-    if product.requires_quantity and product.min_quantity > 1:
-        await state.set_state(GamesOrderStates.waiting_quantity)
+    await _continue_after_game_target(message, state, session, product, player_id)
+
+@router.message(GamesOrderStates.waiting_provider_fields)
+async def fazercards_field_received(message: Message, state: FSMContext, session, db_user: User):
+    """يجمع حقول عروض FazerCards متعددة واحدة تلو الأخرى."""
+    data = await state.get_data()
+    product_id = data.get("product_id")
+    fields = data.get("fazercards_fields")
+    index = int(data.get("fazercards_field_index", 0) or 0)
+    if not product_id or not isinstance(fields, list) or not (0 <= index < len(fields)):
+        await message.answer("⚠️ انتهت جلسة بيانات الشحن؛ افتح العرض من جديد.")
+        await state.clear()
+        return
+    product = await DynamicService.get_product(session, product_id)
+    if product is None:
+        await message.answer(I18nService.t("ux_games_386_19", _auto_lang(locals())))
+        await state.clear()
+        return
+
+    field = fields[index]
+    key = str(field.get("key") or "").strip()
+    value = (message.text or "").strip()
+    label = str(field.get("label_ar") or field_label_ar(key, field.get("label")))
+    if not key or not value or len(value) > 128:
+        await message.answer(f"⚠️ أرسل قيمة صحيحة للحقل: <b>{esc(label)}</b>")
+        return
+    options = _field_option_values(field)
+    if options:
+        matching = next((actual for actual, _name in options if actual.lower() == value.lower()), None)
+        if matching is None:
+            await message.answer(
+                f"⚠️ اختر قيمة من الخيارات المعروضة لحقل <b>{esc(label)}</b>."
+            )
+            return
+        value = matching
+
+    values = data.get("fazercards_values")
+    values = dict(values) if isinstance(values, dict) else {}
+    values[key] = value
+    next_index = index + 1
+    if next_index < len(fields):
+        await state.update_data(fazercards_values=values, fazercards_field_index=next_index)
+        await message.answer(_provider_field_prompt(fields[next_index], next_index + 1, len(fields)))
+        return
+
+    target = encode_provider_fields(values)
+    # UnifiedOrder.target محدود إلى 500 حرف؛ نرفض القيمة الأخيرة قبل الانتقال
+    # للتأكيد كي لا ينجح الاختبار محلياً ثم يفشل الحفظ على قواعد أكثر تشدداً.
+    if len(target) > 500:
+        values.pop(key, None)
+        await state.update_data(fazercards_values=values)
         await message.answer(
-            f"📦 أرسل الكمية المطلوبة (من {product.min_quantity} إلى {product.max_quantity}):"
+            f"⚠️ قيمة <b>{esc(label)}</b> طويلة جداً مع بقية بيانات الشحن؛ "
+            "اختصرها ثم أرسلها مرة أخرى."
         )
         return
-    await message.answer(f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{unit_price}{I18nService.t('ux_games_406_23', _auto_lang(locals()))}", reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0))
+    await state.update_data(target=target, quantity=1, fazercards_values=values)
+    await _continue_after_game_target(message, state, session, product, _display_target(target))
+
 
 @router.message(GamesOrderStates.waiting_quantity)
 async def games_quantity_received(message: Message, state: FSMContext, session, db_user: User):
@@ -866,7 +1067,7 @@ async def games_quantity_received(message: Message, state: FSMContext, session, 
     total_price = await _server_total_price(session, product, quantity, server)
     await state.update_data(quantity=quantity, total_price=str(total_price))
     sub_cat = product.sub_category
-    player_id = data.get('target', '—')
+    player_id = _display_target(data.get('target', '—'))
     await message.answer(
         f"🎮 <b>{esc(product.name_ar)}{_eta_line(product)}{I18nService.t('ux_games_406_21', _auto_lang(locals()))}{esc(player_id)}{I18nService.t('ux_games_406_22', _auto_lang(locals()))}{total_price}",
         reply_markup=product_confirm_kb(product_id, sub_cat.id if sub_cat else 0),
@@ -1240,8 +1441,29 @@ async def _finalize_purchase(callback, session, db_user, bot, state, product, ta
                         route_errors.append(f"رصيد {provider.name} غير كافٍ ({balance_usd}$)")
                         low_balance_names.append(provider.name)
                         continue
+                extra_params = None
+                # FazerCards يحتفظ بمفتاح idempotency سبعة أيام. نشتقه من
+                # callback Telegram + المسار حتى تعيد إعادة معالجة نفس النقرة
+                # الطلب الأصلي، لا عملية شحن ثانية.
+                from protocols.fazercards import is_fazercards_provider
+
+                if is_fazercards_provider(provider):
+                    callback_token = str(
+                        getattr(callback, "id", None)
+                        or f"{db_user.id}:{getattr(callback.message, 'message_id', '')}"
+                    )
+                    key_material = (
+                        f"{callback_token}:{route.api_provider_id}:{route.provider_service_id}"
+                    )
+                    extra_params = {
+                        "_idempotency_key": "bot-"
+                        + hashlib.sha256(key_material.encode("utf-8")).hexdigest()[:40]
+                    }
                 result = await protocol.place_order(
-                    service_id=route.provider_service_id, target=target, quantity=quantity,
+                    service_id=route.provider_service_id,
+                    target=target,
+                    quantity=quantity,
+                    extra_params=extra_params,
                 )
                 external_order_id = result.external_order_id
                 used_route = route

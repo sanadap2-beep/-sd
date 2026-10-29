@@ -6,6 +6,7 @@ one into a subcategory they created, with an explicit selling price.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections import defaultdict
@@ -727,6 +728,255 @@ class PulledServicesService:
             )
             session.add(product)
             report["created"] += 1
+
+        await session.commit()
+        return report
+
+    @staticmethod
+    async def sync_fazercards_games_section(
+        session,
+        provider,
+        margin_percent: Decimal = Decimal("10"),
+    ) -> dict:
+        """ينشر كتالوج FazerCards في قسم ألعاب مستقل ومرتب تلقائياً.
+
+        بخلاف ``sync_store_to_section`` (الذي يناسب متجراً عاماً)، كل لعبة
+        تصبح هنا قسماً فرعياً مستقلاً وتحوي عروضها فقط. إعادة التشغيل آمنة:
+        تتحدث الأسعار/الحقول والترتيب، ولا تُكرّر المنتجات ولا تمس المنتجات
+        التي نشرها المشرف يدوياً.
+        """
+        from database.models import Category, CategoryType
+        from protocols.fazercards import is_fazercards_provider
+        from services.service_localization_service import arabicize_service_name, service_name_ar
+
+        if not is_fazercards_provider(provider):
+            raise ValueError("هذه المزامنة مخصصة لمزود FazerCards فقط.")
+        try:
+            margin = Decimal(str(margin_percent))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("هامش الربح غير صالح.") from exc
+        if not margin.is_finite() or margin < -95 or margin > 1000:
+            raise ValueError("هامش الربح يجب أن يكون بين -95 و1000.")
+
+        report = {
+            "category": None,
+            "sections_created": 0,
+            "products_created": 0,
+            "products_updated": 0,
+            "products_reactivated": 0,
+            "products_deactivated": 0,
+            "skipped_manual": 0,
+            "skipped_unpriced": 0,
+            "total_services": 0,
+            "margin": margin,
+        }
+
+        # Category لا يحمل foreign key للمزود، لذلك نحفظ marker داخلياً في
+        # الوصف ونبحث به أولاً. يمنع هذا خلط كتالوجي حسابين يحملان الاسم نفسه.
+        category_marker = f"[fazercards-provider:{provider.id}]"
+        category = (
+            await session.execute(
+                select(Category).where(
+                    Category.type == CategoryType.GAMES,
+                    Category.description.contains(category_marker),
+                )
+            )
+        ).scalars().first()
+        category_name = f"شحن الألعاب — {provider.name}"[:64]
+        if category is None:
+            same_name = list(
+                (
+                    await session.execute(
+                        select(Category).where(
+                            Category.name_ar == category_name,
+                            Category.type == CategoryType.GAMES,
+                        )
+                    )
+                ).scalars().all()
+            )
+            # اسم عرض مكرر لا يجب أن يربط حسابي API ببعضهما. نلحق الرقم فقط
+            # عند الحاجة حتى تبقى تسمية الحالة المعتادة نظيفة.
+            if same_name:
+                suffix = f" #{provider.id}"
+                category_name = category_name[: 64 - len(suffix)] + suffix
+            category = Category(
+                name_ar=category_name,
+                emoji="🎮",
+                type=CategoryType.GAMES,
+                description=(
+                    f"عروض شحن الألعاب من {provider.name}\n{category_marker}"
+                )[:500],
+                is_active=True,
+                sort_order=90,
+            )
+            session.add(category)
+            await session.flush()
+        else:
+            category.is_active = True
+        report["category"] = category
+
+        services = list(
+            (
+                await session.execute(
+                    select(ProviderService)
+                    .where(
+                        ProviderService.api_provider_id == provider.id,
+                        ProviderService.status == ProviderServiceStatus.ACTIVE,
+                    )
+                    .order_by(ProviderService.category.asc(), ProviderService.rate_usd.asc())
+                )
+            ).scalars().all()
+        )
+        # لا ننشر في هذا القسم إلا عروض /topups الفعلية؛ يبقى أي منتج آخر من
+        # FazerCards (بطاقات/مفاتيح لاحقاً) تحت تحكم الأدمن في أقسامه الخاصة.
+        game_services: list[ProviderService] = []
+        for service in services:
+            try:
+                raw = json.loads(service.raw_data or "{}")
+            except (TypeError, ValueError):
+                raw = {}
+            if raw.get("engine") == "fazercards" and raw.get("family") == "topups":
+                game_services.append(service)
+        report["total_services"] = len(game_services)
+
+        existing_sections = list(
+            (
+                await session.execute(
+                    select(SubCategory).where(
+                        SubCategory.category_id == category.id,
+                        SubCategory.parent_sub_category_id.is_(None),
+                    )
+                )
+            ).scalars().all()
+        )
+        sections_by_name = {section.name_ar: section for section in existing_sections}
+
+        existing_products = list(
+            (
+                await session.execute(
+                    select(Product)
+                    .join(SubCategory, Product.sub_category_id == SubCategory.id)
+                    .where(
+                        Product.api_provider_id == provider.id,
+                        SubCategory.category_id == category.id,
+                    )
+                )
+            ).scalars().all()
+        )
+        auto_by_service = {
+            product.provider_service_ref_id: product
+            for product in existing_products
+            if product.is_auto_published and product.provider_service_ref_id
+        }
+        manual_targets = {
+            (product.provider_service_ref_id, product.sub_category_id)
+            for product in existing_products
+            if not product.is_auto_published and product.provider_service_ref_id
+        }
+
+        by_game: dict[str, list[ProviderService]] = defaultdict(list)
+        for service in game_services:
+            raw_category = (service.category or "ألعاب أخرى").strip() or "ألعاب أخرى"
+            display_category = arabicize_service_name(raw_category)[:96] or "ألعاب أخرى"
+            by_game[display_category].append(service)
+
+        active_ids: set[int] = set()
+        for game_position, game_name in enumerate(sorted(by_game), start=1):
+            section = sections_by_name.get(game_name)
+            if section is None:
+                section = SubCategory(
+                    category_id=category.id,
+                    name_ar=game_name,
+                    emoji="🎮",
+                    description=f"عروض {game_name} من {provider.name}"[:500],
+                    is_active=True,
+                    sort_order=game_position * 10,
+                )
+                session.add(section)
+                await session.flush()
+                sections_by_name[game_name] = section
+                report["sections_created"] += 1
+            else:
+                section.is_active = True
+                section.sort_order = game_position * 10
+
+            for position, service in enumerate(
+                sorted(by_game[game_name], key=lambda row: (Decimal(str(row.rate_usd or 0)), row.id)),
+                start=1,
+            ):
+                rate = Decimal(str(service.rate_usd or 0))
+                if rate <= 0:
+                    report["skipped_unpriced"] += 1
+                    continue
+                active_ids.add(service.id)
+                existing = auto_by_service.get(service.id)
+                if existing is None and (service.id, section.id) in manual_targets:
+                    report["skipped_manual"] += 1
+                    continue
+
+                price = (rate * (Decimal("100") + margin) / Decimal("100")).quantize(
+                    Decimal("0.0001"), rounding=ROUND_HALF_UP
+                )
+                if existing is None:
+                    product = Product(
+                        sub_category_id=section.id,
+                        api_provider_id=provider.id,
+                        provider_service_ref_id=service.id,
+                        provider_service_id=service.external_service_id,
+                        name_ar=(service_name_ar(service) or service.name or "خدمة ألعاب")[:128],
+                        description=(service.description or service.category or "")[:500] or None,
+                        estimated_time="من دقائق وحتى ساعتين",
+                        price_usd=price,
+                        cost_price_usd=rate,
+                        pricing_type=ProductPricingType.MARGIN_PERCENT,
+                        profit_margin_percent=margin,
+                        margin_manual=True,
+                        fulfillment_type=ProductFulfillmentType.API,
+                        min_quantity=1,
+                        max_quantity=1,
+                        requires_link=False,
+                        requires_player_id=bool(service.requires_player_id),
+                        requires_quantity=False,
+                        display_type=ProductDisplayType.FIXED_TOTAL,
+                        sort_order=position * 10,
+                        status=ProductStatus.ACTIVE,
+                        is_auto_published=True,
+                    )
+                    session.add(product)
+                    auto_by_service[service.id] = product
+                    report["products_created"] += 1
+                    continue
+
+                # المنتج الآلي قد ينتقل لقسم لعبة جديد إذا غيّر المزود اسم
+                # التصنيف؛ نحدّثه بدلاً من ترك نسخة قديمة مخفية.
+                was_inactive = existing.status != ProductStatus.ACTIVE
+                existing.sub_category_id = section.id
+                existing.provider_service_id = service.external_service_id
+                existing.name_ar = (service_name_ar(service) or service.name or "خدمة ألعاب")[:128]
+                existing.description = (service.description or service.category or "")[:500] or None
+                existing.cost_price_usd = rate
+                existing.price_usd = price
+                existing.pricing_type = ProductPricingType.MARGIN_PERCENT
+                existing.profit_margin_percent = margin
+                existing.margin_manual = True
+                existing.min_quantity = 1
+                existing.max_quantity = 1
+                existing.requires_link = False
+                existing.requires_player_id = bool(service.requires_player_id)
+                existing.requires_quantity = False
+                existing.display_type = ProductDisplayType.FIXED_TOTAL
+                existing.sort_order = position * 10
+                existing.status = ProductStatus.ACTIVE
+                report["products_updated"] += 1
+                if was_inactive:
+                    report["products_reactivated"] += 1
+
+        # ما حذفه المزود لا يبقى متاحاً للشراء من القسم الآلي، مع عدم حذف أي
+        # منتج أو قسم حتى يستطيع المشرف مراجعة السجل عند الحاجة.
+        for service_id, product in auto_by_service.items():
+            if service_id not in active_ids and product.status != ProductStatus.INACTIVE:
+                product.status = ProductStatus.INACTIVE
+                report["products_deactivated"] += 1
 
         await session.commit()
         return report

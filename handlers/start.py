@@ -11,8 +11,6 @@ from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
-logger = logging.getLogger(__name__)
-
 from keyboards.main_menu import build_main_menu
 from keyboards.common import check_subscription_kb
 from services.branding_service import BrandingService
@@ -27,6 +25,7 @@ from services.pricing_service import PricingService
 from services.price_lock_service import PriceLockService
 from services.i18n_service import I18nService
 
+logger = logging.getLogger(__name__)
 router = Router(name="start")
 
 
@@ -42,7 +41,9 @@ async def _build_menu(session, db_user):
     agent_percent = str(
         await FeatureService.config("agent_program", "default_percent", 10)
     )
-    completed_orders = await _completed_orders_count(session, db_user.id)
+    # تستخدم بعض شاشات المعاينة كائناً خفيفاً بلا id؛ لا ينبغي أن يمنع
+    # ذلك بناء القائمة، وتبقى إنجازاته صفراً حتى يتوفر مستخدم محفوظ.
+    completed_orders = await _completed_orders_count(session, getattr(db_user, "id", None))
     show_ai = await _ai_section_visible(session)
     show_whatsapp = await FeatureService.enabled("whatsapp_section")
     # سوق المستخدمين يظهر فقط إذا كانت ميزة الوساطة مفعّلة من لوحة الأدمن.

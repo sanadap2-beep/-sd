@@ -162,6 +162,8 @@ class SMMOrderStates(StatesGroup):
 
 class GamesOrderStates(StatesGroup):
     waiting_player_id = State()
+    # حقول شحن ألعاب ديناميكية (مثلاً Player ID ثم Zone/Server ID).
+    waiting_provider_fields = State()
     waiting_quantity = State()
     waiting_coupon = State()
 
@@ -342,6 +344,8 @@ class AdminApiProviderStates(StatesGroup):
     waiting_custom_wizard_value = State()
     waiting_edit_field = State()
     waiting_edit_value = State()
+    # هامش نشر كتالوج FazerCards التلقائي (خاص بكل مزود).
+    waiting_fazercards_games_margin = State()
     confirming_sync = State()
 
 

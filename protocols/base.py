@@ -153,6 +153,8 @@ ORDER_STATUS_MAPPING = {
     "pending": "pending",
     "waiting": "pending",
     "queued": "pending",
+    # FazerCards يبدأ الطلب بحالة created قبل انتقاله إلى processing.
+    "created": "pending",
     # حالات جزئية
     "partial": "partial",
     "partial_complete": "partial",

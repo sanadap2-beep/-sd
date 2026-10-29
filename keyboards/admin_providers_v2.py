@@ -2,6 +2,8 @@
 كل أزرار إدارة المزودين (V2 - محسّنة).
 """
 
+import json
+
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -200,6 +202,30 @@ def ask_sync_now_kb(provider_id: int, partner: bool = False) -> InlineKeyboardMa
 # ══════════════ تفاصيل المزود ══════════════
 
 
+def _is_fazercards_provider(provider: ApiProvider) -> bool:
+    """فحص خفيف داخل طبقة الـ keyboard لتحديد زر النشر المتخصص."""
+    try:
+        config = json.loads(provider.custom_config or "{}")
+        return str(config.get("engine") or "").lower() in {
+            "fazercards",
+            "fazer_cards",
+            "fzr_cards",
+            "fzr",
+        }
+    except (TypeError, ValueError):
+        return False
+
+
+def _fazercards_games_margin_label(provider: ApiProvider) -> str:
+    """هامش العرض الافتراضي دون الاعتماد على جلسة قاعدة بيانات في keyboard."""
+    try:
+        config = json.loads(provider.custom_config or "{}")
+        value = config.get("games_margin_percent", 10)
+        return str(value)[:12]
+    except (TypeError, ValueError):
+        return "10"
+
+
 def provider_detail_kb(
     provider: ApiProvider,
 ) -> InlineKeyboardMarkup:
@@ -225,6 +251,18 @@ def provider_detail_kb(
         text=(f"🔄 مزامنة الخدمات ({provider.total_services or 0})"),
         callback_data=f"admin:aprov_sync:{provider.id}",
     )
+    if _is_fazercards_provider(provider):
+        margin = _fazercards_games_margin_label(provider)
+        b.button(
+            text=f"🎮 نشر كتالوج الألعاب في قسم مستقل (%{margin})",
+            callback_data=f"admin:aprov_fz_games_sync:{provider.id}",
+            style="success",
+        )
+        b.button(
+            text=f"💹 تعديل هامش كتالوج الألعاب (%{margin})",
+            callback_data=f"admin:aprov_fz_games_margin:{provider.id}",
+            style="primary",
+        )
     b.button(
         text="📥 سحب قسم بنسبة ربح",
         callback_data=f"pk:h:{provider.id}",
@@ -264,7 +302,10 @@ def provider_detail_kb(
         callback_data="admin:api_providers",
     )
 
-    b.adjust(1, 2, 1, 1, 1, 2, 2, 1, 1)
+    if _is_fazercards_provider(provider):
+        b.adjust(1, 2, 1, 1, 1, 1, 2, 2, 1, 1, 1)
+    else:
+        b.adjust(1, 2, 1, 1, 1, 2, 2, 1, 1)
     return b.as_markup()
 
 
@@ -428,6 +469,18 @@ def sync_in_progress_kb(
 # ══════════════ قوالب المزود المخصص بدون كتابة JSON ══════════════
 
 CUSTOM_PROVIDER_CONFIG_PRESETS = {
+    # FazerCards يملك API منفصلاً لعروض الألعاب المباشرة (category → offer →
+    # fields → order)، لذلك يُختار محركه المخصص بدل قالب JSON العام.
+    "fazercards": {
+        "engine": "fazercards",
+        "suggested_api_url": "https://api.fzr.cards/api/v2",
+        "default_name": "FazerCards",
+        "default_provider_type": "games",
+        "default_currency": "USD",
+        "games_margin_percent": 10,
+        "catalog_limit": 100,
+        "catalog_concurrency": 4,
+    },
     "tlbkenne": {
         "engine": "partner_v1",
         "auth": "bearer",
@@ -531,6 +584,11 @@ def custom_provider_presets_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     # القوالب أزرار إنشاء → خضراء (success). كانت تُصبغ حمراء بسبب مطابقة
     # نمط "reset" لكلمة "preset" داخل الـ codemod (أُصلح الحدّ هناك أيضاً).
+    b.button(
+        text="🎮 FazerCards — شحن ألعاب مباشر",
+        callback_data="admin:aprov_custom_preset:fazercards",
+        style="success",
+    )
     b.button(text="🤝 بوت صديق (tlbkenne)", callback_data="admin:aprov_custom_preset:tlbkenne", style="success")
     b.button(
         text="✨ ggsoma — اشتراكات رقمية (رابط/كوبون/حساب)",

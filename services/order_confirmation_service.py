@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from services.html_guard import esc
+from services.provider_input_service import decode_provider_fields, field_label_ar
 
 SEPARATOR = "━━━━━━━━━━━━━━━━━━"
 
@@ -343,7 +344,17 @@ class OrderConfirmationService:
             conf.footer = f"\U0001f389 <b>{'Delivered instantly — enjoy!' if en else 'تم تسليم طلبك فوراً — شكراً لثقتك بنا'}</b>"
 
         if target:
-            conf.row("🎯", _target_label(product, lang), target, mono=True)
+            provider_fields = decode_provider_fields(target)
+            if provider_fields:
+                for index, (key, value) in enumerate(provider_fields.items()):
+                    conf.row(
+                        "🎯" if index == 0 else "▫️",
+                        field_label_ar(key) if not en else str(key).replace("_", " ").title(),
+                        value,
+                        mono=True,
+                    )
+            else:
+                conf.row("🎯", _target_label(product, lang), target, mono=True)
         if quantity and int(quantity) > 1:
             conf.row("🔢", "الكمية" if not en else "Quantity", quantity)
         return conf.render()

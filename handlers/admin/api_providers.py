@@ -29,6 +29,7 @@ from database.models import (
     CategoryType,
     ProductDisplayType,
     ProductFulfillmentType,
+    ProviderPriceType,
     ProviderService,
     SubCategory,
 )
@@ -67,6 +68,26 @@ logger = logging.getLogger(__name__)
 router = Router(name="admin_api_providers")
 router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
+
+
+async def _fazercards_games_margin(provider: ApiProvider) -> Decimal:
+    """هامش كتالوج الألعاب: خاص بالمزود، ثم setting قديم/عام، ثم 10%."""
+    fallback = await SettingsService.get_decimal(
+        "fazercards_games_margin_percent", Decimal("10")
+    )
+    if not fallback.is_finite() or not Decimal("-95") <= fallback <= Decimal("1000"):
+        fallback = Decimal("10")
+    try:
+        config = json.loads(provider.custom_config or "{}")
+        raw = config.get("games_margin_percent")
+        if raw is None:
+            return fallback
+        margin = Decimal(str(raw))
+        if margin.is_finite() and Decimal("-95") <= margin <= Decimal("1000"):
+            return margin
+    except (InvalidOperation, TypeError, ValueError):
+        pass
+    return fallback
 
 
 # ══════════════════════════════════════════════
@@ -166,6 +187,29 @@ async def aprov_custom_preset_selected(callback: CallbackQuery, state: FSMContex
         await callback.answer("قالب غير معروف.", show_alert=True)
         return
     await state.update_data(custom_config=json.dumps(preset, ensure_ascii=False))
+
+    # القوالب المتخصصة (مثل FazerCards) تعرف نوع المتجر مسبقاً؛ اختصار هذه
+    # الخطوة يمنع اختيار نوع خاطئ ويجعل الربط جاهزاً من لوحة الأدمن فقط.
+    default_type = preset.get("default_provider_type")
+    if default_type:
+        try:
+            provider_type = ApiProviderType(str(default_type))
+        except ValueError:
+            provider_type = None
+        if provider_type is not None:
+            default_name = str(preset.get("default_name") or "")
+            await state.update_data(provider_type=provider_type.value)
+            await callback.message.edit_text(
+                "✅ <b>تم اختيار قالب FazerCards لشحن الألعاب</b>\n\n"
+                "الخطوة 3️⃣ من 6️⃣\n\n"
+                "📝 أرسل الاسم الذي تريد ظهوره في اللوحة، أو أرسل <code>.</code> "
+                f"لاستخدام الاسم الافتراضي <b>{default_name or 'FazerCards'}</b>.",
+                reply_markup=admin_back_kb(),
+            )
+            await state.set_state(AdminApiProviderStates.waiting_name)
+            await callback.answer()
+            return
+
     await callback.message.edit_text(
         "✅ تم اختيار قالب المزود المخصص.\n\n"
         "الخطوة 2️⃣ من 6️⃣\n\n"
@@ -316,7 +360,13 @@ async def aprov_type_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminApiProviderStates.waiting_name)
 async def aprov_name_received(message: Message, state: FSMContext):
-    name = message.text.strip()
+    name = (message.text or "").strip()
+    if name in {".", "-", "افتراضي", "default"}:
+        try:
+            config = json.loads((await state.get_data()).get("custom_config") or "{}")
+            name = str(config.get("default_name") or "").strip()
+        except Exception:
+            name = ""
 
     if len(name) < 2:
         await message.answer("⚠️ الاسم قصير جداً.")
@@ -328,11 +378,22 @@ async def aprov_name_received(message: Message, state: FSMContext):
 
     await state.update_data(name=name)
 
+    default_url = ""
+    try:
+        config = json.loads((await state.get_data()).get("custom_config") or "{}")
+        default_url = str(config.get("suggested_api_url") or "").strip()
+    except Exception:
+        pass
+    url_hint = (
+        f"\nأرسل <code>.</code> لاستخدام الرابط الرسمي: <code>{default_url}</code>"
+        if default_url
+        else "\n(مثال: <code>https://jumbosmm.com/api/v2</code>)"
+    )
     await message.answer(
         f"✅ الاسم: <b>{name}</b>\n\n"
         "الخطوة 4️⃣ من 6️⃣\n\n"
-        "🔗 أرسل رابط API الخاص بالمزود:\n"
-        "(مثال: <code>https://jumbosmm.com/api/v2</code>)"
+        "🔗 أرسل رابط API الخاص بالمزود:"
+        f"{url_hint}"
     )
     await state.set_state(AdminApiProviderStates.waiting_api_url)
 
@@ -557,7 +618,6 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
         low_balance_threshold=Decimal("10"),
     )
     from services.encryption_service import EncryptionService
-    from services.html_guard import esc
 
     EncryptionService.store_provider_key(provider)
     session.add(provider)
@@ -580,6 +640,7 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
     if balance_usd:
         text += f"\n💵 يعادل: <b>{balance_usd}$</b>"
     from protocols.partner_v1 import is_partner_v1_provider
+    from protocols.fazercards import is_fazercards_provider
 
     if is_partner_v1_provider(provider):
         text += (
@@ -589,6 +650,11 @@ async def aprov_test_and_save(callback: CallbackQuery, state: FSMContext, sessio
         markup = ask_sync_now_kb(provider.id, partner=True)
     else:
         text += "\n\n<b>هل تريد سحب خدمات المزود الآن؟</b>\nقد يستغرق وقتاً إذا كانت الخدمات كثيرة."
+        if is_fazercards_provider(provider):
+            text += (
+                "\n\n🎮 بعد السحب افتح تفاصيل المزود واضغط "
+                "«نشر كتالوج الألعاب في قسم مستقل» لتنظيم كل لعبة وعروضها تلقائياً."
+            )
         markup = ask_sync_now_kb(provider.id)
 
     await test_msg.edit_text(
@@ -778,6 +844,140 @@ async def aprov_sync_services(callback: CallbackQuery, session, bot):
             admin_chat_id=admin_chat_id,
             progress_message_id=progress_msg.message_id,
         )
+    )
+
+
+@router.callback_query(F.data.startswith("admin:aprov_fz_games_margin:"))
+async def aprov_fazercards_games_margin_start(
+    callback: CallbackQuery, state: FSMContext, session
+):
+    """يتيح ضبط هامش نشر ألعاب FazerCards من صفحة المزود نفسها."""
+    try:
+        provider_id = int(callback.data.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        await callback.answer("بيانات المزود غير صالحة.", show_alert=True)
+        return
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+    from protocols.fazercards import is_fazercards_provider
+
+    if not is_fazercards_provider(provider):
+        await callback.answer("هذا الإعداد مخصص لمزود FazerCards فقط.", show_alert=True)
+        return
+    margin = await _fazercards_games_margin(provider)
+    await state.update_data(fazercards_margin_provider_id=provider.id)
+    await callback.message.edit_text(
+        f"💹 <b>هامش كتالوج ألعاب {provider.name}</b>\n\n"
+        f"الهامش الحالي: <b>{margin}%</b>\n\n"
+        "أرسل نسبة الهامش الجديدة. مثال: <code>10</code>\n"
+        "يسمح بالقيم من <code>-95</code> إلى <code>1000</code>.\n\n"
+        "يُستخدم الهامش عند النشر أو إعادة النشر، وتبقى تكلفة المورد الحية أساس السعر.",
+        reply_markup=admin_back_kb(),
+    )
+    await state.set_state(AdminApiProviderStates.waiting_fazercards_games_margin)
+    await callback.answer()
+
+
+@router.message(AdminApiProviderStates.waiting_fazercards_games_margin)
+async def aprov_fazercards_games_margin_received(
+    message: Message, state: FSMContext, session
+):
+    try:
+        margin = Decimal((message.text or "").strip())
+        if not margin.is_finite() or margin < Decimal("-95") or margin > Decimal("1000"):
+            raise InvalidOperation
+    except (InvalidOperation, ValueError):
+        await message.answer("⚠️ أرسل هامشاً صحيحاً بين -95 و1000.")
+        return
+
+    data = await state.get_data()
+    provider_id = data.get("fazercards_margin_provider_id")
+    provider = await session.get(ApiProvider, provider_id) if provider_id else None
+    if provider is None:
+        await message.answer("⚠️ انتهت جلسة تعديل الهامش؛ افتح المزود من جديد.")
+        await state.clear()
+        return
+    from protocols.fazercards import is_fazercards_provider
+
+    if not is_fazercards_provider(provider):
+        await message.answer("⚠️ المزود لم يعد مزود FazerCards.")
+        await state.clear()
+        return
+    try:
+        config = json.loads(provider.custom_config or "{}")
+    except (TypeError, ValueError):
+        config = {}
+    config["games_margin_percent"] = str(margin)
+    provider.custom_config = json.dumps(config, ensure_ascii=False)
+    await session.commit()
+    await state.clear()
+    await message.answer(
+        f"✅ تم ضبط هامش كتالوج ألعاب <b>{provider.name}</b> إلى <b>{margin}%</b>.\n"
+        "اضغط «نشر كتالوج الألعاب» لتطبيقه فوراً على العروض الآلية.",
+    )
+    await _show_provider_details(message, provider, edit=False)
+
+
+@router.callback_query(F.data.startswith("admin:aprov_fz_games_sync:"))
+async def aprov_sync_fazercards_games_section(callback: CallbackQuery, session):
+    """ينشر عروض FazerCards المسحوبة في قسم ألعاب مستقل من لوحة المزود."""
+    try:
+        provider_id = int(callback.data.rsplit(":", 1)[1])
+    except (IndexError, ValueError):
+        await callback.answer("بيانات المزود غير صالحة.", show_alert=True)
+        return
+    provider = await session.get(ApiProvider, provider_id)
+    if provider is None:
+        await callback.answer("المزود غير موجود.", show_alert=True)
+        return
+
+    from protocols.fazercards import is_fazercards_provider
+
+    if not is_fazercards_provider(provider):
+        await callback.answer("هذا الزر مخصص لمزود FazerCards فقط.", show_alert=True)
+        return
+    services_count = await ProviderSyncService.get_provider_services_count(provider.id, active_only=True)
+    if not services_count:
+        await callback.answer("اسحب كتالوج FazerCards أولاً ثم أعد النشر.", show_alert=True)
+        return
+
+    margin = await _fazercards_games_margin(provider)
+    await callback.answer("⏳ جارٍ بناء قسم الألعاب...")
+    await callback.message.edit_text(
+        f"🎮 <b>جارٍ نشر كتالوج ألعاب {provider.name}</b>\n\n"
+        f"يجري تنظيم كل لعبة في قسم مستقل وتحديث الأسعار بهامش {margin}%."
+    )
+    try:
+        from services.pulled_services_service import PulledServicesService
+
+        report = await PulledServicesService.sync_fazercards_games_section(
+            session, provider, margin
+        )
+    except Exception as exc:
+        logger.exception("فشل نشر قسم ألعاب FazerCards للمزود %s", provider.id)
+        await callback.message.edit_text(
+            f"❌ <b>تعذّر نشر كتالوج ألعاب {provider.name}</b>\n\n"
+            f"<code>{str(exc)[:240]}</code>",
+            reply_markup=provider_detail_kb(provider),
+        )
+        return
+
+    category = report["category"]
+    await callback.message.edit_text(
+        f"✅ <b>تم نشر كتالوج ألعاب {provider.name}</b>\n\n"
+        f"📂 القسم: <b>{category.name_ar}</b>\n"
+        f"🎮 عروض تمت قراءتها: <b>{report['total_services']}</b>\n"
+        f"🗂 أقسام ألعاب جديدة: <b>{report['sections_created']}</b>\n"
+        f"🆕 منتجات جديدة: <b>{report['products_created']}</b>\n"
+        f"🔄 منتجات محدّثة: <b>{report['products_updated']}</b>\n"
+        f"♻️ أعيد تفعيلها: <b>{report['products_reactivated']}</b>\n"
+        f"⏸ أُخفيت عروض لم تعد متاحة: <b>{report['products_deactivated']}</b>\n"
+        f"💹 هامش النشر: <b>{report['margin']}%</b>\n\n"
+        "يمكنك تعديل سعر أو هامش أي منتج لاحقاً من إدارة المنتجات؛ "
+        "المزامنة التالية تحدّث عروض القسم الآلية فقط.",
+        reply_markup=provider_detail_kb(provider),
     )
 
 
@@ -1009,10 +1209,16 @@ async def aprov_service_view(callback: CallbackQuery, session):
     if service.service_type:
         text += f"🏷 النوع: {service.service_type}\n"
 
+    if service.price_type == ProviderPriceType.PER_ITEM:
+        price_unit = "للباقة / القطعة"
+    elif service.price_type == ProviderPriceType.FIXED:
+        price_unit = "للخدمة"
+    else:
+        price_unit = "/ 1000"
     text += (
         f"\n💰 <b>السعر عند المزود:</b>\n"
-        f"• {service.rate} {provider.currency} / 1000\n"
-        f"• {service.rate_usd}$ / 1000\n\n"
+        f"• {service.rate} {provider.currency} {price_unit}\n"
+        f"• {service.rate_usd}$ {price_unit}\n\n"
         f"📊 <b>الكمية:</b>\n"
         f"• الحد الأدنى: {service.min_quantity:,}\n"
         f"• الحد الأقصى: {service.max_quantity:,}\n\n"
